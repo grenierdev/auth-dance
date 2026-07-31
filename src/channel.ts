@@ -1,18 +1,18 @@
 import type { Identity, IdentityChannel } from "./identity.ts";
-import type { AuthMessage } from "./message.ts";
-import type { AuthPromptInput } from "./prompt.ts";
-import type { AuthStorage } from "./storage.ts";
+import type { AuthDanceMessage } from "./message.ts";
+import type { AuthDancePromptInput } from "./prompt.ts";
+import type { AuthDanceStorage } from "./storage.ts";
 
-export interface AuthChannelContext {
-	storage: AuthStorage;
+export interface AuthDanceChannelContext {
+	storage: AuthDanceStorage;
 	stateId: string;
 	name: string;
 	flow: string;
 	identity?: Identity;
 }
 
-export interface AuthChannel {
-	sendMessage(message: AuthMessage): Promise<void>;
-	getPrompt(context: AuthChannelContext): Promise<AuthPromptInput>;
+export interface AuthDanceChannel {
+	sendMessage(message: AuthDanceMessage): Promise<void>;
+	getPrompt(context: AuthDanceChannelContext): Promise<AuthDancePromptInput>;
 	getIdentityChannel(channel: string, value: unknown, confirmed: boolean): Promise<IdentityChannel>;
 }

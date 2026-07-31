@@ -1,16 +1,16 @@
-import type { AuthChannel, AuthChannelContext } from "../channel.ts";
+import type { AuthDanceChannel, AuthDanceChannelContext } from "../channel.ts";
 import type { Identity, IdentityChannel, IdentityIdentification } from "../identity.ts";
-import type { AuthMessage } from "../message.ts";
-import type { AuthPromptInput } from "../prompt.ts";
+import type { AuthDanceMessage } from "../message.ts";
+import type { AuthDancePromptInput } from "../prompt.ts";
 import {
-	type AuthIdentityProvider,
-	type AuthKvProvider,
-	type AuthRateLimiterProvider,
-	type AuthRateLimiterResult,
+	type AuthDanceIdentityProvider,
+	type AuthDanceKvProvider,
+	type AuthDanceRateLimiterProvider,
+	type AuthDanceRateLimiterResult,
 	KVKeyNotFoundError,
 } from "../provider.ts";
 
-export class MemoryIdentityProvider implements AuthIdentityProvider, Disposable {
+export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Disposable {
 	#storage: Map<string, Identity>;
 
 	constructor(storage?: Iterable<[string, Identity]>) {
@@ -57,7 +57,7 @@ export class MemoryIdentityProvider implements AuthIdentityProvider, Disposable 
 	}
 }
 
-export class MemoryKvProvider implements AuthKvProvider, Disposable {
+export class MemoryKvProvider implements AuthDanceKvProvider, Disposable {
 	#storage = new Map<string, { value: string; expiration?: number }>();
 
 	[Symbol.dispose](): void {
@@ -101,14 +101,14 @@ export class MemoryKvProvider implements AuthKvProvider, Disposable {
 	}
 }
 
-export class MemoryRateLimiterProvider implements AuthRateLimiterProvider, Disposable {
+export class MemoryRateLimiterProvider implements AuthDanceRateLimiterProvider, Disposable {
 	#storage = new Map<string, { count: number; expiration: number }>();
 
 	[Symbol.dispose](): void {
 		this.#storage.clear();
 	}
 
-	limit(key: string, limit: number, window: number): Promise<AuthRateLimiterResult> {
+	limit(key: string, limit: number, window: number): Promise<AuthDanceRateLimiterResult> {
 		const now = Date.now();
 		const entry = this.#storage.get(key);
 
@@ -129,9 +129,9 @@ export class MemoryRateLimiterProvider implements AuthRateLimiterProvider, Dispo
 	}
 }
 
-export class MemoryAuthChannel implements AuthChannel, Disposable {
+export class MemoryAuthDanceChannel implements AuthDanceChannel, Disposable {
 	#type: string;
-	messages: AuthMessage[] = [];
+	messages: AuthDanceMessage[] = [];
 
 	constructor(type: string) {
 		this.#type = type;
@@ -141,13 +141,13 @@ export class MemoryAuthChannel implements AuthChannel, Disposable {
 		this.messages = [];
 	}
 
-	sendMessage(message: AuthMessage): Promise<void> {
+	sendMessage(message: AuthDanceMessage): Promise<void> {
 		this.messages.push(message);
 		return Promise.resolve();
 	}
 
 	// deno-lint-ignore require-await
-	async getPrompt(context: AuthChannelContext): Promise<AuthPromptInput> {
+	async getPrompt(context: AuthDanceChannelContext): Promise<AuthDancePromptInput> {
 		return {
 			kind: "input",
 			name: context.name,

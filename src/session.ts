@@ -1,6 +1,6 @@
 import * as v from "valibot";
 
-export interface AuthSession {
+export interface AuthDanceSession {
 	id: string;
 	identityId: string;
 	scopes: string[];
@@ -9,7 +9,7 @@ export interface AuthSession {
 	userAgent?: string;
 }
 
-export const AuthSession: v.GenericSchema<AuthSession> = v.pipe(
+export const AuthDanceSession: v.GenericSchema<AuthDanceSession> = v.pipe(
 	v.object({
 		id: v.string(),
 		identityId: v.string(),
@@ -18,6 +18,6 @@ export const AuthSession: v.GenericSchema<AuthSession> = v.pipe(
 		address: v.optional(v.string()),
 		userAgent: v.optional(v.string()),
 	}),
-	v.title("AuthSession"),
+	v.title("AuthDanceSession"),
 	v.description("A user session"),
 );

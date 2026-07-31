@@ -1,16 +1,16 @@
 import { beforeEach, describe, it } from "@std/testing/bdd";
 import { assert, assertEquals } from "@std/assert";
 import { MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "./providers/memory.ts";
-import EmailAuthComponent from "./components/email.ts";
-import { AuthStorage } from "./storage.ts";
+import EmailAuthDanceComponent from "./components/email.ts";
+import { AuthDanceStorage } from "./storage.ts";
 
 describe("Storage", () => {
-	let storage: AuthStorage;
-	let email: EmailAuthComponent;
+	let storage: AuthDanceStorage;
+	let email: EmailAuthDanceComponent;
 
 	beforeEach(() => {
-		email = new EmailAuthComponent("email");
-		storage = new AuthStorage({
+		email = new EmailAuthDanceComponent("email");
+		storage = new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),
 			kv: new MemoryKvProvider(),
 			rate_limiter: new MemoryRateLimiterProvider(),

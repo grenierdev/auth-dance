@@ -150,7 +150,7 @@ function padCounter(counter: number): Uint8Array<ArrayBuffer> {
 }
 
 /**
- * Truncates an HMAC (Hash-based Message Authentication Code) represented as a Uint8Array.
+ * Truncates an HMAC (Hash-based Message AuthDanceentication Code) represented as a Uint8Array.
  * @param {Uint8Array} hmac - The HMAC value to truncate.
  * @returns {number} - The truncated value extracted from the HMAC.
  */
@@ -258,7 +258,7 @@ export function generateKey(length = 16, alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ2
  * Use the `"hotp"` variant for counter-based codes and the `"totp"` variant
  * for time-based codes.
  */
-export type OTPAuthURIOptions =
+export type OTPAuthDanceURIOptions =
 	| {
 		/** Selects the HOTP (counter-based) URI scheme. */
 		type: "hotp";
@@ -290,11 +290,11 @@ export type OTPAuthURIOptions =
 
 /**
  * Generates an OTPAuth URI based on the provided options.
- * @param {OTPAuthURIOptions} options - The options for generating the OTPAuth URI.
+ * @param {OTPAuthDanceURIOptions} options - The options for generating the OTPAuth URI.
  * @returns {string} - The generated OTPAuth URI.
  * @throws {Error} - Throws an error if the provided options are invalid.
  */
-export function toURI(options: OTPAuthURIOptions): string {
+export function toURI(options: OTPAuthDanceURIOptions): string {
 	options.digits ??= 6;
 	options.algorithm ??= "SHA-1";
 	if (options.type === "hotp") {

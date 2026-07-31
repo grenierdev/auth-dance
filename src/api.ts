@@ -1,35 +1,41 @@
 import { ksuid } from "./id.ts";
-import type { AuthChannel } from "./channel.ts";
-import OtpAuthComponent from "./components/otp.ts";
-import { type AuthChoreography, type AuthChoreographyChoice, type AuthChoreographyComponent, peek, walk } from "./choreography.ts";
-import type { AuthComponent, AuthComponentContext } from "./component.ts";
-import type { Identity, IdentityChallenge, IdentityChannel, IdentityComponent, IdentityIdentification } from "./identity.ts";
-import type { AuthMessage } from "./message.ts";
+import type { AuthDanceChannel } from "./channel.ts";
+import OtpAuthDanceComponent from "./components/otp.ts";
 import {
-	AuthState,
-	type AuthStateDelete,
-	type AuthStateEnroll,
-	type AuthStateRecover,
-	type AuthStateRotate,
-	type AuthStateSignIn,
-	type AuthStateSignUp,
-	type AuthStateSubscribe,
-	type AuthStateUnenroll,
-	type AuthStateUnsubscribe,
+	type AuthDanceChoreography,
+	type AuthDanceChoreographyChoice,
+	type AuthDanceChoreographyComponent,
+	peek,
+	walk,
+} from "./choreography.ts";
+import type { AuthDanceComponent, AuthDanceComponentContext } from "./component.ts";
+import type { Identity, IdentityChallenge, IdentityChannel, IdentityComponent, IdentityIdentification } from "./identity.ts";
+import type { AuthDanceMessage } from "./message.ts";
+import {
+	AuthDanceState,
+	type AuthDanceStateDelete,
+	type AuthDanceStateEnroll,
+	type AuthDanceStateRecover,
+	type AuthDanceStateRotate,
+	type AuthDanceStateSignIn,
+	type AuthDanceStateSignUp,
+	type AuthDanceStateSubscribe,
+	type AuthDanceStateUnenroll,
+	type AuthDanceStateUnsubscribe,
 } from "./state.ts";
-import type { AuthPrompt } from "./prompt.ts";
+import type { AuthDancePrompt } from "./prompt.ts";
 import { decode } from "jose/base64url";
 import { EncryptJWT } from "jose/jwt/encrypt";
 import { jwtDecrypt } from "jose/jwt/decrypt";
 import { SignJWT } from "jose/jwt/sign";
 import { jwtVerify } from "jose/jwt/verify";
 import { parse } from "valibot";
-import type { AuthResponse, AuthResponseResult, AuthResponseState, AuthResponseTokens } from "./response.ts";
-import type { AuthSession } from "./session.ts";
-import type { AuthStorage } from "./storage.ts";
+import type { AuthDanceResponse, AuthDanceResponseResult, AuthDanceResponseState, AuthDanceResponseTokens } from "./response.ts";
+import type { AuthDanceSession } from "./session.ts";
+import type { AuthDanceStorage } from "./storage.ts";
 import {
-	AuthError,
-	AuthUnknownError,
+	AuthDanceError,
+	AuthDanceUnknownError,
 	ChannelAlreadySubscribedError,
 	ChannelInUseError,
 	ChannelNotSubscribedError,
@@ -64,26 +70,26 @@ import {
 } from "./error.ts";
 
 /** A single fixed-window bucket: `limit` calls per `window`, the window expressed in seconds like every other duration here. */
-export interface AuthRateLimit {
+export interface AuthDanceRateLimit {
 	limit: number;
 	window: number;
 }
 
 /**
- * The buckets `AuthApi` consumes, keyed on the identity or session a call is attributable to. They guard
+ * The buckets `AuthDanceApi` consumes, keyed on the identity or session a call is attributable to. They guard
  * one identity against being hammered — brute-forcing its password, draining its OTP quota — so they are
  * deliberately tight; a caller spreading the same abuse over many identities is what the per-address
  * buckets at the edge are for.
  */
-export interface AuthIdentityRateLimits {
+export interface AuthDanceIdentityRateLimits {
 	/** Answering a prompt or a validation, i.e. every attempt at proving something. */
-	verify?: AuthRateLimit;
+	verify?: AuthDanceRateLimit;
 	/** Delivering a prompt or a validation over a channel — the buckets that cost real money. */
-	send?: AuthRateLimit;
+	send?: AuthDanceRateLimit;
 	/** Starting a management flow (enroll, rotate, subscribe, …) or signing out. */
-	manage?: AuthRateLimit;
+	manage?: AuthDanceRateLimit;
 	/** Exchanging a refresh token. Legitimate clients do this often, so it is the loosest of the four. */
-	refresh?: AuthRateLimit;
+	refresh?: AuthDanceRateLimit;
 }
 
 /**
@@ -91,19 +97,19 @@ export interface AuthIdentityRateLimits {
  * abuse — many identities probed from one place — and are generous on purpose: a whole NATed campus
  * shares one address, so a limit tuned for a single client would lock out everybody behind it.
  */
-export interface AuthAddressRateLimits {
+export interface AuthDanceAddressRateLimits {
 	/** Every request, whatever it is.  */
-	request?: AuthRateLimit;
+	request?: AuthDanceRateLimit;
 	/** The two routes that put a message on a channel, on top of the `request` bucket. */
-	send?: AuthRateLimit;
+	send?: AuthDanceRateLimit;
 }
 
-export interface AuthApiOptions {
-	channels: Record<string, AuthChannel>;
-	choreography: AuthChoreography;
-	components: Record<string, AuthComponent>;
+export interface AuthDanceApiOptions {
+	channels: Record<string, AuthDanceChannel>;
+	choreography: AuthDanceChoreography;
+	components: Record<string, AuthDanceComponent>;
 	secret: string;
-	storage: AuthStorage;
+	storage: AuthDanceStorage;
 	advanced?: {
 		// How long an in-progress flow's state stays valid, in seconds — one key per flow, each defaulting to
 		// 5 minutes. Recovering an account may reasonably be given more room than signing in, and a
@@ -122,50 +128,50 @@ export interface AuthApiOptions {
 		/** How long after signing in a session may still perform sensitive actions (enroll, rotate, …), in seconds. */
 		elevated_duration?: number;
 		/** Per-identity buckets, each defaulting to `IdentityRateLimits`. */
-		identity_rate_limit?: AuthIdentityRateLimits;
+		identity_rate_limit?: AuthDanceIdentityRateLimits;
 		/** Per-address buckets, each defaulting to `AddressRateLimits`. Consumed at the edge, not here — `choreoAuth` forwards them to the app's bindings. */
-		address_rate_limit?: AuthAddressRateLimits;
+		address_rate_limit?: AuthDanceAddressRateLimits;
 		issuer?: string;
 	};
 }
 
 /** Tight, because they apply to one identity at a time. */
-export const IdentityRateLimits: Required<AuthIdentityRateLimits> = {
+export const IdentityRateLimits: Required<AuthDanceIdentityRateLimits> = {
 	verify: { limit: 10, window: 5 * 60 },
 	send: { limit: 5, window: 5 * 60 },
 	manage: { limit: 20, window: 5 * 60 },
 	refresh: { limit: 60, window: 5 * 60 },
 };
 
-export class AuthApi {
-	#options: AuthApiOptions;
+export class AuthDanceApi {
+	#options: AuthDanceApiOptions;
 	#decodedSecret: Uint8Array;
 
-	constructor(options: AuthApiOptions) {
+	constructor(options: AuthDanceApiOptions) {
 		this.#options = options;
 		this.#decodedSecret = decode(this.#options.secret);
 	}
 
-	get storage(): AuthStorage {
+	get storage(): AuthDanceStorage {
 		return this.#options.storage;
 	}
 
 	// The single boundary between "this failed in a way the caller was told about" and "this should never
 	// have happened". Internals — including every private helper below — signal failure by throwing an
-	// AuthError, which passes through untouched. Anything else (jose, valibot, a storage provider, a bug)
-	// is wrapped in AuthUnknownError, so an unhandled case can never masquerade as a business rule.
+	// AuthDanceError, which passes through untouched. Anything else (jose, valibot, a storage provider, a bug)
+	// is wrapped in AuthDanceUnknownError, so an unhandled case can never masquerade as a business rule.
 	async #guard<T>(method: string, fn: () => Promise<T>): Promise<T> {
 		try {
 			return await fn();
 		} catch (cause) {
-			if (cause instanceof AuthError) {
+			if (cause instanceof AuthDanceError) {
 				throw cause;
 			}
-			throw new AuthUnknownError(`${method} failed`, { cause });
+			throw new AuthDanceUnknownError(`${method} failed`, { cause });
 		}
 	}
 
-	#sendMessage(message: AuthMessage): Promise<void> {
+	#sendMessage(message: AuthDanceMessage): Promise<void> {
 		const ch = this.#options.channels[message.recipient.channel];
 		if (!ch) {
 			throw new UnknownChannelError(message.recipient.channel);
@@ -176,8 +182,8 @@ export class AuthApi {
 	sendMessageTo(
 		identityId: string,
 		channel: string,
-		message: Omit<AuthMessage, "recipient">,
-	): Promise<AuthResponseResult> {
+		message: Omit<AuthDanceMessage, "recipient">,
+	): Promise<AuthDanceResponseResult> {
 		return this.#guard("sendMessageTo", async () => {
 			const identity = await this.#options.storage.getIdentity(identityId);
 			if (!identity) {
@@ -196,7 +202,7 @@ export class AuthApi {
 		});
 	}
 
-	sendMessage(message: AuthMessage): Promise<AuthResponseResult> {
+	sendMessage(message: AuthDanceMessage): Promise<AuthDanceResponseResult> {
 		return this.#guard("sendMessage", async () => {
 			await this.#sendMessage(message);
 			return { success: true };
@@ -208,8 +214,8 @@ export class AuthApi {
 	// be used, never how recently its holder proved who they are. Sensitive actions gate on it — see
 	// #requireFreshSignIn.
 	async #generateTokens(
-		options: { identity: Identity; scopes: string[]; session: AuthSession; authTime?: number },
-	): Promise<AuthResponseTokens> {
+		options: { identity: Identity; scopes: string[]; session: AuthDanceSession; authTime?: number },
+	): Promise<AuthDanceResponseTokens> {
 		const authTime = options.authTime ?? Math.floor(Date.now() / 1000);
 
 		const access_token = await new SignJWT({ auth_time: authTime })
@@ -253,7 +259,7 @@ export class AuthApi {
 	// A tampered, expired, subject-less or auth_time-less token all mean the same thing to the caller, and
 	// saying which would only help someone probing. jose's own failure is therefore expected here, not
 	// unknown. Every token this class mints carries both claims, so a token missing either is not one of ours.
-	async #verifiedClaims(token: string, invalid: () => AuthError): Promise<{ sub: string; authTime: number }> {
+	async #verifiedClaims(token: string, invalid: () => AuthDanceError): Promise<{ sub: string; authTime: number }> {
 		const payload = await jwtVerify(token, this.#decodedSecret, {
 			issuer: this.#options.advanced?.issuer ?? "acme",
 		}).then(({ payload }) => payload, () => undefined);
@@ -277,7 +283,7 @@ export class AuthApi {
 	// an access token, or the identity a flow's state has already resolved. A call attributable to neither
 	// — signing in before the identification has been answered, starting a sign-up or a recovery — is left
 	// to the per-address buckets at the edge, the only layer that can bucket it at all.
-	async #consumeRateLimit(bucket: keyof AuthIdentityRateLimits, subject: string | undefined): Promise<void> {
+	async #consumeRateLimit(bucket: keyof AuthDanceIdentityRateLimits, subject: string | undefined): Promise<void> {
 		if (!subject) {
 			return;
 		}
@@ -290,7 +296,7 @@ export class AuthApi {
 
 	// Which subject a state is attributable to. Sign-up is the one flow with none: it mints its own identity
 	// id and a caller can always start another, so there is nothing durable to bucket on.
-	#stateSubject(state: AuthState): string | undefined {
+	#stateSubject(state: AuthDanceState): string | undefined {
 		if (state.kind === "sign-in" || state.kind === "recover") {
 			return state.identityId && `identity:${state.identityId}`;
 		}
@@ -300,7 +306,7 @@ export class AuthApi {
 		return `session:${state.sessionId}`;
 	}
 
-	refreshToken(refresh_token: string): Promise<AuthResponseTokens> {
+	refreshToken(refresh_token: string): Promise<AuthDanceResponseTokens> {
 		return this.#guard("refreshToken", async () => {
 			const { sub, authTime } = await this.#verifiedClaims(refresh_token, () => new InvalidRefreshTokenError());
 			await this.#consumeRateLimit("refresh", `session:${sub}`);
@@ -316,7 +322,7 @@ export class AuthApi {
 		});
 	}
 
-	signOut(access_token: string, others: boolean = false): Promise<AuthResponseResult> {
+	signOut(access_token: string, others: boolean = false): Promise<AuthDanceResponseResult> {
 		return this.#guard("signOut", async () => {
 			const { session } = await this.accessTokenIdentity(access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
@@ -331,11 +337,11 @@ export class AuthApi {
 	}
 
 	async #getPromptFromChoreography(options: {
-		choreography: AuthChoreographyComponent | AuthChoreographyChoice<AuthChoreographyComponent>;
+		choreography: AuthDanceChoreographyComponent | AuthDanceChoreographyChoice<AuthDanceChoreographyComponent>;
 		stateId: string;
 		flow: string;
 		identity: Identity | undefined;
-	}): Promise<AuthPrompt> {
+	}): Promise<AuthDancePrompt> {
 		const components = "component" in options.choreography ? [options.choreography] : options.choreography.components;
 		const prompts = await Promise.all(components.map((component) => {
 			const authComponent = this.#options.components[component.component];
@@ -359,11 +365,11 @@ export class AuthApi {
 	}
 
 	async #promptResponse(
-		state: AuthState,
-		nextMove: AuthChoreographyComponent | AuthChoreographyChoice<AuthChoreographyComponent>,
+		state: AuthDanceState,
+		nextMove: AuthDanceChoreographyComponent | AuthDanceChoreographyChoice<AuthDanceChoreographyComponent>,
 		expireAt: Date,
 		flow: string,
-	): Promise<AuthResponseState> {
+	): Promise<AuthDanceResponseState> {
 		const prompt = await this.#getPromptFromChoreography({
 			choreography: nextMove,
 			stateId: state.id,
@@ -373,7 +379,10 @@ export class AuthApi {
 		return { state: await this.#encryptState(state, expireAt), prompt, expireAt };
 	}
 
-	async #issueTokens(identity: Identity, options: { expireAt: Date; address?: string; userAgent?: string }): Promise<AuthResponseTokens> {
+	async #issueTokens(
+		identity: Identity,
+		options: { expireAt: Date; address?: string; userAgent?: string },
+	): Promise<AuthDanceResponseTokens> {
 		const scopes = Object.keys(identity.data ?? {});
 		const session = await this.#options.storage.createSession({
 			identityId: identity.id,
@@ -386,7 +395,7 @@ export class AuthApi {
 	}
 
 	async #advance(options: {
-		state: AuthState;
+		state: AuthDanceState;
 		path: string[];
 		identity: Identity;
 		expireAt: Date;
@@ -394,7 +403,7 @@ export class AuthApi {
 		persist?: boolean;
 		address?: string;
 		userAgent?: string;
-	}): Promise<AuthResponse> {
+	}): Promise<AuthDanceResponse> {
 		// Only the authentication flows mint tokens; management flows (subscribe, …) have no further steps
 		// and complete with a plain success result. Recovery is in between: it walks the choreography like an
 		// authentication flow — resetting whatever it still requires after the recovered component — but
@@ -416,7 +425,7 @@ export class AuthApi {
 	#resolveStep(
 		path: string[],
 		componentName?: string,
-	): { choreographyComponent: AuthChoreographyComponent; authComponent: AuthComponent } {
+	): { choreographyComponent: AuthDanceChoreographyComponent; authComponent: AuthDanceComponent } {
 		const nextMove = peek(this.#options.choreography, path)!;
 		const choreographyComponent = nextMove.kind === "component" ? nextMove : nextMove.components.find((c) => c.component === componentName);
 		if (!choreographyComponent) {
@@ -429,13 +438,13 @@ export class AuthApi {
 		return { choreographyComponent, authComponent };
 	}
 
-	#signUpPath(state: AuthStateSignUp): string[] {
+	#signUpPath(state: AuthDanceStateSignUp): string[] {
 		return state.components
 			.filter((c): c is IdentityIdentification | IdentityChallenge => c.confirmed && c.kind !== "channel")
 			.map((c) => c.component);
 	}
 
-	#signInContext(state: AuthStateSignIn, component: string, identity: Identity | undefined): AuthComponentContext {
+	#signInContext(state: AuthDanceStateSignIn, component: string, identity: Identity | undefined): AuthDanceComponentContext {
 		return {
 			storage: this.#options.storage,
 			name: component,
@@ -445,7 +454,7 @@ export class AuthApi {
 		};
 	}
 
-	#signUpContext(state: AuthStateSignUp, component: string): AuthComponentContext {
+	#signUpContext(state: AuthDanceStateSignUp, component: string): AuthDanceComponentContext {
 		return {
 			storage: this.#options.storage,
 			name: component,
@@ -459,7 +468,7 @@ export class AuthApi {
 		};
 	}
 
-	async #sessionIdentity(sessionId: string): Promise<{ session: AuthSession; identity: Identity }> {
+	async #sessionIdentity(sessionId: string): Promise<{ session: AuthDanceSession; identity: Identity }> {
 		const session = await this.#options.storage.getSession(sessionId);
 		if (!session) {
 			throw new SessionNotFoundError(sessionId);
@@ -479,7 +488,7 @@ export class AuthApi {
 	 * routes — listing sessions, listing components — are nothing but this call followed by a storage read,
 	 * and wrapping each of them in a method here would add a layer that decides nothing.
 	 */
-	async accessTokenIdentity(access_token: string): Promise<{ session: AuthSession; identity: Identity; authTime: number }> {
+	async accessTokenIdentity(access_token: string): Promise<{ session: AuthDanceSession; identity: Identity; authTime: number }> {
 		const { sub, authTime } = await this.#verifiedClaims(access_token, () => new InvalidAccessTokenError());
 		return { ...await this.#sessionIdentity(sub), authTime };
 	}
@@ -496,7 +505,7 @@ export class AuthApi {
 		return channel;
 	}
 
-	#subscribeContext(state: AuthStateSubscribe, identity: Identity): AuthComponentContext {
+	#subscribeContext(state: AuthDanceStateSubscribe, identity: Identity): AuthDanceComponentContext {
 		return {
 			storage: this.#options.storage,
 			name: state.channel.channel,
@@ -509,7 +518,7 @@ export class AuthApi {
 	// Like #signUpContext, the component sees the components collected during this enrollment first,
 	// so its verification targets the value being enrolled (e.g. the OTP goes to the new email
 	// address) while the identity's existing components stay available as a fallback.
-	#enrollContext(state: AuthStateEnroll, identity: Identity): AuthComponentContext {
+	#enrollContext(state: AuthDanceStateEnroll, identity: Identity): AuthDanceComponentContext {
 		return {
 			storage: this.#options.storage,
 			name: state.component,
@@ -519,11 +528,11 @@ export class AuthApi {
 		};
 	}
 
-	async #resolveEnrollVerification(state: AuthStateEnroll): Promise<{
+	async #resolveEnrollVerification(state: AuthDanceStateEnroll): Promise<{
 		identity: Identity;
 		identityComponent: IdentityIdentification | IdentityChallenge;
-		ctx: AuthComponentContext;
-		verificationAuthComponent: AuthComponent;
+		ctx: AuthDanceComponentContext;
+		verificationAuthDanceComponent: AuthDanceComponent;
 	}> {
 		const { identity } = await this.#sessionIdentity(state.sessionId);
 		const authComponent = this.#options.components[state.component];
@@ -535,8 +544,8 @@ export class AuthApi {
 		}
 		const identityComponent = this.#collectedIdentityComponent(state.components, state.component);
 		const ctx = this.#enrollContext(state, identity);
-		const verificationAuthComponent = await authComponent.verificationComponent(ctx);
-		return { identity, identityComponent, ctx, verificationAuthComponent };
+		const verificationAuthDanceComponent = await authComponent.verificationComponent(ctx);
+		return { identity, identityComponent, ctx, verificationAuthDanceComponent };
 	}
 
 	// The component being enrolled, rotated or reset is the identification/challenge it produced; any channel
@@ -555,7 +564,7 @@ export class AuthApi {
 	// verification targets the new value (e.g. the OTP goes to the new email address). While the
 	// replacement has not been collected yet, state.components is empty and the identity is seen as it
 	// stands, which is exactly what proving control of the enrolled component needs.
-	#rotateContext(state: AuthStateRotate, identity: Identity): AuthComponentContext {
+	#rotateContext(state: AuthDanceStateRotate, identity: Identity): AuthDanceComponentContext {
 		return {
 			storage: this.#options.storage,
 			name: state.component,
@@ -565,11 +574,11 @@ export class AuthApi {
 		};
 	}
 
-	async #resolveRotateVerification(state: AuthStateRotate): Promise<{
+	async #resolveRotateVerification(state: AuthDanceStateRotate): Promise<{
 		identity: Identity;
-		ctx: AuthComponentContext;
-		authComponent: AuthComponent;
-		verificationAuthComponent: AuthComponent;
+		ctx: AuthDanceComponentContext;
+		authComponent: AuthDanceComponent;
+		verificationAuthDanceComponent: AuthDanceComponent;
 	}> {
 		const { identity } = await this.#sessionIdentity(state.sessionId);
 		const authComponent = this.#options.components[state.component];
@@ -580,8 +589,8 @@ export class AuthApi {
 			throw new ComponentNotVerifiableError(state.component);
 		}
 		const ctx = this.#rotateContext(state, identity);
-		const verificationAuthComponent = await authComponent.verificationComponent(ctx);
-		return { identity, ctx, authComponent, verificationAuthComponent };
+		const verificationAuthDanceComponent = await authComponent.verificationComponent(ctx);
+		return { identity, ctx, authComponent, verificationAuthDanceComponent };
 	}
 
 	// Rotation and recovery both swap components in place: the previously enrolled identification/challenge
@@ -609,7 +618,7 @@ export class AuthApi {
 
 	// The recovery component is the step control has been proven for, so it opens the path; every component
 	// reset since then follows it, exactly like #signUpPath tracks what sign-up has collected so far.
-	#recoverPath(state: AuthStateRecover): string[] {
+	#recoverPath(state: AuthDanceStateRecover): string[] {
 		return [
 			state.component,
 			...state.components
@@ -622,7 +631,7 @@ export class AuthApi {
 	// so its verification targets the new one. While control of the recovery component is still being proven
 	// nothing has been collected and the identity is seen as it stands — which is what proving control needs.
 	// The identity itself is unknown until the identification has been submitted.
-	#recoverContext(state: AuthStateRecover, component: string, identity: Identity | undefined): AuthComponentContext {
+	#recoverContext(state: AuthDanceStateRecover, component: string, identity: Identity | undefined): AuthDanceComponentContext {
 		return {
 			storage: this.#options.storage,
 			name: component,
@@ -632,7 +641,7 @@ export class AuthApi {
 		};
 	}
 
-	async #recoverIdentity(state: AuthStateRecover): Promise<Identity> {
+	async #recoverIdentity(state: AuthDanceStateRecover): Promise<Identity> {
 		if (!state.identityId) {
 			throw new RecoveryNotIdentifiedError(state.component);
 		}
@@ -644,9 +653,9 @@ export class AuthApi {
 	}
 
 	// First phase: prove control of the component the recovery started from.
-	async #resolveRecoverControl(state: AuthStateRecover, identity: Identity): Promise<{
-		ctx: AuthComponentContext;
-		verificationAuthComponent: AuthComponent;
+	async #resolveRecoverControl(state: AuthDanceStateRecover, identity: Identity): Promise<{
+		ctx: AuthDanceComponentContext;
+		verificationAuthDanceComponent: AuthDanceComponent;
 	}> {
 		const authComponent = this.#options.components[state.component];
 		if (!authComponent) {
@@ -656,16 +665,16 @@ export class AuthApi {
 			throw new ComponentNotVerifiableError(state.component);
 		}
 		const ctx = this.#recoverContext(state, state.component, identity);
-		return { ctx, verificationAuthComponent: await authComponent.verificationComponent(ctx) };
+		return { ctx, verificationAuthDanceComponent: await authComponent.verificationComponent(ctx) };
 	}
 
 	// Second phase: validate the replacement collected for the component currently being reset.
-	async #resolveRecoverReset(state: AuthStateRecover, identity: Identity, componentName?: string): Promise<{
+	async #resolveRecoverReset(state: AuthDanceStateRecover, identity: Identity, componentName?: string): Promise<{
 		path: string[];
-		choreographyComponent: AuthChoreographyComponent;
+		choreographyComponent: AuthDanceChoreographyComponent;
 		identityComponent: IdentityIdentification | IdentityChallenge;
-		ctx: AuthComponentContext;
-		verificationAuthComponent: AuthComponent;
+		ctx: AuthDanceComponentContext;
+		verificationAuthDanceComponent: AuthDanceComponent;
 	}> {
 		const path = this.#recoverPath(state);
 		const { choreographyComponent, authComponent } = this.#resolveStep(path, componentName);
@@ -679,7 +688,7 @@ export class AuthApi {
 			choreographyComponent,
 			identityComponent,
 			ctx,
-			verificationAuthComponent: await authComponent.verificationComponent(ctx),
+			verificationAuthDanceComponent: await authComponent.verificationComponent(ctx),
 		};
 	}
 
@@ -709,12 +718,12 @@ export class AuthApi {
 		return false;
 	}
 
-	async #resolveVerification(state: AuthStateSignUp, componentName?: string): Promise<{
+	async #resolveVerification(state: AuthDanceStateSignUp, componentName?: string): Promise<{
 		path: string[];
-		choreographyComponent: AuthChoreographyComponent;
+		choreographyComponent: AuthDanceChoreographyComponent;
 		identityComponent: IdentityComponent;
-		ctx: AuthComponentContext;
-		verificationAuthComponent: AuthComponent;
+		ctx: AuthDanceComponentContext;
+		verificationAuthDanceComponent: AuthDanceComponent;
 	}> {
 		const path = this.#signUpPath(state);
 		const { choreographyComponent, authComponent } = this.#resolveStep(path, componentName);
@@ -726,11 +735,11 @@ export class AuthApi {
 		if (!authComponent.verificationComponent) {
 			throw new ComponentNotVerifiableError(choreographyComponent.component);
 		}
-		const verificationAuthComponent = await authComponent.verificationComponent(ctx);
-		return { path, choreographyComponent, identityComponent, ctx, verificationAuthComponent };
+		const verificationAuthDanceComponent = await authComponent.verificationComponent(ctx);
+		return { path, choreographyComponent, identityComponent, ctx, verificationAuthDanceComponent };
 	}
 
-	#encryptState(state: AuthState, expireAt: Date): Promise<string> {
+	#encryptState(state: AuthDanceState, expireAt: Date): Promise<string> {
 		const jwt = new EncryptJWT({ state })
 			.setProtectedHeader({ alg: "dir", enc: "A256GCM", issuer: this.#options.advanced?.issuer })
 			.setIssuedAt()
@@ -742,23 +751,23 @@ export class AuthApi {
 	// A state that fails to decrypt, carries no expiry, or no longer matches the schema is a stale or forged
 	// value coming from the client — expected input, not a server fault. jose and valibot both fail by
 	// throwing, so they are converted here rather than escaping as unknown.
-	async #decryptState(value: string): Promise<{ state: AuthState; expireAt: Date }> {
+	async #decryptState(value: string): Promise<{ state: AuthDanceState; expireAt: Date }> {
 		const payload = await jwtDecrypt(value, this.#decodedSecret, { issuer: this.#options.advanced?.issuer })
 			.then(({ payload }) => payload, () => undefined);
 		if (!payload?.exp) {
 			throw new InvalidStateError();
 		}
 		try {
-			return { state: parse(AuthState, payload.state), expireAt: new Date(payload.exp * 1000) };
+			return { state: parse(AuthDanceState, payload.state), expireAt: new Date(payload.exp * 1000) };
 		} catch (cause) {
 			throw new InvalidStateError("state payload does not match the schema", { cause });
 		}
 	}
 
-	signIn(): Promise<AuthResponseState> {
+	signIn(): Promise<AuthDanceResponseState> {
 		return this.#guard("signIn", () => {
 			const expireAt = this.#expireAt(this.#options.advanced?.sign_in_duration);
-			const state: AuthStateSignIn = {
+			const state: AuthDanceStateSignIn = {
 				kind: "sign-in",
 				id: ksuid("st_"),
 				path: [],
@@ -772,10 +781,10 @@ export class AuthApi {
 		});
 	}
 
-	signUp(): Promise<AuthResponseState> {
+	signUp(): Promise<AuthDanceResponseState> {
 		return this.#guard("signUp", () => {
 			const expireAt = this.#expireAt(this.#options.advanced?.sign_up_duration);
-			const state: AuthStateSignUp = {
+			const state: AuthDanceStateSignUp = {
 				kind: "sign-up",
 				id: ksuid("st_"),
 				identityId: ksuid("id_"),
@@ -789,7 +798,7 @@ export class AuthApi {
 		});
 	}
 
-	enroll(options: { name: string; access_token: string }): Promise<AuthResponseState> {
+	enroll(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("enroll", async () => {
 			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
@@ -802,7 +811,7 @@ export class AuthApi {
 			}
 			this.#requireFreshSignIn(authTime);
 			const expireAt = this.#expireAt(this.#options.advanced?.enroll_duration);
-			const state: AuthStateEnroll = {
+			const state: AuthDanceStateEnroll = {
 				id: ksuid("st_"),
 				kind: "enroll",
 				sessionId: session.id,
@@ -814,7 +823,7 @@ export class AuthApi {
 		});
 	}
 
-	unenroll(options: { name: string; access_token: string }): Promise<AuthResponseState> {
+	unenroll(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("unenroll", async () => {
 			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
@@ -829,7 +838,7 @@ export class AuthApi {
 				throw new WouldLockOutError(options.name);
 			}
 			const expireAt = this.#expireAt(this.#options.advanced?.unenroll_duration);
-			const state: AuthStateUnenroll = {
+			const state: AuthDanceStateUnenroll = {
 				id: ksuid("st_"),
 				kind: "unenroll",
 				sessionId: session.id,
@@ -843,7 +852,7 @@ export class AuthApi {
 		});
 	}
 
-	rotate(options: { name: string; access_token: string }): Promise<AuthResponseState> {
+	rotate(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("rotate", async () => {
 			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
@@ -856,7 +865,7 @@ export class AuthApi {
 			}
 			this.#requireFreshSignIn(authTime);
 			const expireAt = this.#expireAt(this.#options.advanced?.rotate_duration);
-			const state: AuthStateRotate = {
+			const state: AuthDanceStateRotate = {
 				id: ksuid("st_"),
 				kind: "rotate",
 				sessionId: session.id,
@@ -882,7 +891,7 @@ export class AuthApi {
 	// components the caller could not provide. It is the only flow open to a caller with no session at all,
 	// which is why the component it starts from has to do both jobs on its own: resolve an identity (an
 	// identification) and prove control of it (a verification).
-	recover(options: { name: string }): Promise<AuthResponseState> {
+	recover(options: { name: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("recover", async () => {
 			const authComponent = this.#options.components[options.name];
 			if (!authComponent) {
@@ -892,7 +901,7 @@ export class AuthApi {
 				throw new ComponentNotRecoverableError(options.name);
 			}
 			const expireAt = this.#expireAt(this.#options.advanced?.recover_duration);
-			const state: AuthStateRecover = {
+			const state: AuthDanceStateRecover = {
 				id: ksuid("st_"),
 				kind: "recover",
 				component: options.name,
@@ -906,7 +915,7 @@ export class AuthApi {
 		});
 	}
 
-	subscribe(options: { name: string; access_token: string }): Promise<AuthResponseState> {
+	subscribe(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("subscribe", async () => {
 			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
@@ -919,7 +928,7 @@ export class AuthApi {
 			}
 			this.#requireFreshSignIn(authTime);
 			const expireAt = this.#expireAt(this.#options.advanced?.subscribe_duration);
-			const state: AuthStateSubscribe = {
+			const state: AuthDanceStateSubscribe = {
 				id: ksuid("st_"),
 				kind: "subscribe",
 				sessionId: session.id,
@@ -937,7 +946,7 @@ export class AuthApi {
 		});
 	}
 
-	unsubscribe(options: { name: string; access_token: string }): Promise<AuthResponseState> {
+	unsubscribe(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("unsubscribe", async () => {
 			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
@@ -954,7 +963,7 @@ export class AuthApi {
 				throw new ChannelInUseError(options.name);
 			}
 			const expireAt = this.#expireAt(this.#options.advanced?.unsubscribe_duration);
-			const state: AuthStateUnsubscribe = {
+			const state: AuthDanceStateUnsubscribe = {
 				id: ksuid("st_"),
 				kind: "unsubscribe",
 				sessionId: session.id,
@@ -972,13 +981,13 @@ export class AuthApi {
 	// gated exactly like the other destructive ones — a recent sign-in, then an explicit confirmation — and
 	// nothing more: there is no component to keep the choreography completable with, and no lock-out to
 	// avoid, since locking the identity out of itself is precisely what the caller asked for.
-	delete(options: { access_token: string }): Promise<AuthResponseState> {
+	delete(options: { access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("delete", async () => {
 			const { session, authTime } = await this.accessTokenIdentity(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
 			this.#requireFreshSignIn(authTime);
 			const expireAt = this.#expireAt(this.#options.advanced?.delete_duration);
-			const state: AuthStateDelete = {
+			const state: AuthDanceStateDelete = {
 				id: ksuid("st_"),
 				kind: "delete",
 				sessionId: session.id,
@@ -991,12 +1000,12 @@ export class AuthApi {
 		});
 	}
 
-	sendPrompt(options: { name: string; locale: string; state: string }): Promise<AuthResponseResult> {
+	sendPrompt(options: { name: string; locale: string; state: string }): Promise<AuthDanceResponseResult> {
 		return this.#guard("sendPrompt", async () => {
 			const { state } = await this.#decryptState(options.state);
 			await this.#consumeRateLimit("send", this.#stateSubject(state));
-			let authComponent: AuthComponent | undefined;
-			let ctx: AuthComponentContext | undefined;
+			let authComponent: AuthDanceComponent | undefined;
+			let ctx: AuthDanceComponentContext | undefined;
 			if (state.kind === "sign-in") {
 				const { choreographyComponent, authComponent: ac } = this.#resolveStep(state.path, options.name);
 				const identity = state.identityId ? await this.#options.storage.getIdentity(state.identityId) : undefined;
@@ -1024,7 +1033,7 @@ export class AuthApi {
 
 	submitPrompt(
 		options: { name: string; value: unknown; state: string; address?: string; userAgent?: string },
-	): Promise<AuthResponse> {
+	): Promise<AuthDanceResponse> {
 		return this.#guard("submitPrompt", () => this.#submitPrompt(options));
 	}
 
@@ -1033,7 +1042,7 @@ export class AuthApi {
 	// does — by throwing — instead of being re-indented into a callback.
 	async #submitPrompt(
 		options: { name: string; value: unknown; state: string; address?: string; userAgent?: string },
-	): Promise<AuthResponse> {
+	): Promise<AuthDanceResponse> {
 		const { state, expireAt } = await this.#decryptState(options.state);
 		// Before the value is looked at, so a wrong password costs a bucket slot rather than being free. In a
 		// sign-in the subject is whatever an earlier step resolved, which is exactly the step that matters:
@@ -1096,8 +1105,8 @@ export class AuthApi {
 				throw new ComponentNotCollectedError(choreographyComponent.component);
 			}
 			if (!identityComponent.confirmed && authComponent.verificationComponent) {
-				const verificationAuthComponent = await authComponent.verificationComponent(ctx);
-				const nextPrompt = await verificationAuthComponent?.getPrompt(ctx);
+				const verificationAuthDanceComponent = await authComponent.verificationComponent(ctx);
+				const nextPrompt = await verificationAuthDanceComponent?.getPrompt(ctx);
 				const encrypted = await this.#encryptState(state, expireAt);
 				return {
 					state: encrypted,
@@ -1128,8 +1137,8 @@ export class AuthApi {
 			const identityComponent = this.#collectedIdentityComponent(state.components, state.component);
 			if (!identityComponent.confirmed && authComponent.verificationComponent) {
 				const ctx = this.#enrollContext(state, identity);
-				const verificationAuthComponent = await authComponent.verificationComponent(ctx);
-				const nextPrompt = await verificationAuthComponent.getPrompt(ctx);
+				const verificationAuthDanceComponent = await authComponent.verificationComponent(ctx);
+				const nextPrompt = await verificationAuthDanceComponent.getPrompt(ctx);
 				return { state: await this.#encryptState(state, expireAt), prompt: nextPrompt, expireAt };
 			}
 			identityComponent.confirmed = true;
@@ -1158,8 +1167,8 @@ export class AuthApi {
 			const identityComponent = this.#collectedIdentityComponent(state.components, state.component);
 			if (!identityComponent.confirmed && authComponent.verificationComponent) {
 				const ctx = this.#rotateContext(state, identity);
-				const verificationAuthComponent = await authComponent.verificationComponent(ctx);
-				const nextPrompt = await verificationAuthComponent.getPrompt(ctx);
+				const verificationAuthDanceComponent = await authComponent.verificationComponent(ctx);
+				const nextPrompt = await verificationAuthDanceComponent.getPrompt(ctx);
 				return { state: await this.#encryptState(state, expireAt), prompt: nextPrompt, expireAt };
 			}
 			identityComponent.confirmed = true;
@@ -1190,7 +1199,7 @@ export class AuthApi {
 				const control = await this.#resolveRecoverControl(state, await this.#recoverIdentity(state));
 				return {
 					state: await this.#encryptState(state, expireAt),
-					prompt: await control.verificationAuthComponent.getPrompt(control.ctx),
+					prompt: await control.verificationAuthDanceComponent.getPrompt(control.ctx),
 					expireAt,
 				};
 			}
@@ -1210,8 +1219,8 @@ export class AuthApi {
 			const identityComponent = this.#collectedIdentityComponent(state.components, choreographyComponent.component);
 			if (!identityComponent.confirmed && authComponent.verificationComponent) {
 				const ctx = this.#recoverContext(state, choreographyComponent.component, identity);
-				const verificationAuthComponent = await authComponent.verificationComponent(ctx);
-				return { state: await this.#encryptState(state, expireAt), prompt: await verificationAuthComponent.getPrompt(ctx), expireAt };
+				const verificationAuthDanceComponent = await authComponent.verificationComponent(ctx);
+				return { state: await this.#encryptState(state, expireAt), prompt: await verificationAuthDanceComponent.getPrompt(ctx), expireAt };
 			}
 			identityComponent.confirmed = true;
 			this.#applyReplacement(identity, state.components);
@@ -1248,7 +1257,7 @@ export class AuthApi {
 			state.channel.data = { ...(state.channel.data ?? {}), [state.channel.channel]: options.value };
 			state.validating = true;
 			const sendChannel = this.#subscribeSendChannel(identity, state.channel.channel);
-			const prompt = await new OtpAuthComponent(sendChannel.channel).getPrompt(this.#subscribeContext(state, identity));
+			const prompt = await new OtpAuthDanceComponent(sendChannel.channel).getPrompt(this.#subscribeContext(state, identity));
 			return { state: await this.#encryptState(state, expireAt), prompt, expireAt };
 		} else if (state.kind === "unsubscribe") {
 			// A single confirmation gate: the authenticated caller must explicitly confirm (value === true)
@@ -1278,49 +1287,49 @@ export class AuthApi {
 			await this.#options.storage.deleteIdentity(identity.id);
 			return { success: true };
 		} else {
-			// Every AuthState kind is handled above, so `state` narrows to `never` here — hence the cast. The
+			// Every AuthDanceState kind is handled above, so `state` narrows to `never` here — hence the cast. The
 			// branch is kept as a runtime guard: the state comes from the client, and a kind the schema does
 			// not know about should fail loudly rather than fall through to #advance with an empty flow.
-			throw new InvalidStateForFlowError((state as AuthState).kind);
+			throw new InvalidStateForFlowError((state as AuthDanceState).kind);
 		}
 		return this.#advance(advanceOptions);
 	}
 
-	sendValidation(options: { name: string; locale: string; state: string }): Promise<AuthResponseResult> {
+	sendValidation(options: { name: string; locale: string; state: string }): Promise<AuthDanceResponseResult> {
 		return this.#guard("sendValidation", () => this.#sendValidation(options));
 	}
 
-	async #sendValidation(options: { name: string; locale: string; state: string }): Promise<AuthResponseResult> {
+	async #sendValidation(options: { name: string; locale: string; state: string }): Promise<AuthDanceResponseResult> {
 		const { state } = await this.#decryptState(options.state);
 		await this.#consumeRateLimit("send", this.#stateSubject(state));
-		let authComponent: AuthComponent | undefined;
-		let ctx: AuthComponentContext | undefined;
+		let authComponent: AuthDanceComponent | undefined;
+		let ctx: AuthDanceComponentContext | undefined;
 		if (state.kind === "sign-up") {
-			const { ctx: c, verificationAuthComponent: ac } = await this.#resolveVerification(state, options.name);
+			const { ctx: c, verificationAuthDanceComponent: ac } = await this.#resolveVerification(state, options.name);
 			authComponent = ac;
 			ctx = c;
 		} else if (state.kind === "enroll") {
-			const { ctx: c, verificationAuthComponent: ac } = await this.#resolveEnrollVerification(state);
+			const { ctx: c, verificationAuthDanceComponent: ac } = await this.#resolveEnrollVerification(state);
 			authComponent = ac;
 			ctx = c;
 		} else if (state.kind === "rotate") {
 			// Serves both phases: before the replacement is collected the context still resolves to the
 			// enrolled value (proving control), afterwards it resolves to the replacement (validating it).
-			const { ctx: c, verificationAuthComponent: ac } = await this.#resolveRotateVerification(state);
+			const { ctx: c, verificationAuthDanceComponent: ac } = await this.#resolveRotateVerification(state);
 			authComponent = ac;
 			ctx = c;
 		} else if (state.kind === "recover") {
 			// Serves both phases too: proving control of the component the recovery started from, then validating
 			// a replacement collected during the reset.
 			const identity = await this.#recoverIdentity(state);
-			const { ctx: c, verificationAuthComponent: ac } = state.verified
+			const { ctx: c, verificationAuthDanceComponent: ac } = state.verified
 				? await this.#resolveRecoverReset(state, identity, options.name)
 				: await this.#resolveRecoverControl(state, identity);
 			authComponent = ac;
 			ctx = c;
 		} else if (state.kind === "subscribe") {
 			const { identity } = await this.#sessionIdentity(state.sessionId);
-			authComponent = new OtpAuthComponent(this.#subscribeSendChannel(identity, state.channel.channel).channel);
+			authComponent = new OtpAuthDanceComponent(this.#subscribeSendChannel(identity, state.channel.channel).channel);
 			ctx = this.#subscribeContext(state, identity);
 		} else {
 			throw new InvalidStateForFlowError(state.kind);
@@ -1338,13 +1347,13 @@ export class AuthApi {
 
 	submitValidation(
 		options: { name: string; value: unknown; state: string; address?: string; userAgent?: string },
-	): Promise<AuthResponse> {
+	): Promise<AuthDanceResponse> {
 		return this.#guard("submitValidation", () => this.#submitValidation(options));
 	}
 
 	async #submitValidation(
 		options: { name: string; value: unknown; state: string; address?: string; userAgent?: string },
-	): Promise<AuthResponse> {
+	): Promise<AuthDanceResponse> {
 		const { state, expireAt } = await this.#decryptState(options.state);
 		await this.#consumeRateLimit("verify", this.#stateSubject(state));
 		let advanceOptions = {
@@ -1358,11 +1367,11 @@ export class AuthApi {
 			userAgent: options.userAgent,
 		};
 		if (state.kind === "sign-up") {
-			const { path, choreographyComponent, identityComponent, ctx, verificationAuthComponent } = await this.#resolveVerification(
+			const { path, choreographyComponent, identityComponent, ctx, verificationAuthDanceComponent } = await this.#resolveVerification(
 				state,
 				options.name,
 			);
-			const identityId = await verificationAuthComponent.verifyPrompt(options.value, ctx);
+			const identityId = await verificationAuthDanceComponent.verifyPrompt(options.value, ctx);
 			if (identityId !== true) {
 				throw new InvalidValidationValueError(choreographyComponent.component);
 			}
@@ -1375,8 +1384,8 @@ export class AuthApi {
 				persist: true,
 			};
 		} else if (state.kind === "enroll") {
-			const { identity, identityComponent, ctx, verificationAuthComponent } = await this.#resolveEnrollVerification(state);
-			const verified = await verificationAuthComponent.verifyPrompt(options.value, ctx);
+			const { identity, identityComponent, ctx, verificationAuthDanceComponent } = await this.#resolveEnrollVerification(state);
+			const verified = await verificationAuthDanceComponent.verifyPrompt(options.value, ctx);
 			if (verified !== true) {
 				throw new InvalidValidationValueError(state.component);
 			}
@@ -1389,8 +1398,8 @@ export class AuthApi {
 				persist: true,
 			};
 		} else if (state.kind === "rotate") {
-			const { identity, ctx, authComponent, verificationAuthComponent } = await this.#resolveRotateVerification(state);
-			const verified = await verificationAuthComponent.verifyPrompt(options.value, ctx);
+			const { identity, ctx, authComponent, verificationAuthDanceComponent } = await this.#resolveRotateVerification(state);
+			const verified = await verificationAuthDanceComponent.verifyPrompt(options.value, ctx);
 			if (verified !== true) {
 				throw new InvalidValidationValueError(state.component);
 			}
@@ -1411,8 +1420,8 @@ export class AuthApi {
 		} else if (state.kind === "recover") {
 			const identity = await this.#recoverIdentity(state);
 			if (!state.verified) {
-				const { ctx, verificationAuthComponent } = await this.#resolveRecoverControl(state, identity);
-				const verified = await verificationAuthComponent.verifyPrompt(options.value, ctx);
+				const { ctx, verificationAuthDanceComponent } = await this.#resolveRecoverControl(state, identity);
+				const verified = await verificationAuthDanceComponent.verifyPrompt(options.value, ctx);
 				if (verified !== true) {
 					throw new InvalidValidationValueError(state.component);
 				}
@@ -1426,12 +1435,12 @@ export class AuthApi {
 					path: this.#recoverPath(state),
 				};
 			} else {
-				const { path, choreographyComponent, identityComponent, ctx, verificationAuthComponent } = await this.#resolveRecoverReset(
+				const { path, choreographyComponent, identityComponent, ctx, verificationAuthDanceComponent } = await this.#resolveRecoverReset(
 					state,
 					identity,
 					options.name,
 				);
-				const verified = await verificationAuthComponent.verifyPrompt(options.value, ctx);
+				const verified = await verificationAuthDanceComponent.verifyPrompt(options.value, ctx);
 				if (verified !== true) {
 					throw new InvalidValidationValueError(choreographyComponent.component);
 				}
@@ -1448,7 +1457,7 @@ export class AuthApi {
 		} else if (state.kind === "subscribe") {
 			const { identity } = await this.#sessionIdentity(state.sessionId);
 			const sendChannel = this.#subscribeSendChannel(identity, state.channel.channel);
-			const verified = await new OtpAuthComponent(sendChannel.channel).verifyPrompt(
+			const verified = await new OtpAuthDanceComponent(sendChannel.channel).verifyPrompt(
 				options.value,
 				this.#subscribeContext(state, identity),
 			);

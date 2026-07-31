@@ -1,11 +1,11 @@
-import type { AuthComponent, AuthComponentContext } from "../component.ts";
+import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
 import type { Identity, IdentityChannel, IdentityComponent } from "../identity.ts";
-import type { AuthMessage } from "../message.ts";
-import type { AuthPromptInput } from "../prompt.ts";
+import type { AuthDanceMessage } from "../message.ts";
+import type { AuthDancePromptInput } from "../prompt.ts";
 import { otp } from "../otp.ts";
 import { ChannelNotSubscribedError, ComponentNotVerifiableError } from "../error.ts";
 
-export default class OtpAuthComponent implements AuthComponent {
+export default class OtpAuthDanceComponent implements AuthDanceComponent {
 	readonly kind: IdentityComponent["kind"] = "challenge";
 	// The OTP is what other components verify themselves with; it has no verification of its own.
 	readonly verifiable = false;
@@ -36,7 +36,7 @@ export default class OtpAuthComponent implements AuthComponent {
 	}
 
 	// deno-lint-ignore require-await
-	async getPrompt(context: AuthComponentContext): Promise<AuthPromptInput> {
+	async getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput> {
 		return {
 			kind: "input",
 			name: context.name,
@@ -45,7 +45,7 @@ export default class OtpAuthComponent implements AuthComponent {
 		};
 	}
 
-	async verifyPrompt(response: unknown, context: AuthComponentContext): Promise<boolean | Identity["id"]> {
+	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | Identity["id"]> {
 		const value = typeof response === "string" ? response : null;
 		if (!value) {
 			return false;
@@ -61,7 +61,7 @@ export default class OtpAuthComponent implements AuthComponent {
 		return true;
 	}
 
-	async sendPrompt(_locale: string, context: AuthComponentContext): Promise<AuthMessage> {
+	async sendPrompt(_locale: string, context: AuthDanceComponentContext): Promise<AuthDanceMessage> {
 		const identityChannel = context.identity?.components
 			.find((c): c is IdentityChannel => c.kind === "channel" && c.channel === this.#channel);
 		if (!identityChannel) {
@@ -81,7 +81,7 @@ export default class OtpAuthComponent implements AuthComponent {
 	}
 
 	// deno-lint-ignore require-await
-	async verificationComponent?(context: AuthComponentContext): Promise<AuthComponent> {
+	async verificationComponent?(context: AuthDanceComponentContext): Promise<AuthDanceComponent> {
 		// See `verifiable` above: the OTP is the verification, so it has none of its own.
 		throw new ComponentNotVerifiableError(context.name);
 	}

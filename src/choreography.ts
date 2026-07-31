@@ -1,12 +1,12 @@
 import * as v from "valibot";
 import { ComponentNotInChoreographyError } from "./error.ts";
 
-export interface AuthChoreographyComponent {
+export interface AuthDanceChoreographyComponent {
 	kind: "component";
 	component: string;
 }
 
-export const AuthChoreographyComponent: v.GenericSchema<AuthChoreographyComponent> = v.pipe(
+export const AuthDanceChoreographyComponent: v.GenericSchema<AuthDanceChoreographyComponent> = v.pipe(
 	v.object({
 		kind: v.literal("component"),
 		component: v.string(),
@@ -15,76 +15,76 @@ export const AuthChoreographyComponent: v.GenericSchema<AuthChoreographyComponen
 	v.description("A single choreography component"),
 );
 
-export interface AuthChoreographyChoice<T extends AuthChoreography = AuthChoreography> {
+export interface AuthDanceChoreographyChoice<T extends AuthDanceChoreography = AuthDanceChoreography> {
 	kind: "choice";
 	components: T[];
 }
 
-export const AuthChoreographyChoice: v.GenericSchema<AuthChoreographyChoice> = v.lazy(() =>
+export const AuthDanceChoreographyChoice: v.GenericSchema<AuthDanceChoreographyChoice> = v.lazy(() =>
 	v.pipe(
 		v.object({
 			kind: v.literal("choice"),
-			components: v.array(AuthChoreography),
+			components: v.array(AuthDanceChoreography),
 		}),
 		v.title("ChoreographyChoice"),
 		v.description("A choice of choreography components"),
 	)
 );
 
-export interface AuthChoreographySequence<T extends AuthChoreography = AuthChoreography> {
+export interface AuthDanceChoreographySequence<T extends AuthDanceChoreography = AuthDanceChoreography> {
 	kind: "sequence";
 	components: T[];
 }
 
-export const AuthChoreographySequence: v.GenericSchema<AuthChoreographySequence> = v.lazy(() =>
+export const AuthDanceChoreographySequence: v.GenericSchema<AuthDanceChoreographySequence> = v.lazy(() =>
 	v.pipe(
 		v.object({
 			kind: v.literal("sequence"),
-			components: v.array(AuthChoreography),
+			components: v.array(AuthDanceChoreography),
 		}),
 		v.title("ChoreographySequence"),
 		v.description("A sequence of choreography components"),
 	)
 );
 
-export type AuthChoreography = AuthChoreographyComponent | AuthChoreographyChoice | AuthChoreographySequence;
+export type AuthDanceChoreography = AuthDanceChoreographyComponent | AuthDanceChoreographyChoice | AuthDanceChoreographySequence;
 
-export const AuthChoreography: v.GenericSchema<AuthChoreography> = v.pipe(
-	v.union([AuthChoreographyComponent, AuthChoreographyChoice, AuthChoreographySequence]),
+export const AuthDanceChoreography: v.GenericSchema<AuthDanceChoreography> = v.pipe(
+	v.union([AuthDanceChoreographyComponent, AuthDanceChoreographyChoice, AuthDanceChoreographySequence]),
 	v.title("Choreography"),
 	v.description("A choreography, which can be a component, a choice, or a sequence"),
 );
 
-export function sequence<const T extends AuthChoreography[]>(...components: T): AuthChoreographySequence<T[number]>;
-export function sequence(...components: Array<AuthChoreography | string>): AuthChoreographySequence;
-export function sequence(...components: Array<AuthChoreography | string>): AuthChoreographySequence {
+export function sequence<const T extends AuthDanceChoreography[]>(...components: T): AuthDanceChoreographySequence<T[number]>;
+export function sequence(...components: Array<AuthDanceChoreography | string>): AuthDanceChoreographySequence;
+export function sequence(...components: Array<AuthDanceChoreography | string>): AuthDanceChoreographySequence {
 	return {
 		kind: "sequence",
 		components: components.map((c) => (typeof c === "string" ? component(c) : c)),
 	};
 }
 
-export function choice<const T extends AuthChoreography[]>(...components: T): AuthChoreographyChoice<T[number]>;
-export function choice(...components: Array<AuthChoreography | string>): AuthChoreographyChoice;
-export function choice(...components: Array<AuthChoreography | string>): AuthChoreographyChoice {
+export function choice<const T extends AuthDanceChoreography[]>(...components: T): AuthDanceChoreographyChoice<T[number]>;
+export function choice(...components: Array<AuthDanceChoreography | string>): AuthDanceChoreographyChoice;
+export function choice(...components: Array<AuthDanceChoreography | string>): AuthDanceChoreographyChoice {
 	return {
 		kind: "choice",
 		components: components.map((c) => (typeof c === "string" ? component(c) : c)),
 	};
 }
 
-export function component(component: string): AuthChoreographyComponent {
+export function component(component: string): AuthDanceChoreographyComponent {
 	return {
 		kind: "component",
 		component,
 	};
 }
 
-export function pick<const T extends AuthChoreography[]>(count: number, ...components: T): AuthChoreographyChoice<T[number]>;
-export function pick(count: number, ...components: Array<AuthChoreography | string>): AuthChoreographyChoice;
-export function pick(count: number, ...components: Array<AuthChoreography | string>): AuthChoreographyChoice {
-	const permutations: AuthChoreographySequence[] = [];
-	function permute(chosen: AuthChoreography[], remaining: AuthChoreography[]): void {
+export function pick<const T extends AuthDanceChoreography[]>(count: number, ...components: T): AuthDanceChoreographyChoice<T[number]>;
+export function pick(count: number, ...components: Array<AuthDanceChoreography | string>): AuthDanceChoreographyChoice;
+export function pick(count: number, ...components: Array<AuthDanceChoreography | string>): AuthDanceChoreographyChoice {
+	const permutations: AuthDanceChoreographySequence[] = [];
+	function permute(chosen: AuthDanceChoreography[], remaining: AuthDanceChoreography[]): void {
 		if (chosen.length === count) {
 			permutations.push(sequence(...chosen));
 			return;
@@ -97,7 +97,7 @@ export function pick(count: number, ...components: Array<AuthChoreography | stri
 	return choice(...permutations);
 }
 
-export function isEquals(a: AuthChoreography | null, b: AuthChoreography | null): boolean {
+export function isEquals(a: AuthDanceChoreography | null, b: AuthDanceChoreography | null): boolean {
 	if (a === null || b === null) {
 		return a === b;
 	}
@@ -121,7 +121,7 @@ export function isEquals(a: AuthChoreography | null, b: AuthChoreography | null)
 	return false;
 }
 
-export function simplify(choreography: AuthChoreography): AuthChoreography {
+export function simplify(choreography: AuthDanceChoreography): AuthDanceChoreography {
 	if (choreography.kind === "sequence" || choreography.kind === "choice") {
 		const simplified = choreography.components.flatMap((c) => {
 			c = simplify(c);
@@ -145,12 +145,12 @@ export function simplify(choreography: AuthChoreography): AuthChoreography {
 }
 
 export function* walk(
-	choreography: AuthChoreography,
-): Generator<{ component: AuthChoreographyComponent | null; path: AuthChoreographyComponent[] }> {
+	choreography: AuthDanceChoreography,
+): Generator<{ component: AuthDanceChoreographyComponent | null; path: AuthDanceChoreographyComponent[] }> {
 	function* innerWalk(
-		choreography: AuthChoreography,
-		path: AuthChoreographyComponent[],
-	): Generator<{ component: AuthChoreographyComponent; path: AuthChoreographyComponent[] }> {
+		choreography: AuthDanceChoreography,
+		path: AuthDanceChoreographyComponent[],
+	): Generator<{ component: AuthDanceChoreographyComponent; path: AuthDanceChoreographyComponent[] }> {
 		if (choreography.kind === "component") {
 			yield { component: choreography, path };
 		} else if (choreography.kind === "choice") {
@@ -179,10 +179,10 @@ export function* walk(
 }
 
 export function peek(
-	choreography: AuthChoreography,
+	choreography: AuthDanceChoreography,
 	path: string[] = [],
-): AuthChoreographyComponent | AuthChoreographyChoice<AuthChoreographyComponent> | null {
-	const components: AuthChoreographyComponent[] = [];
+): AuthDanceChoreographyComponent | AuthDanceChoreographyChoice<AuthDanceChoreographyComponent> | null {
+	const components: AuthDanceChoreographyComponent[] = [];
 	for (const { component, path: p } of walk(choreography)) {
 		if (component && p.length === path.length && p.every((pp, i) => pp.component === path[i])) {
 			components.push(component);
@@ -193,5 +193,5 @@ export function peek(
 	if (components.length === 0) {
 		throw new ComponentNotInChoreographyError(`No components found at path ${path.join(" -> ")}`);
 	}
-	return simplify(choice(...components)) as AuthChoreographyComponent | AuthChoreographyChoice<AuthChoreographyComponent>;
+	return simplify(choice(...components)) as AuthDanceChoreographyComponent | AuthDanceChoreographyChoice<AuthDanceChoreographyComponent>;
 }

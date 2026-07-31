@@ -1,4 +1,4 @@
-import { AuthApi, type AuthApiOptions } from "./api.ts";
+import { AuthDanceApi, type AuthDanceApiOptions } from "./api.ts";
 import app from "./app.ts";
 import { generateSpecs } from "hono-openapi";
 
@@ -7,13 +7,13 @@ export * from "./error.ts";
 export { choice, component, sequence } from "./choreography.ts";
 
 export interface ChoreoAuth {
-	api: AuthApi;
+	api: AuthDanceApi;
 	fetch: (request: Request) => Response | Promise<Response>;
 	generateOpenAPISchema: () => ReturnType<typeof generateSpecs>;
 }
 
-export default function choreoAuth(options: AuthApiOptions): ChoreoAuth {
-	const api = new AuthApi(options);
+export default function choreoAuth(options: AuthDanceApiOptions): ChoreoAuth {
+	const api = new AuthDanceApi(options);
 	return {
 		api,
 		// The edge's per-address buckets are configured on the app's bindings; `advanced` is the single place a

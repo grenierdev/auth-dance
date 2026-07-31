@@ -1,102 +1,102 @@
 import * as v from "valibot";
 import { IdentityComponentPublic } from "./identity.ts";
-import { AuthPrompt } from "./prompt.ts";
-import { AuthSession } from "./session.ts";
+import { AuthDancePrompt } from "./prompt.ts";
+import { AuthDanceSession } from "./session.ts";
 
-export interface AuthResponseState {
+export interface AuthDanceResponseState {
 	state: string;
-	prompt: AuthPrompt;
+	prompt: AuthDancePrompt;
 	expireAt: Date;
 }
 
-export const AuthResponseState: v.GenericSchema<AuthResponseState> = v.pipe(
+export const AuthDanceResponseState: v.GenericSchema<AuthDanceResponseState> = v.pipe(
 	v.object({
 		state: v.string(),
-		prompt: AuthPrompt,
+		prompt: AuthDancePrompt,
 		expireAt: v.date(),
 	}),
-	v.title("AuthResponseState"),
+	v.title("AuthDanceResponseState"),
 	v.description("The state of an authentication response"),
 );
 
-export interface AuthResponseTokens {
+export interface AuthDanceResponseTokens {
 	tokens: {
 		access_token: string;
 		id_token: string;
 		refresh_token: string;
 	};
-	session: AuthSession;
+	session: AuthDanceSession;
 	identity: {
 		id: string;
 		data?: Record<string, unknown>;
 	};
 }
 
-export const AuthResponseTokens: v.GenericSchema<AuthResponseTokens> = v.pipe(
+export const AuthDanceResponseTokens: v.GenericSchema<AuthDanceResponseTokens> = v.pipe(
 	v.object({
 		tokens: v.object({
 			access_token: v.string(),
 			id_token: v.string(),
 			refresh_token: v.string(),
 		}),
-		session: AuthSession,
+		session: AuthDanceSession,
 		identity: v.pipe(
 			v.object({
 				id: v.string(),
 				data: v.optional(v.record(v.string(), v.unknown())),
 			}),
-			v.title("AuthResponseIdentity"),
+			v.title("AuthDanceResponseIdentity"),
 			v.description("The identity returned from the auth API"),
 		),
 	}),
-	v.title("AuthResponseTokens"),
+	v.title("AuthDanceResponseTokens"),
 	v.description("The tokens returned from the auth API"),
 );
 
-export interface AuthResponseResult {
+export interface AuthDanceResponseResult {
 	success: true;
 }
 
-export const AuthResponseResult: v.GenericSchema<AuthResponseResult> = v.pipe(
+export const AuthDanceResponseResult: v.GenericSchema<AuthDanceResponseResult> = v.pipe(
 	v.object({
 		success: v.literal(true),
 	}),
-	v.title("AuthResponseResult"),
+	v.title("AuthDanceResponseResult"),
 	v.description("A successful result from the auth API that carries no further payload"),
 );
 
-export interface AuthResponseSessions {
-	sessions: AuthSession[];
+export interface AuthDanceResponseSessions {
+	sessions: AuthDanceSession[];
 	current: string;
 }
 
-export const AuthResponseSessions: v.GenericSchema<AuthResponseSessions> = v.pipe(
+export const AuthDanceResponseSessions: v.GenericSchema<AuthDanceResponseSessions> = v.pipe(
 	v.object({
-		sessions: v.array(AuthSession),
+		sessions: v.array(AuthDanceSession),
 		current: v.string(),
 	}),
-	v.title("AuthResponseSessions"),
+	v.title("AuthDanceResponseSessions"),
 	v.description("Every session currently open on the identity, and which of them made the call"),
 );
 
-export interface AuthResponseComponents {
+export interface AuthDanceResponseComponents {
 	components: IdentityComponentPublic[];
 }
 
-export const AuthResponseComponents: v.GenericSchema<AuthResponseComponents> = v.pipe(
+export const AuthDanceResponseComponents: v.GenericSchema<AuthDanceResponseComponents> = v.pipe(
 	v.object({
 		components: v.array(IdentityComponentPublic),
 	}),
-	v.title("AuthResponseComponents"),
+	v.title("AuthDanceResponseComponents"),
 	v.description(
 		"Every component enrolled on the identity — its identifications, its challenges and its channels — without the private data each holds",
 	),
 );
 
-export type AuthResponse = AuthResponseState | AuthResponseTokens | AuthResponseResult;
+export type AuthDanceResponse = AuthDanceResponseState | AuthDanceResponseTokens | AuthDanceResponseResult;
 
-export const AuthResponse: v.GenericSchema<AuthResponse> = v.pipe(
-	v.union([AuthResponseState, AuthResponseTokens, AuthResponseResult]),
-	v.title("AuthResponse"),
+export const AuthDanceResponse: v.GenericSchema<AuthDanceResponse> = v.pipe(
+	v.union([AuthDanceResponseState, AuthDanceResponseTokens, AuthDanceResponseResult]),
+	v.title("AuthDanceResponse"),
 	v.description("The response from the auth API"),
 );

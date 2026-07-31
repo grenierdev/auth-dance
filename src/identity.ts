@@ -1,8 +1,8 @@
 import * as v from "valibot";
 
 // Every component splits in two: what the identity holds, and what a client may be told about it. The
-// difference is `data`, the component's own private store — PasswordAuthComponent keeps the hash there,
-// OtpAuthComponent its pending code — so the `…Public` half of each pair is the stored shape minus that
+// difference is `data`, the component's own private store — PasswordAuthDanceComponent keeps the hash there,
+// OtpAuthDanceComponent its pending code — so the `…Public` half of each pair is the stored shape minus that
 // one field, and the stored shape is declared by extending it. Sharing the field list this way is what
 // keeps the two from drifting apart.
 const IdentityDataField = { data: v.optional(v.record(v.string(), v.unknown())) };

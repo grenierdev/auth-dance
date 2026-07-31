@@ -1,9 +1,9 @@
-import type { AuthComponent, AuthComponentContext } from "../component.ts";
+import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
 import type { Identity, IdentityComponent, IdentityIdentification } from "../identity.ts";
-import type { AuthPromptInput } from "../prompt.ts";
-import OtpAuthComponent from "./otp.ts";
+import type { AuthDancePromptInput } from "../prompt.ts";
+import OtpAuthDanceComponent from "./otp.ts";
 
-export default class EmailAuthComponent implements AuthComponent {
+export default class EmailAuthDanceComponent implements AuthDanceComponent {
 	readonly kind: IdentityComponent["kind"] = "identification";
 	readonly verifiable = true;
 	#channel: string;
@@ -37,7 +37,7 @@ export default class EmailAuthComponent implements AuthComponent {
 	}
 
 	// deno-lint-ignore require-await
-	async getPrompt(context: AuthComponentContext): Promise<AuthPromptInput> {
+	async getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput> {
 		return {
 			kind: "input",
 			name: context.name,
@@ -46,7 +46,7 @@ export default class EmailAuthComponent implements AuthComponent {
 		};
 	}
 
-	async verifyPrompt(response: unknown, context: AuthComponentContext): Promise<boolean | Identity["id"]> {
+	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | Identity["id"]> {
 		const identification = typeof response === "string" ? response : null;
 		if (!identification) {
 			return false;
@@ -71,7 +71,7 @@ export default class EmailAuthComponent implements AuthComponent {
 	}
 
 	// deno-lint-ignore require-await
-	async verificationComponent?(_context: AuthComponentContext): Promise<AuthComponent> {
-		return new OtpAuthComponent(this.#channel);
+	async verificationComponent?(_context: AuthDanceComponentContext): Promise<AuthDanceComponent> {
+		return new OtpAuthDanceComponent(this.#channel);
 	}
 }

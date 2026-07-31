@@ -1,9 +1,9 @@
-import type { AuthComponent, AuthComponentContext } from "../component.ts";
+import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
 import type { Identity, IdentityComponent } from "../identity.ts";
-import type { AuthPromptInput } from "../prompt.ts";
+import type { AuthDancePromptInput } from "../prompt.ts";
 import { encodeBase64 } from "@std/encoding/base64";
 
-export default class PasswordAuthComponent implements AuthComponent {
+export default class PasswordAuthDanceComponent implements AuthDanceComponent {
 	readonly kind: IdentityComponent["kind"] = "challenge";
 	readonly verifiable = false;
 	#salt: string;
@@ -44,7 +44,7 @@ export default class PasswordAuthComponent implements AuthComponent {
 	}
 
 	// deno-lint-ignore require-await
-	async getPrompt(context: AuthComponentContext): Promise<AuthPromptInput> {
+	async getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput> {
 		return {
 			kind: "input",
 			name: context.name,
@@ -53,7 +53,7 @@ export default class PasswordAuthComponent implements AuthComponent {
 		};
 	}
 
-	async verifyPrompt(response: unknown, context: AuthComponentContext): Promise<boolean | Identity["id"]> {
+	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | Identity["id"]> {
 		const value = typeof response === "string" ? response : null;
 		if (!value) {
 			return false;

@@ -1,6 +1,6 @@
 import * as v from "valibot";
 
-export interface AuthPromptInput {
+export interface AuthDancePromptInput {
 	kind: "input";
 	name: string;
 	type: string;
@@ -8,7 +8,7 @@ export interface AuthPromptInput {
 	options?: Record<string, unknown>;
 }
 
-export const AuthPromptInput: v.GenericSchema<AuthPromptInput> = v.pipe(
+export const AuthDancePromptInput: v.GenericSchema<AuthDancePromptInput> = v.pipe(
 	v.object({
 		kind: v.literal("input"),
 		name: v.string(),
@@ -20,26 +20,26 @@ export const AuthPromptInput: v.GenericSchema<AuthPromptInput> = v.pipe(
 	v.description("A single prompt component"),
 );
 
-export interface AuthPromptChoice<T extends AuthPrompt = AuthPrompt> {
+export interface AuthDancePromptChoice<T extends AuthDancePrompt = AuthDancePrompt> {
 	kind: "choice";
 	components: T[];
 }
 
-export const AuthPromptChoice: v.GenericSchema<AuthPromptChoice> = v.lazy(() =>
+export const AuthDancePromptChoice: v.GenericSchema<AuthDancePromptChoice> = v.lazy(() =>
 	v.pipe(
 		v.object({
 			kind: v.literal("choice"),
-			components: v.array(AuthPrompt),
+			components: v.array(AuthDancePrompt),
 		}),
 		v.title("PromptChoice"),
 		v.description("A choice of prompt components"),
 	)
 );
 
-export type AuthPrompt = AuthPromptInput | AuthPromptChoice;
+export type AuthDancePrompt = AuthDancePromptInput | AuthDancePromptChoice;
 
-export const AuthPrompt: v.GenericSchema<AuthPrompt> = v.pipe(
-	v.union([AuthPromptInput, AuthPromptChoice]),
+export const AuthDancePrompt: v.GenericSchema<AuthDancePrompt> = v.pipe(
+	v.union([AuthDancePromptInput, AuthDancePromptChoice]),
 	v.title("Prompt"),
 	v.description("A prompt, which can be a component or a choice"),
 );

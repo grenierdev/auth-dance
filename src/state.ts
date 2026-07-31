@@ -1,47 +1,47 @@
 import { IdentityChannel, IdentityComponent } from "./identity.ts";
 import * as v from "valibot";
 
-export interface AuthStateSignIn {
+export interface AuthDanceStateSignIn {
 	id: string;
 	kind: "sign-in";
 	path: string[];
 	identityId?: string;
 }
 
-export const AuthStateSignIn: v.GenericSchema<AuthStateSignIn> = v.pipe(
+export const AuthDanceStateSignIn: v.GenericSchema<AuthDanceStateSignIn> = v.pipe(
 	v.object({
 		id: v.string(),
 		kind: v.literal("sign-in"),
 		path: v.array(v.string()),
 		identityId: v.optional(v.string()),
 	}),
-	v.title("AuthStateSignIn"),
+	v.title("AuthDanceStateSignIn"),
 	v.description(
 		"An authentication state object that represents a sign-in process, including the state id, kind, and path of the authentication flow.",
 	),
 );
 
-export interface AuthStateSignUp {
+export interface AuthDanceStateSignUp {
 	id: string;
 	kind: "sign-up";
 	identityId: string;
 	components: IdentityComponent[];
 }
 
-export const AuthStateSignUp: v.GenericSchema<AuthStateSignUp> = v.pipe(
+export const AuthDanceStateSignUp: v.GenericSchema<AuthDanceStateSignUp> = v.pipe(
 	v.object({
 		id: v.string(),
 		kind: v.literal("sign-up"),
 		identityId: v.string(),
 		components: v.array(IdentityComponent),
 	}),
-	v.title("AuthStateSignUp"),
+	v.title("AuthDanceStateSignUp"),
 	v.description(
 		"An authentication state object that represents a sign-up process, including the state id, kind, components, and channels of the authentication flow.",
 	),
 );
 
-export interface AuthStateEnroll {
+export interface AuthDanceStateEnroll {
 	id: string;
 	kind: "enroll";
 	sessionId: string;
@@ -49,7 +49,7 @@ export interface AuthStateEnroll {
 	components: IdentityComponent[];
 }
 
-export const AuthStateEnroll: v.GenericSchema<AuthStateEnroll> = v.pipe(
+export const AuthDanceStateEnroll: v.GenericSchema<AuthDanceStateEnroll> = v.pipe(
 	v.object({
 		id: v.string(),
 		kind: v.literal("enroll"),
@@ -57,33 +57,33 @@ export const AuthStateEnroll: v.GenericSchema<AuthStateEnroll> = v.pipe(
 		component: v.string(),
 		components: v.array(IdentityComponent),
 	}),
-	v.title("AuthStateEnroll"),
+	v.title("AuthDanceStateEnroll"),
 	v.description(
 		"An authentication state object that represents the enrollment of a component for an identity, including the state id, kind, the name of the component being enrolled and the identity components collected so far.",
 	),
 );
 
-export interface AuthStateUnenroll {
+export interface AuthDanceStateUnenroll {
 	id: string;
 	kind: "unenroll";
 	sessionId: string;
 	component: string;
 }
 
-export const AuthStateUnenroll: v.GenericSchema<AuthStateUnenroll> = v.pipe(
+export const AuthDanceStateUnenroll: v.GenericSchema<AuthDanceStateUnenroll> = v.pipe(
 	v.object({
 		id: v.string(),
 		kind: v.literal("unenroll"),
 		sessionId: v.string(),
 		component: v.string(),
 	}),
-	v.title("AuthStateUnenroll"),
+	v.title("AuthDanceStateUnenroll"),
 	v.description(
 		"An authentication state object that represents the removal of a component from an identity, including the state id, kind, and the removed component.",
 	),
 );
 
-export interface AuthStateRotate {
+export interface AuthDanceStateRotate {
 	id: string;
 	kind: "rotate";
 	sessionId: string;
@@ -92,7 +92,7 @@ export interface AuthStateRotate {
 	components: IdentityComponent[];
 }
 
-export const AuthStateRotate: v.GenericSchema<AuthStateRotate> = v.pipe(
+export const AuthDanceStateRotate: v.GenericSchema<AuthDanceStateRotate> = v.pipe(
 	v.object({
 		id: v.string(),
 		kind: v.literal("rotate"),
@@ -101,13 +101,13 @@ export const AuthStateRotate: v.GenericSchema<AuthStateRotate> = v.pipe(
 		verified: v.boolean(),
 		components: v.array(IdentityComponent),
 	}),
-	v.title("AuthStateRotate"),
+	v.title("AuthDanceStateRotate"),
 	v.description(
 		"An authentication state object that represents the rotation of a component for an identity, including the state id, kind, the name of the component being rotated, whether control of the currently enrolled component has been proven (true from the start for a component that offers no verification), and the identity components collected so far.",
 	),
 );
 
-export interface AuthStateRecover {
+export interface AuthDanceStateRecover {
 	id: string;
 	kind: "recover";
 	component: string;
@@ -116,7 +116,7 @@ export interface AuthStateRecover {
 	components: IdentityComponent[];
 }
 
-export const AuthStateRecover: v.GenericSchema<AuthStateRecover> = v.pipe(
+export const AuthDanceStateRecover: v.GenericSchema<AuthDanceStateRecover> = v.pipe(
 	v.object({
 		id: v.string(),
 		kind: v.literal("recover"),
@@ -125,13 +125,13 @@ export const AuthStateRecover: v.GenericSchema<AuthStateRecover> = v.pipe(
 		verified: v.boolean(),
 		components: v.array(IdentityComponent),
 	}),
-	v.title("AuthStateRecover"),
+	v.title("AuthDanceStateRecover"),
 	v.description(
 		"An authentication state object that represents the recovery of an identity through one of its components, including the state id, kind, the name of the component the recovery started from, the identity that component resolved to, whether control of it has been proven, and the replacement components collected so far.",
 	),
 );
 
-export interface AuthStateSubscribe {
+export interface AuthDanceStateSubscribe {
 	id: string;
 	kind: "subscribe";
 	sessionId: string;
@@ -139,7 +139,7 @@ export interface AuthStateSubscribe {
 	validating: boolean;
 }
 
-export const AuthStateSubscribe: v.GenericSchema<AuthStateSubscribe> = v.pipe(
+export const AuthDanceStateSubscribe: v.GenericSchema<AuthDanceStateSubscribe> = v.pipe(
 	v.object({
 		id: v.string(),
 		kind: v.literal("subscribe"),
@@ -147,74 +147,74 @@ export const AuthStateSubscribe: v.GenericSchema<AuthStateSubscribe> = v.pipe(
 		channel: IdentityChannel,
 		validating: v.boolean(),
 	}),
-	v.title("AuthStateSubscribe"),
+	v.title("AuthDanceStateSubscribe"),
 	v.description(
 		"An authentication state object that represents the subscription to a channel for an identity, including the state id, kind, and the subscribed channel.",
 	),
 );
 
-export interface AuthStateUnsubscribe {
+export interface AuthDanceStateUnsubscribe {
 	id: string;
 	kind: "unsubscribe";
 	sessionId: string;
 	channel: string;
 }
 
-export const AuthStateUnsubscribe: v.GenericSchema<AuthStateUnsubscribe> = v.pipe(
+export const AuthDanceStateUnsubscribe: v.GenericSchema<AuthDanceStateUnsubscribe> = v.pipe(
 	v.object({
 		id: v.string(),
 		kind: v.literal("unsubscribe"),
 		sessionId: v.string(),
 		channel: v.string(),
 	}),
-	v.title("AuthStateUnsubscribe"),
+	v.title("AuthDanceStateUnsubscribe"),
 	v.description(
 		"An authentication state object that represents the removal of a channel from an identity, including the state id, kind, and the removed channel.",
 	),
 );
 
-export interface AuthStateDelete {
+export interface AuthDanceStateDelete {
 	id: string;
 	kind: "delete";
 	sessionId: string;
 }
 
-export const AuthStateDelete: v.GenericSchema<AuthStateDelete> = v.pipe(
+export const AuthDanceStateDelete: v.GenericSchema<AuthDanceStateDelete> = v.pipe(
 	v.object({
 		id: v.string(),
 		kind: v.literal("delete"),
 		sessionId: v.string(),
 	}),
-	v.title("AuthStateDelete"),
+	v.title("AuthDanceStateDelete"),
 	v.description(
 		"An authentication state object that represents the deletion of the whole identity, including the state id, kind, and the session the deletion was started from.",
 	),
 );
 
-export type AuthState =
-	| AuthStateSignIn
-	| AuthStateSignUp
-	| AuthStateEnroll
-	| AuthStateUnenroll
-	| AuthStateRotate
-	| AuthStateRecover
-	| AuthStateSubscribe
-	| AuthStateUnsubscribe
-	| AuthStateDelete;
+export type AuthDanceState =
+	| AuthDanceStateSignIn
+	| AuthDanceStateSignUp
+	| AuthDanceStateEnroll
+	| AuthDanceStateUnenroll
+	| AuthDanceStateRotate
+	| AuthDanceStateRecover
+	| AuthDanceStateSubscribe
+	| AuthDanceStateUnsubscribe
+	| AuthDanceStateDelete;
 
-export const AuthState: v.GenericSchema<AuthState> = v.pipe(
+export const AuthDanceState: v.GenericSchema<AuthDanceState> = v.pipe(
 	v.union([
-		AuthStateSignIn,
-		AuthStateSignUp,
-		AuthStateEnroll,
-		AuthStateUnenroll,
-		AuthStateRotate,
-		AuthStateRecover,
-		AuthStateSubscribe,
-		AuthStateUnsubscribe,
-		AuthStateDelete,
+		AuthDanceStateSignIn,
+		AuthDanceStateSignUp,
+		AuthDanceStateEnroll,
+		AuthDanceStateUnenroll,
+		AuthDanceStateRotate,
+		AuthDanceStateRecover,
+		AuthDanceStateSubscribe,
+		AuthDanceStateUnsubscribe,
+		AuthDanceStateDelete,
 	]),
-	v.title("AuthState"),
+	v.title("AuthDanceState"),
 	v.description(
 		"An authentication state object that can represent various authentication processes, including sign-in, sign-up, and component/channel management.",
 	),

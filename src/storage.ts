@@ -1,19 +1,24 @@
 import { ksuid } from "./id.ts";
 import type { Identity, IdentityComponent } from "./identity.ts";
-import type { AuthIdentityProvider, AuthKvProvider, AuthRateLimiterProvider, AuthRateLimiterResult } from "./provider.ts";
+import type {
+	AuthDanceIdentityProvider,
+	AuthDanceKvProvider,
+	AuthDanceRateLimiterProvider,
+	AuthDanceRateLimiterResult,
+} from "./provider.ts";
 import { parse } from "valibot";
-import { AuthSession } from "./session.ts";
+import { AuthDanceSession } from "./session.ts";
 
-export interface AuthStorageOptions {
-	identity: AuthIdentityProvider;
-	kv: AuthKvProvider;
-	rate_limiter: AuthRateLimiterProvider;
+export interface AuthDanceStorageOptions {
+	identity: AuthDanceIdentityProvider;
+	kv: AuthDanceKvProvider;
+	rate_limiter: AuthDanceRateLimiterProvider;
 }
 
-export class AuthStorage {
-	#options: AuthStorageOptions;
+export class AuthDanceStorage {
+	#options: AuthDanceStorageOptions;
 
-	constructor(options: AuthStorageOptions) {
+	constructor(options: AuthDanceStorageOptions) {
 		this.#options = options;
 	}
 
@@ -68,9 +73,9 @@ export class AuthStorage {
 
 	async createSession(
 		options: { identityId: string; scopes: string[]; expireAt: Date; address?: string; userAgent?: string },
-	): Promise<AuthSession> {
+	): Promise<AuthDanceSession> {
 		const id = ksuid("ses_");
-		const session: AuthSession = {
+		const session: AuthDanceSession = {
 			id,
 			identityId: options.identityId,
 			scopes: options.scopes,
@@ -86,12 +91,12 @@ export class AuthStorage {
 		return session;
 	}
 
-	async getSession(id: string): Promise<AuthSession | undefined> {
+	async getSession(id: string): Promise<AuthDanceSession | undefined> {
 		const value = await this.getKv(`session/${id}`);
 		if (!value) {
 			return undefined;
 		}
-		return parse(AuthSession, JSON.parse(value));
+		return parse(AuthDanceSession, JSON.parse(value));
 	}
 
 	async deleteSession(id: string): Promise<void> {
@@ -105,20 +110,20 @@ export class AuthStorage {
 		]);
 	}
 
-	// `AuthKvProvider.list` yields keys, not values, so every entry still has to be read. A key a provider
+	// `AuthDanceKvProvider.list` yields keys, not values, so every entry still has to be read. A key a provider
 	// resolves to `undefined` is skipped rather than failing the whole listing: the index entry and the
 	// session it points at expire on their own schedules, so a gap between the two is expected, not a fault.
 	// A provider that rejects instead of resolving `undefined` — as `MemoryKvProvider` does — surfaces that
 	// gap as an UNKNOWN, which is why the contract is `string | undefined`.
-	async listSession(identityId: string): Promise<AuthSession[]> {
+	async listSession(identityId: string): Promise<AuthDanceSession[]> {
 		const keys = await this.#options.kv.list(`sessions/${identityId}/`);
 		const values = await Promise.all(keys.map((key) => this.getKv(key)));
 		return values
 			.filter((value): value is string => value !== undefined)
-			.map((value) => parse(AuthSession, JSON.parse(value)));
+			.map((value) => parse(AuthDanceSession, JSON.parse(value)));
 	}
 
-	consumeRateLimit(key: string, limit: number, window: number): Promise<AuthRateLimiterResult> {
+	consumeRateLimit(key: string, limit: number, window: number): Promise<AuthDanceRateLimiterResult> {
 		return this.#options.rate_limiter.limit(key, limit, window);
 	}
 }

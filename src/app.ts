@@ -1,35 +1,35 @@
 import { type Context, Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import * as v from "valibot";
-import type { AuthAddressRateLimits, AuthApi, AuthRateLimit } from "./api.ts";
-import { AuthError, Errors, InvalidAccessTokenError, RateLimitedError } from "./error.ts";
+import type { AuthDanceAddressRateLimits, AuthDanceApi, AuthDanceRateLimit } from "./api.ts";
+import { AuthDanceError, Errors, InvalidAccessTokenError, RateLimitedError } from "./error.ts";
 import type { IdentityComponent, IdentityComponentPublic } from "./identity.ts";
-import { AuthPromptInput } from "./prompt.ts";
-import { AuthResponseComponents, AuthResponseResult, AuthResponseSessions, AuthResponseTokens } from "./response.ts";
+import { AuthDancePromptInput } from "./prompt.ts";
+import { AuthDanceResponseComponents, AuthDanceResponseResult, AuthDanceResponseSessions, AuthDanceResponseTokens } from "./response.ts";
 
-// `AuthComponent.getPrompt` and `AuthChannel.getPrompt` both return an `AuthPromptInput`, and the
+// `AuthDanceComponent.getPrompt` and `AuthDanceChannel.getPrompt` both return an `AuthDancePromptInput`, and the
 // members of a `choice()` are constrained to components — so a choice prompt can only ever hold
-// input prompts and the recursion in `prompt.ts`'s `AuthPromptChoice` is unreachable. Describing
+// input prompts and the recursion in `prompt.ts`'s `AuthDancePromptChoice` is unreachable. Describing
 // that one level explicitly instead of reusing the recursive schema keeps the generated document
 // self-contained: `v.lazy` becomes a `$defs` entry that hono-openapi rewrites into a
 // `#/components/schemas/…` reference it never registers, leaving a dangling `$ref`.
 const PromptChoiceResponse = v.pipe(
 	v.object({
 		kind: v.literal("choice"),
-		components: v.array(AuthPromptInput),
+		components: v.array(AuthDancePromptInput),
 	}),
 	v.title("PromptChoice"),
 	v.description("A choice between prompt components, any one of which satisfies the current step"),
 );
 
 const PromptResponse = v.pipe(
-	v.union([AuthPromptInput, PromptChoiceResponse]),
+	v.union([AuthDancePromptInput, PromptChoiceResponse]),
 	v.title("Prompt"),
 	v.description("A prompt, which can be a component or a choice"),
 );
 
 // The schemas below describe what goes over the wire; they never validate anything. They exist
-// because `AuthResponseState.expireAt` is a `Date` — the type the domain works with, but not the
+// because `AuthDanceResponseState.expireAt` is a `Date` — the type the domain works with, but not the
 // one the client sees, since `c.json` serialises it to an ISO string — and `v.date()` has no JSON
 // Schema representation at all, so the domain schema cannot be handed to `resolver()` as-is.
 const StateResponse = v.pipe(
@@ -38,28 +38,28 @@ const StateResponse = v.pipe(
 		prompt: PromptResponse,
 		expireAt: v.pipe(v.string(), v.isoTimestamp()),
 	}),
-	v.title("AuthResponseState"),
+	v.title("AuthDanceResponseState"),
 	v.description("The prompt to answer next, with the opaque state to echo back and the moment it stops being valid"),
 );
 
-// These four carry no dates — `AuthSession.expireAt` is already the ISO string the client sees — and
+// These four carry no dates — `AuthDanceSession.expireAt` is already the ISO string the client sees — and
 // are reused verbatim from the domain.
-const TokensResponse = AuthResponseTokens;
-const ResultResponse = AuthResponseResult;
-const SessionsResponse = AuthResponseSessions;
-const ComponentsResponse = AuthResponseComponents;
+const TokensResponse = AuthDanceResponseTokens;
+const ResultResponse = AuthDanceResponseResult;
+const SessionsResponse = AuthDanceResponseSessions;
+const ComponentsResponse = AuthDanceResponseComponents;
 
 const AnyResponse = v.pipe(
 	v.union([StateResponse, TokensResponse, ResultResponse]),
-	v.title("AuthResponse"),
+	v.title("AuthDanceResponse"),
 	v.description("The next prompt, the tokens minted by a completed authentication, or a bare success for a completed management flow"),
 );
 
 // The documented codes stay derived from the `Errors` registry rather than restated, so a new
-// `AuthError` subclass shows up in the specification the moment it is registered.
+// `AuthDanceError` subclass shows up in the specification the moment it is registered.
 const ErrorResponse = v.pipe(
 	v.object({ error: v.picklist(Object.keys(Errors) as (keyof typeof Errors)[]) }),
-	v.title("AuthErrorResponse"),
+	v.title("AuthDanceErrorResponse"),
 	v.description("An auth failure, identified by its code. Codes never carry internal detail."),
 );
 
@@ -86,7 +86,7 @@ function withErrorResponses() {
 	};
 }
 
-// Every validation failure answers in the same `{ error }` shape as an `AuthError`, so the surface
+// Every validation failure answers in the same `{ error }` shape as an `AuthDanceError`, so the surface
 // has exactly one error format instead of also leaking @hono/standard-validator's issue list.
 function badRequest(result: { success: boolean }, c: Context) {
 	if (!result.success) {
@@ -105,7 +105,7 @@ function bearer(c: Context): string {
 	return token;
 }
 
-// `data` is the component's own private store — PasswordAuthComponent keeps the hash there, OTP its
+// `data` is the component's own private store — PasswordAuthDanceComponent keeps the hash there, OTP its
 // pending code — and no component declares which of its keys would be safe to disclose. It is therefore
 // dropped wholesale rather than filtered: what a client needs from this list is which components exist
 // and whether each is confirmed, never what they hold. The return type is the `…Public` half of the pair
@@ -130,7 +130,7 @@ function callerOf(c: Context): { address?: string; userAgent?: string } {
 }
 
 /** Generous on purpose: a whole NATed network shares one address, so these are sized for a crowd. */
-const AddressRateLimits: Required<AuthAddressRateLimits> = {
+const AddressRateLimits: Required<AuthDanceAddressRateLimits> = {
 	request: { limit: 300, window: 60 },
 	send: { limit: 60, window: 60 },
 };
@@ -138,20 +138,20 @@ const AddressRateLimits: Required<AuthAddressRateLimits> = {
 /** The two routes that put a message on a channel; they carry a cost per call, so they get a bucket of their own. */
 const sendRoutes = ["/send-prompt", "/send-validation"];
 
-const app = new Hono<{ Bindings: { api: AuthApi; rate_limit?: AuthAddressRateLimits } }>();
+const app = new Hono<{ Bindings: { api: AuthDanceApi; rate_limit?: AuthDanceAddressRateLimits } }>();
 
-// `AuthApi`'s own guard has already wrapped everything that is not an `AuthError` into an
-// `AuthUnknownError`, so there are only two cases here — and `"UNKNOWN"` is precisely the code that
+// `AuthDanceApi`'s own guard has already wrapped everything that is not an `AuthDanceError` into an
+// `AuthDanceUnknownError`, so there are only two cases here — and `"UNKNOWN"` is precisely the code that
 // wrapper carries. A rate limit is the one failure that is neither the caller's fault nor a server
 // fault, and the only one worth answering with something other than a 500.
 app.onError((err, c) => {
 	if (err instanceof RateLimitedError) {
 		return c.json({ error: err.code }, 429, err.retryAfter === undefined ? {} : { "retry-after": `${err.retryAfter}` });
 	}
-	return c.json({ error: err instanceof AuthError ? err.code : "UNKNOWN" }, 500);
+	return c.json({ error: err instanceof AuthDanceError ? err.code : "UNKNOWN" }, 500);
 });
 
-// The per-address counterpart to the per-identity buckets `AuthApi` consumes: those stop one identity
+// The per-address counterpart to the per-identity buckets `AuthDanceApi` consumes: those stop one identity
 // from being hammered, this one stops one origin from spreading the same abuse across many identities —
 // enumerating addresses through sign-in, or starting an endless stream of sign-ups. It runs before
 // anything is parsed, so a flood costs nothing but the counter.
@@ -171,9 +171,9 @@ app.use(async (c, next) => {
 });
 
 async function consumeAddressRateLimit(
-	c: Context<{ Bindings: { api: AuthApi } }>,
+	c: Context<{ Bindings: { api: AuthDanceApi } }>,
 	key: string,
-	{ limit, window }: AuthRateLimit,
+	{ limit, window }: AuthDanceRateLimit,
 ): Promise<void> {
 	const { allowed, retryAfter } = await c.env.api.storage.consumeRateLimit(`address:${key}`, limit, window * 1000);
 	if (!allowed) {
