@@ -1,12 +1,12 @@
 import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
-import type { Identity, IdentityChannel, IdentityComponent } from "../identity.ts";
+import type { AuthDanceIdentity, AuthDanceIdentityChannel, AuthDanceIdentityComponent } from "../identity.ts";
 import type { AuthDanceMessage } from "../message.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
 import { otp } from "../otp.ts";
 import { ChannelNotSubscribedError, ComponentNotVerifiableError } from "../error.ts";
 
 export default class OtpAuthDanceComponent implements AuthDanceComponent {
-	readonly kind: IdentityComponent["kind"] = "challenge";
+	readonly kind: AuthDanceIdentityComponent["kind"] = "challenge";
 	// The OTP is what other components verify themselves with; it has no verification of its own.
 	readonly verifiable = false;
 	#channel: string;
@@ -24,7 +24,7 @@ export default class OtpAuthDanceComponent implements AuthDanceComponent {
 		component: string,
 		value: unknown,
 		confirmed: boolean = false,
-	): Promise<IdentityComponent[]> {
+	): Promise<AuthDanceIdentityComponent[]> {
 		return [
 			{
 				kind: "challenge",
@@ -45,7 +45,7 @@ export default class OtpAuthDanceComponent implements AuthDanceComponent {
 		};
 	}
 
-	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | Identity["id"]> {
+	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]> {
 		const value = typeof response === "string" ? response : null;
 		if (!value) {
 			return false;
@@ -63,7 +63,7 @@ export default class OtpAuthDanceComponent implements AuthDanceComponent {
 
 	async sendPrompt(_locale: string, context: AuthDanceComponentContext): Promise<AuthDanceMessage> {
 		const identityChannel = context.identity?.components
-			.find((c): c is IdentityChannel => c.kind === "channel" && c.channel === this.#channel);
+			.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.channel === this.#channel);
 		if (!identityChannel) {
 			throw new ChannelNotSubscribedError(this.#channel);
 		}

@@ -1,10 +1,10 @@
-import type { Identity } from "./identity.ts";
+import type { AuthDanceIdentity } from "./identity.ts";
 
 export interface AuthDanceIdentityProvider {
-	list: (offset?: number, limit?: number) => Promise<Identity[]>;
-	get: (id: string) => Promise<Identity | undefined>;
-	getByIdentification: (type: string, identification: string) => Promise<Identity | undefined>;
-	set: (identity: Identity) => Promise<void>;
+	list: (offset?: number, limit?: number) => Promise<AuthDanceIdentity[]>;
+	get: (id: string) => Promise<AuthDanceIdentity | undefined>;
+	getByIdentification: (type: string, identification: string) => Promise<AuthDanceIdentity | undefined>;
+	set: (identity: AuthDanceIdentity) => Promise<void>;
 	delete: (id: string) => Promise<void>;
 }
 

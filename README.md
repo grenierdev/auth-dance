@@ -35,8 +35,8 @@ inert data, so the library can walk it:
 - **Flow state lives with the client.** An in-progress dance is an encrypted JWE (A256GCM). The library returns it as an opaque `state`
   string. Half-finished logins need no session table and no garbage collection, and horizontal scaling costs nothing.
 
-A step is a small interface: a prompt, a verification, and how the result lands on an identity. Implement `AuthComponent` and your custom
-factor works in every flow, including the flows you did not think about yet.
+A step is a small interface: a prompt, a verification, and how the result lands on an identity. Implement `AuthDanceComponent` and your
+custom factor works in every flow, including the flows you did not think about yet.
 
 ## Getting Started
 
@@ -50,43 +50,54 @@ Deno 2.x. The test suite needs no permission flags.
 
 ### Bootstrap
 
-`choreoAuth(options)` is the single entry point. It returns your `AuthApi` (the programmatic surface), a `fetch` handler (the HTTP surface),
-and an OpenAPI schema generator.
+`createAuthDance(options)` is the single entry point, and it is a named export. Options come in three groups: `api` configures the state
+machine, `app` the HTTP layer, and `info` the generated OpenAPI document. The call returns your `AuthDanceApi` (the programmatic surface),
+the Hono `app` behind it, a `fetch` handler (the HTTP surface), and an OpenAPI schema generator.
 
 ```ts
-import choreoAuth, { sequence } from "auth-dance";
-import { AuthStorage } from "auth-dance/storage.ts";
-import EmailAuthComponent from "auth-dance/components/email.ts";
-import PasswordAuthComponent from "auth-dance/components/password.ts";
-import { MemoryAuthChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "auth-dance/providers/memory.ts";
+import { createAuthDance, sequence } from "auth-dance";
+import { AuthDanceStorage } from "auth-dance/storage.ts";
+import EmailAuthDanceComponent from "auth-dance/components/email.ts";
+import PasswordAuthDanceComponent from "auth-dance/components/password.ts";
+import {
+	MemoryAuthDanceChannel,
+	MemoryIdentityProvider,
+	MemoryKvProvider,
+	MemoryRateLimiterProvider,
+} from "auth-dance/providers/memory.ts";
 
-const auth = choreoAuth({
-	// Where messages go.
-	channels: {
-		email: new MemoryAuthChannel("email"),
+const auth = createAuthDance({
+	api: {
+		// Where messages go.
+		channels: {
+			email: new MemoryAuthDanceChannel("email"),
+		},
+		// The dance itself.
+		choreography: sequence("email", "password"),
+		// What each step does. Keys are the names used everywhere else:
+		// in the choreography, in prompts, and in `/enroll { name }`.
+		components: {
+			email: new EmailAuthDanceComponent("email"), // delivers over the "email" channel
+			password: new PasswordAuthDanceComponent("salty"),
+		},
+		// openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+		secret: "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs",
+		storage: new AuthDanceStorage({
+			identity: new MemoryIdentityProvider(),
+			kv: new MemoryKvProvider(),
+			rate_limiter: new MemoryRateLimiterProvider(),
+		}),
 	},
-	// The dance itself.
-	choreography: sequence("email", "password"),
-	// What each step does. Keys are the names used everywhere else:
-	// in the choreography, in prompts, and in `/enroll { name }`.
-	components: {
-		email: new EmailAuthComponent("email"), // delivers over the "email" channel
-		password: new PasswordAuthComponent("salty"),
-	},
-	// openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
-	secret: "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs",
-	storage: new AuthStorage({
-		identity: new MemoryIdentityProvider(),
-		kv: new MemoryKvProvider(),
-		rate_limiter: new MemoryRateLimiterProvider(),
-	}),
+	// Names the generated OpenAPI document. Nothing else reads it.
+	info: { title: "Auth API", version: "1.0.0" },
 });
 
 Deno.serve(auth.fetch);
 ```
 
-> The package root re-exports `choreoAuth`, `choice`, `component`, `sequence`, and everything from `identity.ts` and `error.ts`.
-> `AuthStorage`, the components and the memory providers still need deep paths. See [Known gaps](#known-gaps).
+> The package root re-exports `createAuthDance`, `choice`, `component`, `sequence`, and everything from `identity.ts` and `error.ts`. The
+> rest of the DSL — `pick`, `peek`, `walk`, `simplify`, `isEquals` — lives on `auth-dance/choreography`. `AuthDanceStorage`, the components
+> and the memory providers still need deep paths. See [Known gaps](#known-gaps).
 
 ### Performing the dance
 
@@ -159,46 +170,46 @@ The traversal helpers are the oracle of the state machine. They also help you te
 A component is one step. Implement the interface and it works in every flow:
 
 ```ts
-interface AuthComponent {
+interface AuthDanceComponent {
 	kind: "identification" | "challenge" | "channel";
 	verifiable: boolean; // implies verificationComponent
-	getPrompt(context: AuthComponentContext): Promise<AuthPromptInput>;
-	sendPrompt?(locale: string, context: AuthComponentContext): Promise<AuthMessage>;
-	getIdentityComponent(component: string, value: unknown, confirmed: boolean): Promise<IdentityComponent[]>;
-	verificationComponent?(context: AuthComponentContext): Promise<AuthComponent>;
-	verifyPrompt(value: unknown, context: AuthComponentContext): Promise<boolean | Identity["id"]>;
+	getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput>;
+	sendPrompt?(locale: string, context: AuthDanceComponentContext): Promise<AuthDanceMessage>;
+	getIdentityComponent(component: string, value: unknown, confirmed: boolean): Promise<AuthDanceIdentityComponent[]>;
+	verificationComponent?(context: AuthDanceComponentContext): Promise<AuthDanceComponent>;
+	verifyPrompt(value: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]>;
 }
 ```
 
 `verifyPrompt` returns `false` to reject. It returns `true` to accept without resolving anyone. It returns an identity id to say _this is
 who it is_. Two components that resolve different identities in one dance produce an `IDENTITY_MISMATCH`.
 
-`AuthComponentContext` carries `{ storage, stateId, name, flow, identity? }`. `flow` is one of
+`AuthDanceComponentContext` carries `{ storage, stateId, name, flow, identity? }`. `flow` is one of
 `"sign-in" | "sign-up" | "enroll" | "rotate" | "recover" | "subscribe"`, so a component can behave one way during enrollment and another way
 during authentication.
 
 Three components ship in the box:
 
-| Component                                          | Kind           | Verifiable | Notes                                                                                               |
-| -------------------------------------------------- | -------------- | ---------- | --------------------------------------------------------------------------------------------------- |
-| `EmailAuthComponent(channel)`                      | identification | yes        | Resolves the identity by address, and verifies it with an OTP. Also contributes a linked `channel`. |
-| `PasswordAuthComponent(salt)`                      | challenge      | no         | `base64(SHA-512(salt:password))`. See [Known gaps](#known-gaps).                                    |
-| `OtpAuthComponent(channel, digits = 6, ttl = 300)` | challenge      | no         | The only sendable component. Stores the code in KV under `otp/<stateId>/<name>`.                    |
+| Component                                               | Kind           | Verifiable | Notes                                                                                               |
+| ------------------------------------------------------- | -------------- | ---------- | --------------------------------------------------------------------------------------------------- |
+| `EmailAuthDanceComponent(channel)`                      | identification | yes        | Resolves the identity by address, and verifies it with an OTP. Also contributes a linked `channel`. |
+| `PasswordAuthDanceComponent(salt)`                      | challenge      | no         | `base64(SHA-512(salt:password))`. See [Known gaps](#known-gaps).                                    |
+| `OtpAuthDanceComponent(channel, digits = 6, ttl = 300)` | challenge      | no         | The only sendable component. Stores the code in KV under `otp/<stateId>/<name>`.                    |
 
 ### Channels
 
-A channel is where the library delivers messages. `AuthChannel` has three methods: `sendMessage`, `getPrompt` and `getIdentityChannel`.
-`MemoryAuthChannel` is the test double, and it collects messages into a public `messages` array. 🥔
+A channel is where the library delivers messages. `AuthDanceChannel` has three methods: `sendMessage`, `getPrompt` and `getIdentityChannel`.
+`MemoryAuthDanceChannel` is the test double, and it collects messages into a public `messages` array. 🥔
 
 ### Identity
 
 An identity is an id, an optional free-form `data` bag, and a list of components:
 
 ```ts
-interface Identity {
+interface AuthDanceIdentity {
 	id: string; // ksuid, "id_" prefixed
 	data?: Record<string, unknown>;
-	components: IdentityComponent[];
+	components: AuthDanceIdentityComponent[];
 }
 ```
 
@@ -208,32 +219,31 @@ the same minus `data`, and `/list-components` returns those.
 
 ### Storage
 
-`AuthStorage` is a concrete class. You configure it with three adapters instead of a replacement:
+`AuthDanceStorage` is a concrete class. You configure it with three adapters instead of a replacement:
 
 ```ts
-interface AuthIdentityProvider {
-	list(offset?: number, limit?: number): Promise<Identity[]>;
-	get(id: string): Promise<Identity | undefined>;
-	getByIdentification(type: string, identification: string): Promise<Identity | undefined>;
-	set(identity: Identity): Promise<void>;
+interface AuthDanceIdentityProvider {
+	list(offset?: number, limit?: number): Promise<AuthDanceIdentity[]>;
+	get(id: string): Promise<AuthDanceIdentity | undefined>;
+	getByIdentification(type: string, identification: string): Promise<AuthDanceIdentity | undefined>;
+	set(identity: AuthDanceIdentity): Promise<void>;
 	delete(id: string): Promise<void>;
 }
 
-interface AuthKvProvider {
+interface AuthDanceKvProvider {
 	get(key: string): Promise<string | undefined>;
 	list(prefix: string, limit?: number, offset?: number): Promise<string[]>;
 	set(key: string, value: string, ttl?: number): Promise<void>;
 	unset(key: string): Promise<void>;
 }
 
-interface AuthRateLimiterProvider {
+interface AuthDanceRateLimiterProvider {
 	limit(key: string, limit: number, window: number): Promise<{ allowed: boolean; retryAfter: number | undefined }>;
 }
 ```
 
 An adapter sees these key spaces: `session/<id>`, `sessions/<identityId>/<id>` and `otp/<stateId>/<name>`. Only `MemoryIdentityProvider`,
-`MemoryKvProvider` and `MemoryRateLimiterProvider` ship today. You write the persistent adapter yourself, and it is the one thing between
-this library and a real deployment.
+`MemoryKvProvider` and `MemoryRateLimiterProvider` ship today, so you write the persistent adapters yourself. See [Known gaps](#known-gaps).
 
 ### Sessions and tokens
 
@@ -245,8 +255,9 @@ a fresh sign-in. Otherwise they answer `FRESH_SIGN_IN_REQUIRED`.
 
 ## HTTP API
 
-You reach the HTTP API through `choreoAuth(...).fetch`. **All routes are `POST`.** There is no path prefix, so mount it yourself. 🔒 means
-the route needs `Authorization: Bearer <access_token>`.
+You reach the HTTP API through `createAuthDance(...).fetch`. The Hono instance behind that handler is returned as `.app`, if you would
+rather mount it inside an app of your own. **All routes are `POST`.** They sit at the root: `app: { basePath }` is meant to prefix them but
+has no effect today, so mount them yourself. See [Known gaps](#known-gaps). 🔒 means the route needs `Authorization: Bearer <access_token>`.
 
 | Route                 | Body                       | 200                                    |
 | --------------------- | -------------------------- | -------------------------------------- |
@@ -275,7 +286,8 @@ An error is always a single-key body: `{ "error": "CODE" }`. Malformed input is 
 a `Retry-After` header when the library knows the delay. Everything else is `500` with a code from the `Errors` registry: `INVALID_STATE`,
 `WOULD_LOCK_OUT`, `FRESH_SIGN_IN_REQUIRED`, `IDENTITY_MISMATCH` and more, 32 in all, with `UNKNOWN` as the fallback.
 
-`auth.generateOpenAPISchema()` produces a full spec, error picklist included.
+`auth.generateOpenAPISchema()` produces a full spec, error picklist included. Its `info` block is whatever you passed to `createAuthDance`;
+leave `info` out and the document carries hono-openapi's placeholder instead — `Hono Documentation`, version `0.0.0`.
 
 ## Flows
 
@@ -297,7 +309,7 @@ Sign-in and sign-up are not special. Every management flow uses the same state-p
 
 ## Configuration
 
-Every duration is in seconds and optional, under `advanced`:
+Every duration is in seconds and optional, under `api.advanced`:
 
 | Option                                                                                                                                                                                 | Default  |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |

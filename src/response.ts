@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { IdentityComponentPublic } from "./identity.ts";
+import { AuthDanceIdentityComponentPublic } from "./identity.ts";
 import { AuthDancePrompt } from "./prompt.ts";
 import { AuthDanceSession } from "./session.ts";
 
@@ -80,12 +80,12 @@ export const AuthDanceResponseSessions: v.GenericSchema<AuthDanceResponseSession
 );
 
 export interface AuthDanceResponseComponents {
-	components: IdentityComponentPublic[];
+	components: AuthDanceIdentityComponentPublic[];
 }
 
 export const AuthDanceResponseComponents: v.GenericSchema<AuthDanceResponseComponents> = v.pipe(
 	v.object({
-		components: v.array(IdentityComponentPublic),
+		components: v.array(AuthDanceIdentityComponentPublic),
 	}),
 	v.title("AuthDanceResponseComponents"),
 	v.description(

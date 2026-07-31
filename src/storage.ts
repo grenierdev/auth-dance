@@ -1,5 +1,5 @@
 import { ksuid } from "./id.ts";
-import type { Identity, IdentityComponent } from "./identity.ts";
+import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
 import type {
 	AuthDanceIdentityProvider,
 	AuthDanceKvProvider,
@@ -24,9 +24,9 @@ export class AuthDanceStorage {
 
 	async createIdentity(
 		data?: Record<string, unknown>,
-		components?: Array<IdentityComponent>,
-	): Promise<Identity> {
-		const identity: Identity = {
+		components?: Array<AuthDanceIdentityComponent>,
+	): Promise<AuthDanceIdentity> {
+		const identity: AuthDanceIdentity = {
 			id: ksuid("id_"),
 			data: data ?? {},
 			components: components ?? [],
@@ -35,19 +35,19 @@ export class AuthDanceStorage {
 		return Promise.resolve(identity);
 	}
 
-	listIdentities(offset?: number, limit?: number): Promise<Identity[]> {
+	listIdentities(offset?: number, limit?: number): Promise<AuthDanceIdentity[]> {
 		return this.#options.identity.list(offset, limit);
 	}
 
-	getIdentity(id: string): Promise<Identity | undefined> {
+	getIdentity(id: string): Promise<AuthDanceIdentity | undefined> {
 		return this.#options.identity.get(id);
 	}
 
-	getIdentityByIdentification(type: string, identification: string): Promise<Identity | undefined> {
+	getIdentityByIdentification(type: string, identification: string): Promise<AuthDanceIdentity | undefined> {
 		return this.#options.identity.getByIdentification(type, identification);
 	}
 
-	setIdentity(identity: Identity): Promise<void> {
+	setIdentity(identity: AuthDanceIdentity): Promise<void> {
 		return this.#options.identity.set(identity);
 	}
 

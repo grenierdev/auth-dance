@@ -5,111 +5,111 @@ import * as v from "valibot";
 // OtpAuthDanceComponent its pending code — so the `…Public` half of each pair is the stored shape minus that
 // one field, and the stored shape is declared by extending it. Sharing the field list this way is what
 // keeps the two from drifting apart.
-const IdentityDataField = { data: v.optional(v.record(v.string(), v.unknown())) };
+const AuthDanceIdentityDataField = { data: v.optional(v.record(v.string(), v.unknown())) };
 
-export interface IdentityIdentificationPublic {
+export interface AuthDanceIdentityIdentificationPublic {
 	kind: "identification";
 	component: string;
 	identification: string;
 	confirmed: boolean;
 }
 
-export interface IdentityIdentification extends IdentityIdentificationPublic {
+export interface AuthDanceIdentityIdentification extends AuthDanceIdentityIdentificationPublic {
 	data?: Record<string, unknown>;
 }
 
-const IdentityIdentificationFields = {
+const AuthDanceIdentityIdentificationFields = {
 	kind: v.literal("identification"),
 	component: v.string(),
 	identification: v.string(),
 	confirmed: v.boolean(),
 } as const;
 
-export const IdentityIdentification: v.GenericSchema<IdentityIdentification> = v.pipe(
-	v.object({ ...IdentityIdentificationFields, ...IdentityDataField }),
+export const AuthDanceIdentityIdentification: v.GenericSchema<AuthDanceIdentityIdentification> = v.pipe(
+	v.object({ ...AuthDanceIdentityIdentificationFields, ...AuthDanceIdentityDataField }),
 	v.title("IdentityIdentification"),
 	v.description(
 		"An identity identification object that contains an identity id, component, identification, confirmation status, and associated data.",
 	),
 );
 
-export const IdentityIdentificationPublic: v.GenericSchema<IdentityIdentificationPublic> = v.pipe(
-	v.object(IdentityIdentificationFields),
+export const AuthDanceIdentityIdentificationPublic: v.GenericSchema<AuthDanceIdentityIdentificationPublic> = v.pipe(
+	v.object(AuthDanceIdentityIdentificationFields),
 	v.title("IdentityIdentificationPublic"),
 	v.description("An identity identification as disclosed to a client: its component, identification and confirmation status."),
 );
 
-export interface IdentityChallengePublic {
+export interface AuthDanceIdentityChallengePublic {
 	kind: "challenge";
 	component: string;
 	confirmed: boolean;
 }
 
-export interface IdentityChallenge extends IdentityChallengePublic {
+export interface AuthDanceIdentityChallenge extends AuthDanceIdentityChallengePublic {
 	data?: Record<string, unknown>;
 }
 
-const IdentityChallengeFields = {
+const AuthDanceIdentityChallengeFields = {
 	kind: v.literal("challenge"),
 	component: v.string(),
 	confirmed: v.boolean(),
 } as const;
 
-export const IdentityChallenge: v.GenericSchema<IdentityChallenge> = v.pipe(
-	v.object({ ...IdentityChallengeFields, ...IdentityDataField }),
+export const AuthDanceIdentityChallenge: v.GenericSchema<AuthDanceIdentityChallenge> = v.pipe(
+	v.object({ ...AuthDanceIdentityChallengeFields, ...AuthDanceIdentityDataField }),
 	v.title("IdentityChallenge"),
 	v.description(
 		"An identity challenge object that contains an identity id, component, confirmation status, and associated data.",
 	),
 );
 
-export const IdentityChallengePublic: v.GenericSchema<IdentityChallengePublic> = v.pipe(
-	v.object(IdentityChallengeFields),
+export const AuthDanceIdentityChallengePublic: v.GenericSchema<AuthDanceIdentityChallengePublic> = v.pipe(
+	v.object(AuthDanceIdentityChallengeFields),
 	v.title("IdentityChallengePublic"),
 	v.description("An identity challenge as disclosed to a client: its component and confirmation status, never the secret it verifies."),
 );
 
-export interface IdentityChannelPublic {
+export interface AuthDanceIdentityChannelPublic {
 	kind: "channel";
 	channel: string;
 	confirmed: boolean;
 	linkedTo?: string[];
 }
 
-export interface IdentityChannel extends IdentityChannelPublic {
+export interface AuthDanceIdentityChannel extends AuthDanceIdentityChannelPublic {
 	data?: Record<string, unknown>;
 }
 
-const IdentityChannelFields = {
+const AuthDanceIdentityChannelFields = {
 	kind: v.literal("channel"),
 	channel: v.string(),
 	confirmed: v.boolean(),
 	linkedTo: v.optional(v.array(v.string())),
 } as const;
 
-export const IdentityChannel: v.GenericSchema<IdentityChannel> = v.pipe(
-	v.object({ ...IdentityChannelFields, ...IdentityDataField }),
+export const AuthDanceIdentityChannel: v.GenericSchema<AuthDanceIdentityChannel> = v.pipe(
+	v.object({ ...AuthDanceIdentityChannelFields, ...AuthDanceIdentityDataField }),
 	v.title("IdentityChannel"),
 	v.description(
 		"An identity channel object that contains an identity id, channel, confirmation status, associated data, and the names of the components that depend on it.",
 	),
 );
 
-export const IdentityChannelPublic: v.GenericSchema<IdentityChannelPublic> = v.pipe(
-	v.object(IdentityChannelFields),
+export const AuthDanceIdentityChannelPublic: v.GenericSchema<AuthDanceIdentityChannelPublic> = v.pipe(
+	v.object(AuthDanceIdentityChannelFields),
 	v.title("IdentityChannelPublic"),
 	v.description(
 		"An identity channel as disclosed to a client: its channel, confirmation status, and the components that depend on it — never the recipient itself.",
 	),
 );
 
-export type IdentityComponent = IdentityIdentification | IdentityChallenge | IdentityChannel;
+export type AuthDanceIdentityComponent = AuthDanceIdentityIdentification | AuthDanceIdentityChallenge | AuthDanceIdentityChannel;
 
-export const IdentityComponent: v.GenericSchema<IdentityComponent> = v.pipe(
+export const AuthDanceIdentityComponent: v.GenericSchema<AuthDanceIdentityComponent> = v.pipe(
 	v.union([
-		IdentityIdentification,
-		IdentityChallenge,
-		IdentityChannel,
+		AuthDanceIdentityIdentification,
+		AuthDanceIdentityChallenge,
+		AuthDanceIdentityChannel,
 	]),
 	v.title("IdentityComponent"),
 	v.description(
@@ -117,13 +117,16 @@ export const IdentityComponent: v.GenericSchema<IdentityComponent> = v.pipe(
 	),
 );
 
-export type IdentityComponentPublic = IdentityIdentificationPublic | IdentityChallengePublic | IdentityChannelPublic;
+export type AuthDanceIdentityComponentPublic =
+	| AuthDanceIdentityIdentificationPublic
+	| AuthDanceIdentityChallengePublic
+	| AuthDanceIdentityChannelPublic;
 
-export const IdentityComponentPublic: v.GenericSchema<IdentityComponentPublic> = v.pipe(
+export const AuthDanceIdentityComponentPublic: v.GenericSchema<AuthDanceIdentityComponentPublic> = v.pipe(
 	v.union([
-		IdentityIdentificationPublic,
-		IdentityChallengePublic,
-		IdentityChannelPublic,
+		AuthDanceIdentityIdentificationPublic,
+		AuthDanceIdentityChallengePublic,
+		AuthDanceIdentityChannelPublic,
 	]),
 	v.title("IdentityComponentPublic"),
 	v.description(
@@ -131,17 +134,17 @@ export const IdentityComponentPublic: v.GenericSchema<IdentityComponentPublic> =
 	),
 );
 
-export interface Identity {
+export interface AuthDanceIdentity {
 	id: string;
 	data?: Record<string, unknown>;
-	components: IdentityComponent[];
+	components: AuthDanceIdentityComponent[];
 }
 
-export const Identity: v.GenericSchema<Identity> = v.pipe(
+export const AuthDanceIdentity: v.GenericSchema<AuthDanceIdentity> = v.pipe(
 	v.object({
 		id: v.string(),
 		data: v.optional(v.record(v.string(), v.unknown())),
-		components: v.array(IdentityComponent),
+		components: v.array(AuthDanceIdentityComponent),
 	}),
 	v.title("Identity"),
 	v.description("An identity object that contains an id and associated data."),

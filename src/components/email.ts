@@ -1,10 +1,10 @@
 import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
-import type { Identity, IdentityComponent, IdentityIdentification } from "../identity.ts";
+import type { AuthDanceIdentity, AuthDanceIdentityComponent, AuthDanceIdentityIdentification } from "../identity.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
 import OtpAuthDanceComponent from "./otp.ts";
 
 export default class EmailAuthDanceComponent implements AuthDanceComponent {
-	readonly kind: IdentityComponent["kind"] = "identification";
+	readonly kind: AuthDanceIdentityComponent["kind"] = "identification";
 	readonly verifiable = true;
 	#channel: string;
 
@@ -17,7 +17,7 @@ export default class EmailAuthDanceComponent implements AuthDanceComponent {
 		component: string,
 		value: unknown,
 		confirmed: boolean = false,
-	): Promise<IdentityComponent[]> {
+	): Promise<AuthDanceIdentityComponent[]> {
 		const email = typeof value === "string" ? value : "";
 		return [
 			{
@@ -46,7 +46,7 @@ export default class EmailAuthDanceComponent implements AuthDanceComponent {
 		};
 	}
 
-	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | Identity["id"]> {
+	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]> {
 		const identification = typeof response === "string" ? response : null;
 		if (!identification) {
 			return false;
@@ -58,7 +58,7 @@ export default class EmailAuthDanceComponent implements AuthDanceComponent {
 			return false;
 		}
 		const identityComponent = identity.components
-			.find((c): c is IdentityIdentification => c.kind === "identification" && c.component === context.name);
+			.find((c): c is AuthDanceIdentityIdentification => c.kind === "identification" && c.component === context.name);
 		if (
 			!identityComponent ||
 			!("identification" in identityComponent) ||

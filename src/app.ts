@@ -3,7 +3,7 @@ import { describeRoute, resolver, validator } from "hono-openapi";
 import * as v from "valibot";
 import type { AuthDanceAddressRateLimits, AuthDanceApi, AuthDanceRateLimit } from "./api.ts";
 import { AuthDanceError, Errors, InvalidAccessTokenError, RateLimitedError } from "./error.ts";
-import type { IdentityComponent, IdentityComponentPublic } from "./identity.ts";
+import type { AuthDanceIdentityComponent, AuthDanceIdentityComponentPublic } from "./identity.ts";
 import { AuthDancePromptInput } from "./prompt.ts";
 import { AuthDanceResponseComponents, AuthDanceResponseResult, AuthDanceResponseSessions, AuthDanceResponseTokens } from "./response.ts";
 
@@ -111,7 +111,7 @@ function bearer(c: Context): string {
 // and whether each is confirmed, never what they hold. The return type is the `…Public` half of the pair
 // declared in identity.ts, which is also what the documented response schema is built from, so the two
 // cannot describe different shapes.
-function withoutComponentData(component: IdentityComponent): IdentityComponentPublic {
+function withoutComponentData(component: AuthDanceIdentityComponent): AuthDanceIdentityComponentPublic {
 	const { data: _data, ...rest } = component;
 	return rest;
 }
@@ -138,394 +138,406 @@ const AddressRateLimits: Required<AuthDanceAddressRateLimits> = {
 /** The two routes that put a message on a channel; they carry a cost per call, so they get a bucket of their own. */
 const sendRoutes = ["/send-prompt", "/send-validation"];
 
-const app = new Hono<{ Bindings: { api: AuthDanceApi; rate_limit?: AuthDanceAddressRateLimits } }>();
+export type AuthDanceApp = Hono<{ Bindings: { api: AuthDanceApi; rate_limit?: AuthDanceAddressRateLimits } }>;
 
-// `AuthDanceApi`'s own guard has already wrapped everything that is not an `AuthDanceError` into an
-// `AuthDanceUnknownError`, so there are only two cases here — and `"UNKNOWN"` is precisely the code that
-// wrapper carries. A rate limit is the one failure that is neither the caller's fault nor a server
-// fault, and the only one worth answering with something other than a 500.
-app.onError((err, c) => {
-	if (err instanceof RateLimitedError) {
-		return c.json({ error: err.code }, 429, err.retryAfter === undefined ? {} : { "retry-after": `${err.retryAfter}` });
-	}
-	return c.json({ error: err instanceof AuthDanceError ? err.code : "UNKNOWN" }, 500);
-});
-
-// The per-address counterpart to the per-identity buckets `AuthDanceApi` consumes: those stop one identity
-// from being hammered, this one stops one origin from spreading the same abuse across many identities —
-// enumerating addresses through sign-in, or starting an endless stream of sign-ups. It runs before
-// anything is parsed, so a flood costs nothing but the counter.
-//
-// An address the connection did not give us is not bucketed rather than lumped into a shared "unknown"
-// key, which would let any one caller lock every such request out for everybody.
-app.use(async (c, next) => {
-	const { address } = callerOf(c);
-	if (address) {
-		const limits = c.env.rate_limit;
-		await consumeAddressRateLimit(c, `request:${address}`, limits?.request ?? AddressRateLimits.request);
-		if (sendRoutes.includes(c.req.path)) {
-			await consumeAddressRateLimit(c, `send:${address}`, limits?.send ?? AddressRateLimits.send);
-		}
-	}
-	await next();
-});
-
-async function consumeAddressRateLimit(
-	c: Context<{ Bindings: { api: AuthDanceApi } }>,
-	key: string,
-	{ limit, window }: AuthDanceRateLimit,
-): Promise<void> {
-	const { allowed, retryAfter } = await c.env.api.storage.consumeRateLimit(`address:${key}`, limit, window * 1000);
-	if (!allowed) {
-		throw new RateLimitedError(retryAfter);
-	}
+export interface AuthDanceAppOptions {
+	basePath?: string;
 }
 
-app.post(
-	"/sign-in",
-	describeRoute({
-		summary: "Start an authentication",
-		description:
-			"Begins an authentication flow and returns the first prompt the choreography requires, along with an opaque state to echo back to every subsequent step.",
-		tags: ["Auth"],
-		responses: {
-			200: {
-				description: "The first prompt of the authentication",
-				content: { "application/json": { schema: resolver(StateResponse) } },
-			},
-			...withErrorResponses(),
-		},
-	}),
-	async (c) => c.json(await c.env.api.signIn()),
-);
+export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp {
+	let app = new Hono<{ Bindings: { api: AuthDanceApi; rate_limit?: AuthDanceAddressRateLimits } }>();
 
-app.post(
-	"/sign-up",
-	describeRoute({
-		summary: "Start a registration",
-		description:
-			"Begins a registration flow and returns the first prompt the choreography requires, along with an opaque state to echo back to every subsequent step.",
-		tags: ["Auth"],
-		responses: {
-			200: {
-				description: "The first prompt of the registration",
-				content: { "application/json": { schema: resolver(StateResponse) } },
-			},
-			...withErrorResponses(),
-		},
-	}),
-	async (c) => c.json(await c.env.api.signUp()),
-);
+	if (options?.basePath) {
+		app = app.basePath(options.basePath);
+	}
 
-app.post(
-	"/sign-out",
-	describeRoute({
-		summary: "Sign out",
-		description: "Destroys current session.",
-		tags: ["Auth"],
-		security: [{ bearerAuth: [] }],
-		responses: {
-			200: {
-				description: "The session has been destroyed",
-				content: { "application/json": { schema: resolver(ResultResponse) } },
-			},
-			...withErrorResponses(),
-		},
-	}),
-	validator("json", v.object({ others: v.optional(v.boolean()) }), badRequest),
-	async (c) => c.json(await c.env.api.signOut(bearer(c), c.req.valid("json").others ?? false)),
-);
+	// `AuthDanceApi`'s own guard has already wrapped everything that is not an `AuthDanceError` into an
+	// `AuthDanceUnknownError`, so there are only two cases here — and `"UNKNOWN"` is precisely the code that
+	// wrapper carries. A rate limit is the one failure that is neither the caller's fault nor a server
+	// fault, and the only one worth answering with something other than a 500.
+	app.onError((err, c) => {
+		if (err instanceof RateLimitedError) {
+			return c.json({ error: err.code }, 429, err.retryAfter === undefined ? {} : { "retry-after": `${err.retryAfter}` });
+		}
+		return c.json({ error: err instanceof AuthDanceError ? err.code : "UNKNOWN" }, 500);
+	});
 
-app.post(
-	"/list-sessions",
-	describeRoute({
-		summary: "List sessions",
-		description:
-			"Lists every session currently open on the authenticated identity — exactly what signing out with `others` would destroy — oldest first, with the address and user agent each was opened from. `current` names the session the call was made with.",
-		tags: ["Auth"],
-		security: [{ bearerAuth: [] }],
-		responses: {
-			200: {
-				description: "The list of active sessions",
-				content: { "application/json": { schema: resolver(SessionsResponse) } },
-			},
-			...withErrorResponses(),
-		},
-	}),
-	// Sorted by id so the answer does not depend on the order a KV provider happens to enumerate in. Session
-	// ids are ksuids, whose sortable prefix has one-second resolution: that puts the list in creation order
-	// down to the second, and settles the rest arbitrarily but stably.
-	async (c) => {
-		const { session } = await c.env.api.accessTokenIdentity(bearer(c));
-		const sessions = await c.env.api.storage.listSession(session.identityId);
-		return c.json({ sessions: sessions.sort((a, b) => a.id.localeCompare(b.id)), current: session.id });
-	},
-);
+	// The per-address counterpart to the per-identity buckets `AuthDanceApi` consumes: those stop one identity
+	// from being hammered, this one stops one origin from spreading the same abuse across many identities —
+	// enumerating addresses through sign-in, or starting an endless stream of sign-ups. It runs before
+	// anything is parsed, so a flood costs nothing but the counter.
+	//
+	// An address the connection did not give us is not bucketed rather than lumped into a shared "unknown"
+	// key, which would let any one caller lock every such request out for everybody.
+	app.use(async (c, next) => {
+		const { address } = callerOf(c);
+		if (address) {
+			const limits = c.env.rate_limit;
+			await consumeAddressRateLimit(c, `request:${address}`, limits?.request ?? AddressRateLimits.request);
+			if (sendRoutes.includes(c.req.path)) {
+				await consumeAddressRateLimit(c, `send:${address}`, limits?.send ?? AddressRateLimits.send);
+			}
+		}
+		await next();
+	});
 
-app.post(
-	"/list-components",
-	describeRoute({
-		summary: "List components",
-		description:
-			"Lists every component enrolled on the authenticated identity — its identifications, its challenges and its channels — as the names the management routes (`enroll`, `rotate`, `unsubscribe`, …) take. The value a component holds is never returned: only whether it is enrolled and whether control of it has been confirmed.",
-		tags: ["Auth"],
-		security: [{ bearerAuth: [] }],
-		responses: {
-			200: {
-				description: "The list of enrolled components",
-				content: { "application/json": { schema: resolver(ComponentsResponse) } },
-			},
-			...withErrorResponses(),
-		},
-	}),
-	async (c) => {
-		const { identity } = await c.env.api.accessTokenIdentity(bearer(c));
-		return c.json({ components: identity.components.map(withoutComponentData) });
-	},
-);
+	async function consumeAddressRateLimit(
+		c: Context<{ Bindings: { api: AuthDanceApi } }>,
+		key: string,
+		{ limit, window }: AuthDanceRateLimit,
+	): Promise<void> {
+		const { allowed, retryAfter } = await c.env.api.storage.consumeRateLimit(`address:${key}`, limit, window * 1000);
+		if (!allowed) {
+			throw new RateLimitedError(retryAfter);
+		}
+	}
 
-app.post(
-	"/refresh-token",
-	describeRoute({
-		summary: "Refresh the tokens",
-		description: "Exchanges a refresh token for a freshly minted set of access, id and refresh tokens on the same session.",
-		tags: ["Auth"],
-		responses: {
-			200: {
-				description: "A new set of tokens",
-				content: { "application/json": { schema: resolver(TokensResponse) } },
+	app.post(
+		"/sign-in",
+		describeRoute({
+			summary: "Start an authentication",
+			description:
+				"Begins an authentication flow and returns the first prompt the choreography requires, along with an opaque state to echo back to every subsequent step.",
+			tags: ["Auth"],
+			responses: {
+				200: {
+					description: "The first prompt of the authentication",
+					content: { "application/json": { schema: resolver(StateResponse) } },
+				},
+				...withErrorResponses(),
 			},
-			...withErrorResponses(),
-		},
-	}),
-	validator("json", v.object({ refresh_token: v.string() }), badRequest),
-	async (c) => c.json(await c.env.api.refreshToken(c.req.valid("json").refresh_token)),
-);
+		}),
+		async (c) => c.json(await c.env.api.signIn()),
+	);
 
-app.post(
-	"/enroll",
-	describeRoute({
-		summary: "Enroll a component",
-		description:
-			"Adds a component to the authenticated identity. The value is collected first, then validated when the component can verify itself — the one-time code goes to the value being enrolled, not to what the identity already has.",
-		tags: ["Auth"],
-		security: [{ bearerAuth: [] }],
-		responses: {
-			200: {
-				description: "The prompt collecting the value to enroll",
-				content: { "application/json": { schema: resolver(StateResponse) } },
+	app.post(
+		"/sign-up",
+		describeRoute({
+			summary: "Start a registration",
+			description:
+				"Begins a registration flow and returns the first prompt the choreography requires, along with an opaque state to echo back to every subsequent step.",
+			tags: ["Auth"],
+			responses: {
+				200: {
+					description: "The first prompt of the registration",
+					content: { "application/json": { schema: resolver(StateResponse) } },
+				},
+				...withErrorResponses(),
 			},
-			...withErrorResponses(),
-		},
-	}),
-	validator("json", v.object({ name: v.string() }), badRequest),
-	async (c) => c.json(await c.env.api.enroll({ name: c.req.valid("json").name, access_token: bearer(c) })),
-);
+		}),
+		async (c) => c.json(await c.env.api.signUp()),
+	);
 
-app.post(
-	"/unenroll",
-	describeRoute({
-		summary: "Unenroll a component",
-		description:
-			"Removes a component from the authenticated identity, behind an explicit confirmation. Refused with WOULD_LOCK_OUT when no path through the choreography would still be fully covered by the surviving components.",
-		tags: ["Auth"],
-		security: [{ bearerAuth: [] }],
-		responses: {
-			200: {
-				description: "The confirmation prompt gating the removal",
-				content: { "application/json": { schema: resolver(StateResponse) } },
+	app.post(
+		"/sign-out",
+		describeRoute({
+			summary: "Sign out",
+			description: "Destroys current session.",
+			tags: ["Auth"],
+			security: [{ bearerAuth: [] }],
+			responses: {
+				200: {
+					description: "The session has been destroyed",
+					content: { "application/json": { schema: resolver(ResultResponse) } },
+				},
+				...withErrorResponses(),
 			},
-			...withErrorResponses(),
-		},
-	}),
-	validator("json", v.object({ name: v.string() }), badRequest),
-	async (c) => c.json(await c.env.api.unenroll({ name: c.req.valid("json").name, access_token: bearer(c) })),
-);
+		}),
+		validator("json", v.object({ others: v.optional(v.boolean()) }), badRequest),
+		async (c) => c.json(await c.env.api.signOut(bearer(c), c.req.valid("json").others ?? false)),
+	);
 
-app.post(
-	"/rotate",
-	describeRoute({
-		summary: "Rotate a component",
-		description:
-			"Replaces the value of an already enrolled component. Control of the current value is proven first, but only for components that can verify themselves: receiving a one-time code at the current address proves something, whereas re-typing a password proves nothing the access token has not already established, so such components go straight to the replacement.",
-		tags: ["Auth"],
-		security: [{ bearerAuth: [] }],
-		responses: {
-			200: {
-				description: "The prompt proving control of the current value, or collecting the replacement",
-				content: { "application/json": { schema: resolver(StateResponse) } },
+	app.post(
+		"/list-sessions",
+		describeRoute({
+			summary: "List sessions",
+			description:
+				"Lists every session currently open on the authenticated identity — exactly what signing out with `others` would destroy — oldest first, with the address and user agent each was opened from. `current` names the session the call was made with.",
+			tags: ["Auth"],
+			security: [{ bearerAuth: [] }],
+			responses: {
+				200: {
+					description: "The list of active sessions",
+					content: { "application/json": { schema: resolver(SessionsResponse) } },
+				},
+				...withErrorResponses(),
 			},
-			...withErrorResponses(),
+		}),
+		// Sorted by id so the answer does not depend on the order a KV provider happens to enumerate in. Session
+		// ids are ksuids, whose sortable prefix has one-second resolution: that puts the list in creation order
+		// down to the second, and settles the rest arbitrarily but stably.
+		async (c) => {
+			const { session } = await c.env.api.accessTokenIdentity(bearer(c));
+			const sessions = await c.env.api.storage.listSession(session.identityId);
+			return c.json({ sessions: sessions.sort((a, b) => a.id.localeCompare(b.id)), current: session.id });
 		},
-	}),
-	validator("json", v.object({ name: v.string() }), badRequest),
-	async (c) => c.json(await c.env.api.rotate({ name: c.req.valid("json").name, access_token: bearer(c) })),
-);
+	);
 
-app.post(
-	"/recover",
-	describeRoute({
-		summary: "Start a recovery",
-		description:
-			"The one flow open to a caller with no session at all. The caller proves control of a single component the choreography can start with, then resets whatever the choreography still requires after it — precisely the components the caller could not provide. The component must therefore both resolve an identity and prove control of it, or the request is refused with COMPONENT_NOT_RECOVERABLE.",
-		tags: ["Auth"],
-		responses: {
-			200: {
-				description: "The component's own prompt. Nothing about the identity is disclosed yet.",
-				content: { "application/json": { schema: resolver(StateResponse) } },
+	app.post(
+		"/list-components",
+		describeRoute({
+			summary: "List components",
+			description:
+				"Lists every component enrolled on the authenticated identity — its identifications, its challenges and its channels — as the names the management routes (`enroll`, `rotate`, `unsubscribe`, …) take. The value a component holds is never returned: only whether it is enrolled and whether control of it has been confirmed.",
+			tags: ["Auth"],
+			security: [{ bearerAuth: [] }],
+			responses: {
+				200: {
+					description: "The list of enrolled components",
+					content: { "application/json": { schema: resolver(ComponentsResponse) } },
+				},
+				...withErrorResponses(),
 			},
-			...withErrorResponses(),
+		}),
+		async (c) => {
+			const { identity } = await c.env.api.accessTokenIdentity(bearer(c));
+			return c.json({ components: identity.components.map(withoutComponentData) });
 		},
-	}),
-	validator("json", v.object({ name: v.string() }), badRequest),
-	async (c) => c.json(await c.env.api.recover({ name: c.req.valid("json").name })),
-);
+	);
 
-app.post(
-	"/subscribe",
-	describeRoute({
-		summary: "Subscribe a channel",
-		description:
-			"Attaches a channel to the authenticated identity. The recipient is collected first, then confirmed through a channel the identity already trusts — subscribing SMS is confirmed by mail, for instance — so an identity with no other confirmed channel is refused with NO_VERIFICATION_CHANNEL.",
-		tags: ["Auth"],
-		security: [{ bearerAuth: [] }],
-		responses: {
-			200: {
-				description: "The prompt collecting the recipient",
-				content: { "application/json": { schema: resolver(StateResponse) } },
+	app.post(
+		"/refresh-token",
+		describeRoute({
+			summary: "Refresh the tokens",
+			description: "Exchanges a refresh token for a freshly minted set of access, id and refresh tokens on the same session.",
+			tags: ["Auth"],
+			responses: {
+				200: {
+					description: "A new set of tokens",
+					content: { "application/json": { schema: resolver(TokensResponse) } },
+				},
+				...withErrorResponses(),
 			},
-			...withErrorResponses(),
-		},
-	}),
-	validator("json", v.object({ name: v.string() }), badRequest),
-	async (c) => c.json(await c.env.api.subscribe({ name: c.req.valid("json").name, access_token: bearer(c) })),
-);
+		}),
+		validator("json", v.object({ refresh_token: v.string() }), badRequest),
+		async (c) => c.json(await c.env.api.refreshToken(c.req.valid("json").refresh_token)),
+	);
 
-app.post(
-	"/unsubscribe",
-	describeRoute({
-		summary: "Unsubscribe a channel",
-		description:
-			"Detaches a channel from the authenticated identity, behind an explicit confirmation. Refused with CHANNEL_IN_USE while an enrolled component still links to it.",
-		tags: ["Auth"],
-		security: [{ bearerAuth: [] }],
-		responses: {
-			200: {
-				description: "The confirmation prompt gating the removal",
-				content: { "application/json": { schema: resolver(StateResponse) } },
+	app.post(
+		"/enroll",
+		describeRoute({
+			summary: "Enroll a component",
+			description:
+				"Adds a component to the authenticated identity. The value is collected first, then validated when the component can verify itself — the one-time code goes to the value being enrolled, not to what the identity already has.",
+			tags: ["Auth"],
+			security: [{ bearerAuth: [] }],
+			responses: {
+				200: {
+					description: "The prompt collecting the value to enroll",
+					content: { "application/json": { schema: resolver(StateResponse) } },
+				},
+				...withErrorResponses(),
 			},
-			...withErrorResponses(),
-		},
-	}),
-	validator("json", v.object({ name: v.string() }), badRequest),
-	async (c) => c.json(await c.env.api.unsubscribe({ name: c.req.valid("json").name, access_token: bearer(c) })),
-);
+		}),
+		validator("json", v.object({ name: v.string() }), badRequest),
+		async (c) => c.json(await c.env.api.enroll({ name: c.req.valid("json").name, access_token: bearer(c) })),
+	);
 
-app.post(
-	"/delete",
-	describeRoute({
-		summary: "Delete the identity",
-		description:
-			"Deletes the authenticated identity outright, behind an explicit confirmation. Every session open on it goes with it, so no token outlives the identity it was minted for. Requires a recent sign-in, like every other destructive flow.",
-		tags: ["Auth"],
-		security: [{ bearerAuth: [] }],
-		responses: {
-			200: {
-				description: "The confirmation prompt gating the deletion",
-				content: { "application/json": { schema: resolver(StateResponse) } },
+	app.post(
+		"/unenroll",
+		describeRoute({
+			summary: "Unenroll a component",
+			description:
+				"Removes a component from the authenticated identity, behind an explicit confirmation. Refused with WOULD_LOCK_OUT when no path through the choreography would still be fully covered by the surviving components.",
+			tags: ["Auth"],
+			security: [{ bearerAuth: [] }],
+			responses: {
+				200: {
+					description: "The confirmation prompt gating the removal",
+					content: { "application/json": { schema: resolver(StateResponse) } },
+				},
+				...withErrorResponses(),
 			},
-			...withErrorResponses(),
-		},
-	}),
-	async (c) => c.json(await c.env.api.delete({ access_token: bearer(c) })),
-);
+		}),
+		validator("json", v.object({ name: v.string() }), badRequest),
+		async (c) => c.json(await c.env.api.unenroll({ name: c.req.valid("json").name, access_token: bearer(c) })),
+	);
 
-app.post(
-	"/send-prompt",
-	describeRoute({
-		summary: "Send the current prompt",
-		description:
-			"Delivers the current prompt over its channel, for the components that can be sent rather than typed — mailing a one-time code, for instance. `locale` falls back to the Accept-Language header. `name` selects which component to send when the current step is a choice.",
-		tags: ["Auth"],
-		responses: {
-			200: {
-				description: "The prompt has been sent",
-				content: { "application/json": { schema: resolver(ResultResponse) } },
+	app.post(
+		"/rotate",
+		describeRoute({
+			summary: "Rotate a component",
+			description:
+				"Replaces the value of an already enrolled component. Control of the current value is proven first, but only for components that can verify themselves: receiving a one-time code at the current address proves something, whereas re-typing a password proves nothing the access token has not already established, so such components go straight to the replacement.",
+			tags: ["Auth"],
+			security: [{ bearerAuth: [] }],
+			responses: {
+				200: {
+					description: "The prompt proving control of the current value, or collecting the replacement",
+					content: { "application/json": { schema: resolver(StateResponse) } },
+				},
+				...withErrorResponses(),
 			},
-			...withErrorResponses(),
-		},
-	}),
-	validator("json", v.object({ name: v.string(), locale: v.optional(v.string()), state: v.string() }), badRequest),
-	async (c) => {
-		const { name, locale, state } = c.req.valid("json");
-		return c.json(await c.env.api.sendPrompt({ name, locale: localeOf(c, locale), state }));
-	},
-);
+		}),
+		validator("json", v.object({ name: v.string() }), badRequest),
+		async (c) => c.json(await c.env.api.rotate({ name: c.req.valid("json").name, access_token: bearer(c) })),
+	);
 
-app.post(
-	"/submit-prompt",
-	describeRoute({
-		summary: "Submit the current prompt",
-		description:
-			"Answers the current prompt and advances the flow. Returns the next prompt, the tokens once an authentication completes, or a bare success once a management flow completes. `name` selects which component is being answered when the current step is a choice.",
-		tags: ["Auth"],
-		responses: {
-			200: {
-				description: "The next prompt, the minted tokens, or a bare success",
-				content: { "application/json": { schema: resolver(AnyResponse) } },
+	app.post(
+		"/recover",
+		describeRoute({
+			summary: "Start a recovery",
+			description:
+				"The one flow open to a caller with no session at all. The caller proves control of a single component the choreography can start with, then resets whatever the choreography still requires after it — precisely the components the caller could not provide. The component must therefore both resolve an identity and prove control of it, or the request is refused with COMPONENT_NOT_RECOVERABLE.",
+			tags: ["Auth"],
+			responses: {
+				200: {
+					description: "The component's own prompt. Nothing about the identity is disclosed yet.",
+					content: { "application/json": { schema: resolver(StateResponse) } },
+				},
+				...withErrorResponses(),
 			},
-			...withErrorResponses(),
-		},
-	}),
-	validator("json", v.object({ name: v.string(), value: v.unknown(), state: v.string() }), badRequest),
-	async (c) => {
-		const { name, value, state } = c.req.valid("json");
-		return c.json(await c.env.api.submitPrompt({ name, value, state, ...callerOf(c) }));
-	},
-);
+		}),
+		validator("json", v.object({ name: v.string() }), badRequest),
+		async (c) => c.json(await c.env.api.recover({ name: c.req.valid("json").name })),
+	);
 
-app.post(
-	"/send-validation",
-	describeRoute({
-		summary: "Send the current validation",
-		description:
-			"Delivers the validation prompt that confirms a value already collected — the one-time code proving control of the address just given. `locale` falls back to the Accept-Language header.",
-		tags: ["Auth"],
-		responses: {
-			200: {
-				description: "The validation has been sent",
-				content: { "application/json": { schema: resolver(ResultResponse) } },
+	app.post(
+		"/subscribe",
+		describeRoute({
+			summary: "Subscribe a channel",
+			description:
+				"Attaches a channel to the authenticated identity. The recipient is collected first, then confirmed through a channel the identity already trusts — subscribing SMS is confirmed by mail, for instance — so an identity with no other confirmed channel is refused with NO_VERIFICATION_CHANNEL.",
+			tags: ["Auth"],
+			security: [{ bearerAuth: [] }],
+			responses: {
+				200: {
+					description: "The prompt collecting the recipient",
+					content: { "application/json": { schema: resolver(StateResponse) } },
+				},
+				...withErrorResponses(),
 			},
-			...withErrorResponses(),
-		},
-	}),
-	validator("json", v.object({ name: v.string(), locale: v.optional(v.string()), state: v.string() }), badRequest),
-	async (c) => {
-		const { name, locale, state } = c.req.valid("json");
-		return c.json(await c.env.api.sendValidation({ name, locale: localeOf(c, locale), state }));
-	},
-);
+		}),
+		validator("json", v.object({ name: v.string() }), badRequest),
+		async (c) => c.json(await c.env.api.subscribe({ name: c.req.valid("json").name, access_token: bearer(c) })),
+	);
 
-app.post(
-	"/submit-validation",
-	describeRoute({
-		summary: "Submit the current validation",
-		description:
-			"Answers the validation prompt, confirming the value it covers and advancing the flow. Returns the next prompt, the tokens once an authentication completes, or a bare success once a management flow completes.",
-		tags: ["Auth"],
-		responses: {
-			200: {
-				description: "The next prompt, the minted tokens, or a bare success",
-				content: { "application/json": { schema: resolver(AnyResponse) } },
+	app.post(
+		"/unsubscribe",
+		describeRoute({
+			summary: "Unsubscribe a channel",
+			description:
+				"Detaches a channel from the authenticated identity, behind an explicit confirmation. Refused with CHANNEL_IN_USE while an enrolled component still links to it.",
+			tags: ["Auth"],
+			security: [{ bearerAuth: [] }],
+			responses: {
+				200: {
+					description: "The confirmation prompt gating the removal",
+					content: { "application/json": { schema: resolver(StateResponse) } },
+				},
+				...withErrorResponses(),
 			},
-			...withErrorResponses(),
-		},
-	}),
-	validator("json", v.object({ name: v.string(), value: v.unknown(), state: v.string() }), badRequest),
-	async (c) => {
-		const { name, value, state } = c.req.valid("json");
-		return c.json(await c.env.api.submitValidation({ name, value, state, ...callerOf(c) }));
-	},
-);
+		}),
+		validator("json", v.object({ name: v.string() }), badRequest),
+		async (c) => c.json(await c.env.api.unsubscribe({ name: c.req.valid("json").name, access_token: bearer(c) })),
+	);
 
-export default app;
+	app.post(
+		"/delete",
+		describeRoute({
+			summary: "Delete the identity",
+			description:
+				"Deletes the authenticated identity outright, behind an explicit confirmation. Every session open on it goes with it, so no token outlives the identity it was minted for. Requires a recent sign-in, like every other destructive flow.",
+			tags: ["Auth"],
+			security: [{ bearerAuth: [] }],
+			responses: {
+				200: {
+					description: "The confirmation prompt gating the deletion",
+					content: { "application/json": { schema: resolver(StateResponse) } },
+				},
+				...withErrorResponses(),
+			},
+		}),
+		async (c) => c.json(await c.env.api.delete({ access_token: bearer(c) })),
+	);
+
+	app.post(
+		"/send-prompt",
+		describeRoute({
+			summary: "Send the current prompt",
+			description:
+				"Delivers the current prompt over its channel, for the components that can be sent rather than typed — mailing a one-time code, for instance. `locale` falls back to the Accept-Language header. `name` selects which component to send when the current step is a choice.",
+			tags: ["Auth"],
+			responses: {
+				200: {
+					description: "The prompt has been sent",
+					content: { "application/json": { schema: resolver(ResultResponse) } },
+				},
+				...withErrorResponses(),
+			},
+		}),
+		validator("json", v.object({ name: v.string(), locale: v.optional(v.string()), state: v.string() }), badRequest),
+		async (c) => {
+			const { name, locale, state } = c.req.valid("json");
+			return c.json(await c.env.api.sendPrompt({ name, locale: localeOf(c, locale), state }));
+		},
+	);
+
+	app.post(
+		"/submit-prompt",
+		describeRoute({
+			summary: "Submit the current prompt",
+			description:
+				"Answers the current prompt and advances the flow. Returns the next prompt, the tokens once an authentication completes, or a bare success once a management flow completes. `name` selects which component is being answered when the current step is a choice.",
+			tags: ["Auth"],
+			responses: {
+				200: {
+					description: "The next prompt, the minted tokens, or a bare success",
+					content: { "application/json": { schema: resolver(AnyResponse) } },
+				},
+				...withErrorResponses(),
+			},
+		}),
+		validator("json", v.object({ name: v.string(), value: v.unknown(), state: v.string() }), badRequest),
+		async (c) => {
+			const { name, value, state } = c.req.valid("json");
+			return c.json(await c.env.api.submitPrompt({ name, value, state, ...callerOf(c) }));
+		},
+	);
+
+	app.post(
+		"/send-validation",
+		describeRoute({
+			summary: "Send the current validation",
+			description:
+				"Delivers the validation prompt that confirms a value already collected — the one-time code proving control of the address just given. `locale` falls back to the Accept-Language header.",
+			tags: ["Auth"],
+			responses: {
+				200: {
+					description: "The validation has been sent",
+					content: { "application/json": { schema: resolver(ResultResponse) } },
+				},
+				...withErrorResponses(),
+			},
+		}),
+		validator("json", v.object({ name: v.string(), locale: v.optional(v.string()), state: v.string() }), badRequest),
+		async (c) => {
+			const { name, locale, state } = c.req.valid("json");
+			return c.json(await c.env.api.sendValidation({ name, locale: localeOf(c, locale), state }));
+		},
+	);
+
+	app.post(
+		"/submit-validation",
+		describeRoute({
+			summary: "Submit the current validation",
+			description:
+				"Answers the validation prompt, confirming the value it covers and advancing the flow. Returns the next prompt, the tokens once an authentication completes, or a bare success once a management flow completes.",
+			tags: ["Auth"],
+			responses: {
+				200: {
+					description: "The next prompt, the minted tokens, or a bare success",
+					content: { "application/json": { schema: resolver(AnyResponse) } },
+				},
+				...withErrorResponses(),
+			},
+		}),
+		validator("json", v.object({ name: v.string(), value: v.unknown(), state: v.string() }), badRequest),
+		async (c) => {
+			const { name, value, state } = c.req.valid("json");
+			return c.json(await c.env.api.submitValidation({ name, value, state, ...callerOf(c) }));
+		},
+	);
+
+	return app;
+}

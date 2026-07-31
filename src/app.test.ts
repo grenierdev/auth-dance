@@ -7,7 +7,7 @@ import EmailAuthDanceComponent from "./components/email.ts";
 import PasswordAuthDanceComponent from "./components/password.ts";
 import { AuthDanceStorage } from "./storage.ts";
 import type { AuthDanceKvProvider } from "./provider.ts";
-import choreoAuth, { type ChoreoAuth } from "./mod.ts";
+import { type AuthDance, createAuthDance } from "./mod.ts";
 
 // Every response is JSON, failures included, so a call only ever yields a status and a parsed body.
 // deno-lint-ignore no-explicit-any
@@ -55,10 +55,10 @@ describe("App", () => {
 			secret: "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs", // openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
 			storage,
 		};
-		post = client(choreoAuth(apiOptions));
+		post = client(createAuthDance({ api: apiOptions }));
 	});
 
-	function client(auth: ChoreoAuth): Post {
+	function client(auth: AuthDance): Post {
 		return async (path, body, headers = {}) => {
 			const response = await auth.fetch(
 				new Request(`http://local${path}`, {
@@ -607,9 +607,11 @@ describe("App", () => {
 	it("should unenroll a component a choice makes optional", async () => {
 		// "email2" alone is an alternative to the email + password path, so "password" becomes droppable.
 		post = client(
-			choreoAuth({
-				...apiOptions,
-				choreography: choice(sequence("email", "password"), "email2"),
+			createAuthDance({
+				api: {
+					...apiOptions,
+					choreography: choice(sequence("email", "password"), "email2"),
+				},
 			}),
 		);
 		await storage.createIdentity(
@@ -909,13 +911,15 @@ describe("App", () => {
 			set: () => Promise.reject(boom),
 			unset: () => Promise.reject(boom),
 		};
-		const brokenPost = client(choreoAuth({
-			...apiOptions,
-			storage: new AuthDanceStorage({
-				identity: new MemoryIdentityProvider(),
-				kv: brokenKv,
-				rate_limiter: new MemoryRateLimiterProvider(),
-			}),
+		const brokenPost = client(createAuthDance({
+			api: {
+				...apiOptions,
+				storage: new AuthDanceStorage({
+					identity: new MemoryIdentityProvider(),
+					kv: brokenKv,
+					rate_limiter: new MemoryRateLimiterProvider(),
+				}),
+			},
 		}));
 		const [, result1] = await brokenPost("/sign-up");
 		const [, result2] = await brokenPost("/submit-prompt", {
@@ -1030,7 +1034,7 @@ describe("App", () => {
 		});
 
 		it("should not route an unknown path", async () => {
-			const auth = choreoAuth(apiOptions);
+			const auth = createAuthDance({ api: apiOptions });
 			const response = await auth.fetch(
 				new Request("http://local/nope", { method: "POST" }),
 			);
@@ -1046,7 +1050,7 @@ describe("App", () => {
 				>["address_rate_limit"],
 			): Post {
 				return client(
-					choreoAuth({ ...apiOptions, advanced: { address_rate_limit } }),
+					createAuthDance({ api: { ...apiOptions, advanced: { address_rate_limit } } }),
 				);
 			}
 

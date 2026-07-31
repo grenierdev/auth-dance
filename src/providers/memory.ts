@@ -1,5 +1,5 @@
 import type { AuthDanceChannel, AuthDanceChannelContext } from "../channel.ts";
-import type { Identity, IdentityChannel, IdentityIdentification } from "../identity.ts";
+import type { AuthDanceIdentity, AuthDanceIdentityChannel, AuthDanceIdentityIdentification } from "../identity.ts";
 import type { AuthDanceMessage } from "../message.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
 import {
@@ -11,9 +11,9 @@ import {
 } from "../provider.ts";
 
 export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Disposable {
-	#storage: Map<string, Identity>;
+	#storage: Map<string, AuthDanceIdentity>;
 
-	constructor(storage?: Iterable<[string, Identity]>) {
+	constructor(storage?: Iterable<[string, AuthDanceIdentity]>) {
 		this.#storage = new Map(storage);
 	}
 
@@ -21,7 +21,7 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 		this.#storage.clear();
 	}
 
-	list(offset?: number, limit?: number): Promise<Identity[]> {
+	list(offset?: number, limit?: number): Promise<AuthDanceIdentity[]> {
 		const identities = Array.from(this.#storage.values());
 		const results = identities
 			.slice(offset, limit)
@@ -29,14 +29,14 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 		return Promise.resolve(results);
 	}
 
-	get(id: string): Promise<Identity | undefined> {
+	get(id: string): Promise<AuthDanceIdentity | undefined> {
 		const identity = this.#storage.get(id);
 		return Promise.resolve(identity ? structuredClone(identity) : undefined);
 	}
 
-	getByIdentification(type: string, identification: string): Promise<Identity | undefined> {
+	getByIdentification(type: string, identification: string): Promise<AuthDanceIdentity | undefined> {
 		for (const identity of this.#storage.values()) {
-			const identityComponent = identity.components.find((c): c is IdentityIdentification =>
+			const identityComponent = identity.components.find((c): c is AuthDanceIdentityIdentification =>
 				c.kind === "identification" && c.component === type && c.identification === identification
 			);
 			if (identityComponent) {
@@ -46,7 +46,7 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 		return Promise.resolve(undefined);
 	}
 
-	set(identity: Identity): Promise<void> {
+	set(identity: AuthDanceIdentity): Promise<void> {
 		this.#storage.set(identity.id, structuredClone(identity));
 		return Promise.resolve();
 	}
@@ -157,7 +157,7 @@ export class MemoryAuthDanceChannel implements AuthDanceChannel, Disposable {
 	}
 
 	// deno-lint-ignore require-await
-	async getIdentityChannel(channel: string, value: unknown, confirmed: boolean = false): Promise<IdentityChannel> {
+	async getIdentityChannel(channel: string, value: unknown, confirmed: boolean = false): Promise<AuthDanceIdentityChannel> {
 		return {
 			kind: "channel",
 			channel,

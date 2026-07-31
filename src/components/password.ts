@@ -1,10 +1,10 @@
 import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
-import type { Identity, IdentityComponent } from "../identity.ts";
+import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "../identity.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
 import { encodeBase64 } from "@std/encoding/base64";
 
 export default class PasswordAuthDanceComponent implements AuthDanceComponent {
-	readonly kind: IdentityComponent["kind"] = "challenge";
+	readonly kind: AuthDanceIdentityComponent["kind"] = "challenge";
 	readonly verifiable = false;
 	#salt: string;
 
@@ -30,7 +30,7 @@ export default class PasswordAuthDanceComponent implements AuthDanceComponent {
 		component: string,
 		value: unknown,
 		confirmed: boolean = false,
-	): Promise<IdentityComponent[]> {
+	): Promise<AuthDanceIdentityComponent[]> {
 		const password = typeof value === "string" ? value : null;
 		const hash = await this.hashPassword(password ?? "");
 		return [
@@ -53,7 +53,7 @@ export default class PasswordAuthDanceComponent implements AuthDanceComponent {
 		};
 	}
 
-	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | Identity["id"]> {
+	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]> {
 		const value = typeof response === "string" ? response : null;
 		if (!value) {
 			return false;

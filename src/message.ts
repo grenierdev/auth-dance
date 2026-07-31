@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { IdentityChannel } from "./identity.ts";
+import { AuthDanceIdentityChannel } from "./identity.ts";
 
 // export interface AuthDanceMessage {
 // 	identityId: string;
@@ -18,14 +18,14 @@ import { IdentityChannel } from "./identity.ts";
 // );
 
 export interface AuthDanceMessage {
-	recipient: IdentityChannel;
+	recipient: AuthDanceIdentityChannel;
 	subject: string;
 	content: Record<string, string>;
 }
 
 export const AuthDanceMessage: v.GenericSchema<AuthDanceMessage> = v.pipe(
 	v.object({
-		recipient: IdentityChannel,
+		recipient: AuthDanceIdentityChannel,
 		subject: v.string(),
 		content: v.record(v.string(), v.string()),
 	}),

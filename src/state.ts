@@ -1,4 +1,4 @@
-import { IdentityChannel, IdentityComponent } from "./identity.ts";
+import { AuthDanceIdentityChannel, AuthDanceIdentityComponent } from "./identity.ts";
 import * as v from "valibot";
 
 export interface AuthDanceStateSignIn {
@@ -25,7 +25,7 @@ export interface AuthDanceStateSignUp {
 	id: string;
 	kind: "sign-up";
 	identityId: string;
-	components: IdentityComponent[];
+	components: AuthDanceIdentityComponent[];
 }
 
 export const AuthDanceStateSignUp: v.GenericSchema<AuthDanceStateSignUp> = v.pipe(
@@ -33,7 +33,7 @@ export const AuthDanceStateSignUp: v.GenericSchema<AuthDanceStateSignUp> = v.pip
 		id: v.string(),
 		kind: v.literal("sign-up"),
 		identityId: v.string(),
-		components: v.array(IdentityComponent),
+		components: v.array(AuthDanceIdentityComponent),
 	}),
 	v.title("AuthDanceStateSignUp"),
 	v.description(
@@ -46,7 +46,7 @@ export interface AuthDanceStateEnroll {
 	kind: "enroll";
 	sessionId: string;
 	component: string;
-	components: IdentityComponent[];
+	components: AuthDanceIdentityComponent[];
 }
 
 export const AuthDanceStateEnroll: v.GenericSchema<AuthDanceStateEnroll> = v.pipe(
@@ -55,7 +55,7 @@ export const AuthDanceStateEnroll: v.GenericSchema<AuthDanceStateEnroll> = v.pip
 		kind: v.literal("enroll"),
 		sessionId: v.string(),
 		component: v.string(),
-		components: v.array(IdentityComponent),
+		components: v.array(AuthDanceIdentityComponent),
 	}),
 	v.title("AuthDanceStateEnroll"),
 	v.description(
@@ -89,7 +89,7 @@ export interface AuthDanceStateRotate {
 	sessionId: string;
 	component: string;
 	verified: boolean;
-	components: IdentityComponent[];
+	components: AuthDanceIdentityComponent[];
 }
 
 export const AuthDanceStateRotate: v.GenericSchema<AuthDanceStateRotate> = v.pipe(
@@ -99,7 +99,7 @@ export const AuthDanceStateRotate: v.GenericSchema<AuthDanceStateRotate> = v.pip
 		sessionId: v.string(),
 		component: v.string(),
 		verified: v.boolean(),
-		components: v.array(IdentityComponent),
+		components: v.array(AuthDanceIdentityComponent),
 	}),
 	v.title("AuthDanceStateRotate"),
 	v.description(
@@ -113,7 +113,7 @@ export interface AuthDanceStateRecover {
 	component: string;
 	identityId?: string;
 	verified: boolean;
-	components: IdentityComponent[];
+	components: AuthDanceIdentityComponent[];
 }
 
 export const AuthDanceStateRecover: v.GenericSchema<AuthDanceStateRecover> = v.pipe(
@@ -123,7 +123,7 @@ export const AuthDanceStateRecover: v.GenericSchema<AuthDanceStateRecover> = v.p
 		component: v.string(),
 		identityId: v.optional(v.string()),
 		verified: v.boolean(),
-		components: v.array(IdentityComponent),
+		components: v.array(AuthDanceIdentityComponent),
 	}),
 	v.title("AuthDanceStateRecover"),
 	v.description(
@@ -135,7 +135,7 @@ export interface AuthDanceStateSubscribe {
 	id: string;
 	kind: "subscribe";
 	sessionId: string;
-	channel: IdentityChannel;
+	channel: AuthDanceIdentityChannel;
 	validating: boolean;
 }
 
@@ -144,7 +144,7 @@ export const AuthDanceStateSubscribe: v.GenericSchema<AuthDanceStateSubscribe> =
 		id: v.string(),
 		kind: v.literal("subscribe"),
 		sessionId: v.string(),
-		channel: IdentityChannel,
+		channel: AuthDanceIdentityChannel,
 		validating: v.boolean(),
 	}),
 	v.title("AuthDanceStateSubscribe"),
