@@ -1,0 +1,7 @@
+{
+	"name": "auth-dance",
+	"exports": {
+		".": "./mod.ts",
+		"./choreography": "./choreography.ts"
+	}
+}
