@@ -1,73 +1,64 @@
 # Auth Dance
 
-Everybody's already doing the dance. Type your email, wait for the code, paste the code, type your
-password — you've performed those steps a thousand times without ever calling them a routine.
+Everybody already does the dance. Type your email, wait for the code, paste the code, type your password. You did those steps a thousand
+times and never called them a routine.
 
-Auth Dance is the library that finally writes the choreography down.
+Auth Dance writes the choreography down.
 
 ```ts
 choreography: choice(sequence("email", "password"), "passkey");
 ```
 
-That's a complete authentication policy. Sign-in, sign-up, MFA enrollment, credential rotation and
-account recovery are all derived from it — one declaration, and the steps take care of themselves.
+That is a complete authentication policy. The library derives sign-in, sign-up, MFA enrollment, credential rotation and account recovery
+from it. You declare the steps one time.
 
 ## Why another auth library?
 
-Because authentication isn't a boolean. It's a **choreography**: an ordered arrangement of prompts
-the user has to perform, in sequence or by choice, before they're allowed through the door.
+Authentication is not a boolean. It is a **choreography**: an ordered arrangement of prompts. The user performs the prompts, in sequence or
+by choice, before the library opens the door.
 
-Most libraries hand you a `login(email, password)` function and let you bolt the rest on. Then the
-requirements arrive. Add TOTP. Let enterprise users skip passwords. Require a second factor only for
-admins. Allow recovery by SMS but never by security question. Every one of those is a change to the
-*shape of the dance*, and in a library built around one hard-coded step, every one of them is a
-change to the control flow — a new branch, a new endpoint, a new place for a bypass to hide.
+Most libraries give you a `login(email, password)` function. You attach the rest yourself. Then the requirements arrive. Add TOTP. Let
+enterprise users skip passwords. Require a second factor for admins only. Allow recovery by SMS but never by security question.
 
-Auth Dance separates the **choreography** (which steps, in what order) from the **components** (what
-a single step actually does). The choreography is inert data, so the library can walk it:
+Each requirement changes the _shape of the dance_. In a library built around one hard-coded step, each one also changes the control flow.
+You add a branch, an endpoint, and one more place where a bypass hides.
 
-- **`peek()` decides what happens next.** The state machine never hard-codes "password comes after
-  email" — it asks the choreography. Adding a factor is editing a declaration, not editing logic.
-- **Every flow reuses the same steps.** Sign-up collects the same components sign-in verifies, so
-  the two can't drift apart. Rotation and recovery are re-runs of a step you already declared.
-- **The library can reason about your policy.** Unenrolling a factor is refused with
-  `WOULD_LOCK_OUT` when removing it would leave no completable path through the choreography. That's
-  a graph traversal (`walk()`), not a rule someone remembered to write.
-- **Flow state lives with the client.** An in-progress dance is an encrypted JWE (A256GCM) handed
-  back as an opaque `state` string. No session table for half-finished logins, nothing to garbage
-  collect, and horizontal scaling is free.
+Auth Dance separates the **choreography** (which steps, in what order) from the **components** (what one step does). The choreography is
+inert data, so the library can walk it:
 
-A step is a small interface — a prompt, a verification, and how it lands on an identity. Implement
-`AuthComponent` and your custom factor is a first-class citizen of every flow, including the ones you
-haven't thought about yet.
+- **`peek()` decides what happens next.** The state machine does not hard-code "password comes after email". It asks the choreography. To
+  add a factor, you edit a declaration instead of logic.
+- **Every flow reuses the same steps.** Sign-up collects the components that sign-in verifies, so the two flows cannot drift apart. Rotation
+  and recovery re-run a step you already declared.
+- **The library can reason about your policy.** It refuses to unenroll a factor with `WOULD_LOCK_OUT` when the removal leaves no completable
+  path through the choreography. That answer comes from a graph traversal (`walk()`), not from a rule someone remembered to write.
+- **Flow state lives with the client.** An in-progress dance is an encrypted JWE (A256GCM). The library returns it as an opaque `state`
+  string. Half-finished logins need no session table and no garbage collection, and horizontal scaling costs nothing.
+
+A step is a small interface: a prompt, a verification, and how the result lands on an identity. Implement `AuthComponent` and your custom
+factor works in every flow, including the flows you did not think about yet.
 
 ## Getting Started
 
-> **Status: early.** Auth Dance is pre-release. The package has no `version` in `src/deno.jsonc`, is
-> not published to JSR, and only in-memory providers ship. The API surface below is accurate but
-> unstable, and there are known rough edges — see [Known gaps](#known-gaps) before reaching for it in
+> **Status: early.** Auth Dance is pre-release. The package has no `version` in `src/deno.jsonc`. The package is not published to JSR, and
+> only in-memory providers ship today. The API surface below is accurate but unstable. Read [Known gaps](#known-gaps) before you use it in
 > production.
 
 ### Requirements
 
-Deno 2.x. No permission flags are needed for the test suite.
+Deno 2.x. The test suite needs no permission flags.
 
 ### Bootstrap
 
-`choreoAuth(options)` is the single entry point. It returns your `AuthApi` (the programmatic
-surface), a `fetch` handler (the HTTP surface), and an OpenAPI schema generator.
+`choreoAuth(options)` is the single entry point. It returns your `AuthApi` (the programmatic surface), a `fetch` handler (the HTTP surface),
+and an OpenAPI schema generator.
 
 ```ts
 import choreoAuth, { sequence } from "auth-dance";
 import { AuthStorage } from "auth-dance/storage.ts";
 import EmailAuthComponent from "auth-dance/components/email.ts";
 import PasswordAuthComponent from "auth-dance/components/password.ts";
-import {
-	MemoryAuthChannel,
-	MemoryIdentityProvider,
-	MemoryKvProvider,
-	MemoryRateLimiterProvider,
-} from "auth-dance/providers/memory.ts";
+import { MemoryAuthChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "auth-dance/providers/memory.ts";
 
 const auth = choreoAuth({
 	// Where messages go.
@@ -94,13 +85,12 @@ const auth = choreoAuth({
 Deno.serve(auth.fetch);
 ```
 
-> Only `choreoAuth`, `choice`, `component`, `sequence`, and everything from `identity.ts` / `error.ts`
-> are re-exported from the package root today. `AuthStorage`, the components and the memory providers
-> currently need deep paths — see [Known gaps](#known-gaps).
+> The package root re-exports `choreoAuth`, `choice`, `component`, `sequence`, and everything from `identity.ts` and `error.ts`.
+> `AuthStorage`, the components and the memory providers still need deep paths. See [Known gaps](#known-gaps).
 
 ### Performing the dance
 
-Sign-in is a loop: ask for a state, submit a value, get the next prompt, repeat until you get tokens.
+Sign-in is a loop. Ask for a state, submit a value, get the next prompt, and repeat until the library returns tokens.
 
 ```ts
 const started = await auth.api.signIn();
@@ -121,7 +111,7 @@ const done = await auth.api.submitPrompt({
 // { tokens: { access_token, id_token, refresh_token }, session, identity }
 ```
 
-Over HTTP, the same three calls — every route is `POST`, every payload is JSON:
+Over HTTP, you make the same three calls. Every route is `POST`, and every payload is JSON:
 
 ```ts
 const r1 = await post("/sign-in");
@@ -130,19 +120,19 @@ const r3 = await post("/submit-prompt", { name: "password", value: "foo", state:
 // r3.tokens
 ```
 
-When a prompt is `sendable` (an OTP, say), call `/send-prompt` to deliver it before submitting. When
-a collected value needs proof of control, `submitPrompt` answers with a *validation* prompt instead
-of advancing — reply on `/send-validation` and `/submit-validation`, then the dance resumes.
+If a prompt is `sendable`, an OTP for example, call `/send-prompt` to deliver it before you submit. If a collected value needs proof of
+control, `submitPrompt` answers with a _validation_ prompt instead of an advance. Reply on `/send-validation` and `/submit-validation`, then
+the dance continues.
 
-The `prompt.kind` tells the client what to render: `"input"` for a single field, `"choice"` for a
-fork in the choreography where the user picks which branch to take.
+`prompt.kind` tells the client what to render. `"input"` is a single field. `"choice"` is a fork in the choreography where the user picks
+the branch to take.
 
 ## Concepts
 
 ### Choreography
 
-A choreography is a tree of three node kinds — `component`, `sequence`, `choice` — built with
-combinators. Bare strings are sugar for `component(name)`.
+A choreography is a tree of three node kinds: `component`, `sequence` and `choice`. Combinators build the tree. A bare string is sugar for
+`component(name)`.
 
 ```ts
 import { choice, component, pick, sequence } from "auth-dance/choreography";
@@ -155,14 +145,14 @@ pick(2, "totp", "sms", "backup-code"); // any 2 of 3, in any order
 
 `pick(count, ...)` expands to a `choice` of every ordered permutation of length `count`.
 
-The traversal helpers are the state machine's oracle, and useful for testing your own policy:
+The traversal helpers are the oracle of the state machine. They also help you test your own policy:
 
-| Function | Purpose |
-| --- | --- |
-| `peek(choreography, path)` | The next step, a `choice` of alternatives, or `null` when complete |
-| `walk(choreography)` | Generator over every reachable step and the path leading to it |
-| `simplify(choreography)` | Flattens same-kind nodes, de-duplicates, collapses 1-element nodes |
-| `isEquals(a, b)` | Structural comparison |
+| Function                   | Purpose                                                                 |
+| -------------------------- | ----------------------------------------------------------------------- |
+| `peek(choreography, path)` | The next step, a `choice` of alternatives, or `null` when complete      |
+| `walk(choreography)`       | Generator over every reachable step and the path that leads to it       |
+| `simplify(choreography)`   | Flattens same-kind nodes, removes duplicates, collapses 1-element nodes |
+| `isEquals(a, b)`           | Structural comparison                                                   |
 
 ### Components
 
@@ -180,31 +170,29 @@ interface AuthComponent {
 }
 ```
 
-`verifyPrompt` returns `false` to reject, `true` to accept without resolving anyone, or an identity
-id to say *this is who it is*. Two components resolving different identities in one dance is an
-`IDENTITY_MISMATCH`.
+`verifyPrompt` returns `false` to reject. It returns `true` to accept without resolving anyone. It returns an identity id to say _this is
+who it is_. Two components that resolve different identities in one dance produce an `IDENTITY_MISMATCH`.
 
-`AuthComponentContext` carries `{ storage, stateId, name, flow, identity? }`, where `flow` is one of
-`"sign-in" | "sign-up" | "enroll" | "rotate" | "recover" | "subscribe"` — so a component can behave
-differently while enrolling than while authenticating.
+`AuthComponentContext` carries `{ storage, stateId, name, flow, identity? }`. `flow` is one of
+`"sign-in" | "sign-up" | "enroll" | "rotate" | "recover" | "subscribe"`, so a component can behave one way during enrollment and another way
+during authentication.
 
-Three ship in the box:
+Three components ship in the box:
 
-| Component | Kind | Verifiable | Notes |
-| --- | --- | --- | --- |
-| `EmailAuthComponent(channel)` | identification | yes | Resolves the identity by address; verifies via OTP. Also contributes a linked `channel`. |
-| `PasswordAuthComponent(salt)` | challenge | no | `base64(SHA-512(salt:password))`. See [Known gaps](#known-gaps). |
-| `OtpAuthComponent(channel, digits = 6, ttl = 300)` | challenge | no | The only sendable one; stashes the code in KV under `otp/<stateId>/<name>`. |
+| Component                                          | Kind           | Verifiable | Notes                                                                                               |
+| -------------------------------------------------- | -------------- | ---------- | --------------------------------------------------------------------------------------------------- |
+| `EmailAuthComponent(channel)`                      | identification | yes        | Resolves the identity by address, and verifies it with an OTP. Also contributes a linked `channel`. |
+| `PasswordAuthComponent(salt)`                      | challenge      | no         | `base64(SHA-512(salt:password))`. See [Known gaps](#known-gaps).                                    |
+| `OtpAuthComponent(channel, digits = 6, ttl = 300)` | challenge      | no         | The only sendable component. Stores the code in KV under `otp/<stateId>/<name>`.                    |
 
 ### Channels
 
-Where messages are delivered. `AuthChannel` is three methods — `sendMessage`, `getPrompt`,
-`getIdentityChannel` — and `MemoryAuthChannel` is the test double that just collects into a public
-`messages` array.
+A channel is where the library delivers messages. `AuthChannel` has three methods: `sendMessage`, `getPrompt` and `getIdentityChannel`.
+`MemoryAuthChannel` is the test double, and it collects messages into a public `messages` array. 🥔
 
 ### Identity
 
-An identity is an id, optional free-form `data`, and a list of components:
+An identity is an id, an optional free-form `data` bag, and a list of components:
 
 ```ts
 interface Identity {
@@ -214,14 +202,13 @@ interface Identity {
 }
 ```
 
-Each component is an `identification` (something you claim), a `challenge` (something you prove), or
-a `channel` (somewhere you can be reached), each with a `confirmed` flag and a private `data` bag —
-the password hash, the pending OTP. The `…Public` variants are the same minus `data`, and those are
-what `/list-components` returns.
+Each component is an `identification` (something you claim), a `challenge` (something you prove), or a `channel` (somewhere the library can
+reach you). Each one also has a `confirmed` flag and a private `data` bag: the password hash, or the pending OTP. The `…Public` variants are
+the same minus `data`, and `/list-components` returns those.
 
 ### Storage
 
-`AuthStorage` is a concrete class you configure with three adapters rather than replace:
+`AuthStorage` is a concrete class. You configure it with three adapters instead of a replacement:
 
 ```ts
 interface AuthIdentityProvider {
@@ -244,95 +231,88 @@ interface AuthRateLimiterProvider {
 }
 ```
 
-Key spaces an adapter will see: `session/<id>`, `sessions/<identityId>/<id>`, `otp/<stateId>/<name>`.
-Only `MemoryIdentityProvider`, `MemoryKvProvider` and `MemoryRateLimiterProvider` ship today — a
-persistent adapter is yours to write, and it's the one thing standing between this and a real
-deployment.
+An adapter sees these key spaces: `session/<id>`, `sessions/<identityId>/<id>` and `otp/<stateId>/<name>`. Only `MemoryIdentityProvider`,
+`MemoryKvProvider` and `MemoryRateLimiterProvider` ship today. You write the persistent adapter yourself, and it is the one thing between
+this library and a real deployment.
 
 ### Sessions and tokens
 
-Completing a sign-in or sign-up mints three HS256 JWTs. `access_token` and `refresh_token` carry the
-**session** id as `sub` plus a numeric `auth_time`; `id_token` carries the **identity** id and puts
-scope-filtered identity `data` in its protected header.
+A completed sign-in or sign-up mints three HS256 JWTs. `access_token` and `refresh_token` carry the **session** id as `sub` plus a numeric
+`auth_time`. `id_token` carries the **identity** id, and puts scope-filtered identity `data` in its protected header.
 
-`auth_time` survives refresh unchanged, so refreshing never re-opens the elevated window — sensitive
-flows (`enroll`, `rotate`, …) demand a genuinely fresh sign-in and answer `FRESH_SIGN_IN_REQUIRED`
-otherwise.
+A refresh keeps `auth_time` unchanged, so a refresh never re-opens the elevated window. Sensitive flows such as `enroll` and `rotate` demand
+a fresh sign-in. Otherwise they answer `FRESH_SIGN_IN_REQUIRED`.
 
 ## HTTP API
 
-Reached via `choreoAuth(...).fetch`. **All routes are `POST`**, there is no path prefix (mount it
-yourself), and 🔒 means `Authorization: Bearer <access_token>`.
+You reach the HTTP API through `choreoAuth(...).fetch`. **All routes are `POST`.** There is no path prefix, so mount it yourself. 🔒 means
+the route needs `Authorization: Bearer <access_token>`.
 
-| Route | Body | 200 |
-| --- | --- | --- |
-| `/sign-in` | — | state |
-| `/sign-up` | — | state |
-| `/sign-out` 🔒 | `{ others?: boolean }` | `{ success: true }` |
-| `/list-sessions` 🔒 | — | `{ sessions, current }` |
-| `/list-components` 🔒 | — | `{ components }` |
-| `/refresh-token` | `{ refresh_token }` | tokens |
-| `/enroll` 🔒 | `{ name }` | state |
-| `/unenroll` 🔒 | `{ name }` | state (confirmation) |
-| `/rotate` 🔒 | `{ name }` | state |
-| `/recover` | `{ name }` | state |
-| `/subscribe` 🔒 | `{ name }` | state |
-| `/unsubscribe` 🔒 | `{ name }` | state (confirmation) |
-| `/delete` 🔒 | — | state (confirmation) |
-| `/send-prompt` | `{ name, locale?, state }` | `{ success: true }` |
-| `/submit-prompt` | `{ name, value, state }` | state \| tokens \| `{ success: true }` |
-| `/send-validation` | `{ name, locale?, state }` | `{ success: true }` |
-| `/submit-validation` | `{ name, value, state }` | state \| tokens \| `{ success: true }` |
+| Route                 | Body                       | 200                                    |
+| --------------------- | -------------------------- | -------------------------------------- |
+| `/sign-in`            | —                          | state                                  |
+| `/sign-up`            | —                          | state                                  |
+| `/sign-out` 🔒        | `{ others?: boolean }`     | `{ success: true }`                    |
+| `/list-sessions` 🔒   | —                          | `{ sessions, current }`                |
+| `/list-components` 🔒 | —                          | `{ components }`                       |
+| `/refresh-token`      | `{ refresh_token }`        | tokens                                 |
+| `/enroll` 🔒          | `{ name }`                 | state                                  |
+| `/unenroll` 🔒        | `{ name }`                 | state (confirmation)                   |
+| `/rotate` 🔒          | `{ name }`                 | state                                  |
+| `/recover`            | `{ name }`                 | state                                  |
+| `/subscribe` 🔒       | `{ name }`                 | state                                  |
+| `/unsubscribe` 🔒     | `{ name }`                 | state (confirmation)                   |
+| `/delete` 🔒          | —                          | state (confirmation)                   |
+| `/send-prompt`        | `{ name, locale?, state }` | `{ success: true }`                    |
+| `/submit-prompt`      | `{ name, value, state }`   | state \| tokens \| `{ success: true }` |
+| `/send-validation`    | `{ name, locale?, state }` | `{ success: true }`                    |
+| `/submit-validation`  | `{ name, value, state }`   | state \| tokens \| `{ success: true }` |
 
-`locale` falls back to `accept-language`, then `"en"`. Client address comes from `cf-connecting-ip`
-or the first `x-forwarded-for` entry — headers only, never the body.
+`locale` falls back to `accept-language`, then to `"en"`. The client address comes from `cf-connecting-ip` or from the first
+`x-forwarded-for` entry. The library reads headers only, never the body.
 
-Errors are always a single-key body: `{ "error": "CODE" }`. Malformed input is `400 BAD_REQUEST`,
-rate limiting is `429 RATE_LIMITED` with a `Retry-After` header when known, and everything else is
-`500` with a code from the `Errors` registry (`INVALID_STATE`, `WOULD_LOCK_OUT`,
-`FRESH_SIGN_IN_REQUIRED`, `IDENTITY_MISMATCH`, … 32 in all, falling back to `UNKNOWN`).
+An error is always a single-key body: `{ "error": "CODE" }`. Malformed input is `400 BAD_REQUEST`. A rate limit is `429 RATE_LIMITED`, with
+a `Retry-After` header when the library knows the delay. Everything else is `500` with a code from the `Errors` registry: `INVALID_STATE`,
+`WOULD_LOCK_OUT`, `FRESH_SIGN_IN_REQUIRED`, `IDENTITY_MISMATCH` and more, 32 in all, with `UNKNOWN` as the fallback.
 
 `auth.generateOpenAPISchema()` produces a full spec, error picklist included.
 
 ## Flows
 
-Beyond sign-in and sign-up, every management flow is the same state-plus-prompt loop:
+Sign-in and sign-up are not special. Every management flow uses the same state-plus-prompt loop:
 
-- **`enroll` / `unenroll`** — add or remove a factor. Removal is refused with `WOULD_LOCK_OUT` when
-  no completable path through the choreography would remain.
-- **`rotate`** — replace a credential. For a *verifiable* component the first prompt proves control
-  of the current value, then the new value is collected and validated in turn — two validation
-  rounds. For a non-verifiable one (password) it's a single `submit-prompt`.
-- **`recover`** — unauthenticated, and only for a component that is an `identification`, is
-  `verifiable`, and is a valid *first move* of the choreography; otherwise
-  `COMPONENT_NOT_RECOVERABLE`. Completes with `{ success: true }`, not tokens.
-- **`subscribe` / `unsubscribe`** — manage channels. Note the asymmetry when subscribing: the
-  confirming code is delivered over an *already-confirmed* channel, so `send-validation` names that
-  existing channel while `submit-validation` names the new one.
+- **`enroll` / `unenroll`** — add or remove a factor. The library refuses a removal with `WOULD_LOCK_OUT` when no completable path through
+  the choreography remains.
+- **`rotate`** — replace a credential. For a _verifiable_ component, the first prompt proves control of the current value. The library then
+  collects the new value and validates it, so the flow has two validation rounds. A non-verifiable component such as a password needs one
+  `submit-prompt`.
+- **`recover`** — unauthenticated. The component must be an `identification`, must be `verifiable`, and must be a valid _first move_ of the
+  choreography. Otherwise the library answers `COMPONENT_NOT_RECOVERABLE`. The flow completes with `{ success: true }`, not with tokens.
+- **`subscribe` / `unsubscribe`** — manage channels. Note the asymmetry of a subscription. The library delivers the confirming code over an
+  _already-confirmed_ channel, so `send-validation` names that existing channel while `submit-validation` names the new one.
 - **`delete`** — wipes the identity.
 
-`unenroll`, `unsubscribe` and `delete` answer with a `confirmation` prompt that must be submitted
-with the boolean `true`; anything else is `CONFIRMATION_REQUIRED`.
+`unenroll`, `unsubscribe` and `delete` answer with a `confirmation` prompt. Submit the boolean `true` for it. Any other value is a
+`CONFIRMATION_REQUIRED`.
 
 ## Configuration
 
 Every duration is in seconds and optional, under `advanced`:
 
-| Option | Default |
-| --- | --- |
-| `sign_in_duration`, `sign_up_duration`, `enroll_duration`, `unenroll_duration`, `rotate_duration`, `recover_duration`, `subscribe_duration`, `unsubscribe_duration`, `delete_duration` | `300` |
-| `access_duration` | `300` |
-| `refresh_duration` | `86400` |
-| `elevated_duration` | `300` |
-| `issuer` | `"acme"` |
+| Option                                                                                                                                                                                 | Default  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `sign_in_duration`, `sign_up_duration`, `enroll_duration`, `unenroll_duration`, `rotate_duration`, `recover_duration`, `subscribe_duration`, `unsubscribe_duration`, `delete_duration` | `300`    |
+| `access_duration`                                                                                                                                                                      | `300`    |
+| `refresh_duration`                                                                                                                                                                     | `86400`  |
+| `elevated_duration`                                                                                                                                                                    | `300`    |
+| `issuer`                                                                                                                                                                               | `"acme"` |
 
-Rate limits are `{ limit, window }` buckets. Per identity (`identity_rate_limit`): `verify` 10/5min,
-`send` 5/5min, `manage` 20/5min, `refresh` 60/5min. Per address (`address_rate_limit`, enforced by
-the HTTP layer): `request` 300/min, `send` 60/min.
+Rate limits are `{ limit, window }` buckets. Per identity (`identity_rate_limit`): `verify` 10/5min, `send` 5/5min, `manage` 20/5min,
+`refresh` 60/5min. Per address (`address_rate_limit`, enforced by the HTTP layer): `request` 300/min, `send` 60/min.
 
 ## Development
 
-No `tasks` block is defined yet, so run the tools directly:
+The project defines no `tasks` block yet, so run the tools directly:
 
 ```sh
 deno test                          # 6 files, 126 steps, no permission flags
@@ -341,25 +321,6 @@ deno test --filter "should sign-in"
 deno fmt                           # tabs, line width 140
 ```
 
-Layout: `src/mod.ts` is the entry point, `src/api.ts` holds the state machine, `src/app.ts` the Hono
-routes, `src/choreography.ts` the DSL, `src/components/` and `src/providers/` the batteries. Tests
-sit beside their subjects and are, for now, the reference documentation.
-
-## Known gaps
-
-Worth knowing before you build on this:
-
-- **`PasswordAuthComponent` is not production-grade.** A single SHA-512 pass over a shared salt is
-  not a KDF — no per-identity salt, no work factor. Ship your own component backed by Argon2 or
-  scrypt.
-- **No persistent storage adapter.** The memory providers are for tests. `MemoryKvProvider` also
-  rejects with `KVKeyNotFoundError` on a missing key where the contract says resolve `undefined`,
-  which is why some expired-session paths surface as `UNKNOWN`.
-- **`ttl` units disagree.** `AuthStorage.createSession` passes seconds to `setKv` while
-  `MemoryKvProvider` reads milliseconds. Pick one before writing an adapter.
-- **The export surface is incomplete.** `choreoAuth` needs `AuthApiOptions`, `AuthStorage`,
-  `AuthComponent` and the providers, none of which `mod.ts` re-exports — deep imports are the only
-  way in today.
-- **`OtpAuthComponent` message bodies are placeholders,** and it ignores `locale`. The `subscribe`
-  flow also instantiates one internally with no way to configure it.
-- **`src/deno.jsonc` has no `version`,** so the package isn't publishable as-is.
+Layout: `src/mod.ts` is the entry point. `src/api.ts` holds the state machine, `src/app.ts` the Hono routes, and `src/choreography.ts` the
+DSL. `src/components/` and `src/providers/` hold the batteries. Tests sit beside their subjects, and they are the reference documentation
+for now.
