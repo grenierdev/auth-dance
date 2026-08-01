@@ -20,7 +20,12 @@ export interface AuthDanceComponent {
 	verifiable: boolean;
 	getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput>;
 	sendPrompt?(locale: string, context: AuthDanceComponentContext): Promise<AuthDanceMessage>;
-	getIdentityComponent(component: string, value: unknown, confirmed: boolean): Promise<AuthDanceIdentityComponent[]>;
+	getIdentityComponent(
+		component: string,
+		value: unknown,
+		confirmed: boolean,
+		context: AuthDanceComponentContext,
+	): Promise<AuthDanceIdentityComponent[]>;
 	verificationComponent?(context: AuthDanceComponentContext): Promise<AuthDanceComponent>;
 	verifyPrompt(value: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]>;
 }

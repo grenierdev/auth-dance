@@ -2,6 +2,9 @@
 	"name": "auth-dance",
 	"exports": {
 		".": "./mod.ts",
-		"./choreography": "./choreography.ts"
+		"./components/email": "./components/email.ts",
+		"./components/otp": "./components/otp.ts",
+		"./components/password": "./components/password.ts",
+		"./providers/memory": "./providers/memory.ts"
 	}
 }

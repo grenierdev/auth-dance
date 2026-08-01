@@ -1107,7 +1107,7 @@ export class AuthDanceApi {
 				throw new ComponentAlreadyCollectedError(choreographyComponent.component);
 			}
 			state.components.push(
-				...await authComponent.getIdentityComponent(choreographyComponent.component, options.value, false),
+				...await authComponent.getIdentityComponent(choreographyComponent.component, options.value, false, ctx),
 			);
 			const identityComponent = state.components.find((c): c is AuthDanceIdentityIdentification | AuthDanceIdentityChallenge =>
 				c.kind !== "channel" && c.component === choreographyComponent.component
@@ -1144,7 +1144,12 @@ export class AuthDanceApi {
 			if (!authComponent) {
 				throw new UnknownComponentError(state.component);
 			}
-			state.components.push(...await authComponent.getIdentityComponent(state.component, options.value, false));
+			// Collection sees the identity as it stands; the verification context below is rebuilt after the
+			// value has been collected, because #enrollContext snapshots state.components and verification has
+			// to target the value being enrolled rather than the one it replaces.
+			state.components.push(
+				...await authComponent.getIdentityComponent(state.component, options.value, false, this.#enrollContext(state, identity)),
+			);
 			const identityComponent = this.#collectedIdentityComponent(state.components, state.component);
 			if (!identityComponent.confirmed && authComponent.verificationComponent) {
 				const ctx = this.#enrollContext(state, identity);
@@ -1174,7 +1179,11 @@ export class AuthDanceApi {
 			if (!authComponent) {
 				throw new UnknownComponentError(state.component);
 			}
-			state.components.push(...await authComponent.getIdentityComponent(state.component, options.value, false));
+			// Same layering as enroll: the replacement is collected against the identity as it stands, which is
+			// what lets a component refuse a value identical to the one being replaced.
+			state.components.push(
+				...await authComponent.getIdentityComponent(state.component, options.value, false, this.#rotateContext(state, identity)),
+			);
 			const identityComponent = this.#collectedIdentityComponent(state.components, state.component);
 			if (!identityComponent.confirmed && authComponent.verificationComponent) {
 				const ctx = this.#rotateContext(state, identity);
@@ -1226,7 +1235,14 @@ export class AuthDanceApi {
 			if (state.components.some((c) => c.kind !== "channel" && c.component === choreographyComponent.component)) {
 				throw new ComponentAlreadyCollectedError(choreographyComponent.component);
 			}
-			state.components.push(...await authComponent.getIdentityComponent(choreographyComponent.component, options.value, false));
+			state.components.push(
+				...await authComponent.getIdentityComponent(
+					choreographyComponent.component,
+					options.value,
+					false,
+					this.#recoverContext(state, choreographyComponent.component, identity),
+				),
+			);
 			const identityComponent = this.#collectedIdentityComponent(state.components, choreographyComponent.component);
 			if (!identityComponent.confirmed && authComponent.verificationComponent) {
 				const ctx = this.#recoverContext(state, choreographyComponent.component, identity);

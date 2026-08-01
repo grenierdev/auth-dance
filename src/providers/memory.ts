@@ -1,13 +1,13 @@
 import type { AuthDanceChannel, AuthDanceChannelContext } from "../channel.ts";
+import { KVKeyNotFoundError } from "../error.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityChannel, AuthDanceIdentityIdentification } from "../identity.ts";
 import type { AuthDanceMessage } from "../message.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
-import {
-	type AuthDanceIdentityProvider,
-	type AuthDanceKvProvider,
-	type AuthDanceRateLimiterProvider,
-	type AuthDanceRateLimiterResult,
-	KVKeyNotFoundError,
+import type {
+	AuthDanceIdentityProvider,
+	AuthDanceKvProvider,
+	AuthDanceRateLimiterProvider,
+	AuthDanceRateLimiterResult,
 } from "../provider.ts";
 
 export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Disposable {

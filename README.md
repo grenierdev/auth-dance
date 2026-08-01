@@ -41,8 +41,7 @@ custom factor works in every flow, including the flows you did not think about y
 ## Getting Started
 
 > **Status: early.** Auth Dance is pre-release. The package has no `version` in `src/deno.jsonc`. The package is not published to JSR, and
-> only in-memory providers ship today. The API surface below is accurate but unstable. Read [Known gaps](#known-gaps) before you use it in
-> production.
+> only in-memory providers ship today. The API surface below is accurate but unstable.
 
 ### Requirements
 
@@ -55,16 +54,10 @@ machine, `app` the HTTP layer, and `info` the generated OpenAPI document. The ca
 the Hono `app` behind it, a `fetch` handler (the HTTP surface), and an OpenAPI schema generator.
 
 ```ts
-import { createAuthDance, sequence } from "auth-dance";
-import { AuthDanceStorage } from "auth-dance/storage.ts";
-import EmailAuthDanceComponent from "auth-dance/components/email.ts";
-import PasswordAuthDanceComponent from "auth-dance/components/password.ts";
-import {
-	MemoryAuthDanceChannel,
-	MemoryIdentityProvider,
-	MemoryKvProvider,
-	MemoryRateLimiterProvider,
-} from "auth-dance/providers/memory.ts";
+import { AuthDanceStorage, createAuthDance, sequence } from "auth-dance";
+import EmailAuthDanceComponent from "auth-dance/components/email";
+import PasswordAuthDanceComponent from "auth-dance/components/password";
+import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "auth-dance/providers/memory";
 
 const auth = createAuthDance({
 	api: {
@@ -78,7 +71,8 @@ const auth = createAuthDance({
 		// in the choreography, in prompts, and in `/enroll { name }`.
 		components: {
 			email: new EmailAuthDanceComponent("email"), // delivers over the "email" channel
-			password: new PasswordAuthDanceComponent("salty"),
+			// A pepper, not a salt: it belongs in a secret store, never in source.
+			password: new PasswordAuthDanceComponent(Deno.env.get("PASSWORD_PEPPER")!),
 		},
 		// openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
 		secret: "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs",
@@ -95,9 +89,10 @@ const auth = createAuthDance({
 Deno.serve(auth.fetch);
 ```
 
-> The package root re-exports `createAuthDance`, `choice`, `component`, `sequence`, and everything from `identity.ts` and `error.ts`. The
-> rest of the DSL — `pick`, `peek`, `walk`, `simplify`, `isEquals` — lives on `auth-dance/choreography`. `AuthDanceStorage`, the components
-> and the memory providers still need deep paths. See [Known gaps](#known-gaps).
+> The package root re-exports the whole library: `createAuthDance`, the full choreography DSL, `AuthDanceStorage`, the errors, and every
+> type and schema from `api.ts`, `app.ts`, `channel.ts`, `component.ts`, `identity.ts`, `message.ts`, `otp.ts`, `prompt.ts`, `provider.ts`,
+> `response.ts`, `session.ts` and `state.ts`. Only the batteries keep a subpath of their own: `auth-dance/components/{email,otp,password}`
+> and `auth-dance/providers/memory`. There are no deep `.ts` paths and no `auth-dance/choreography` subpath.
 
 ### Performing the dance
 
@@ -116,7 +111,7 @@ const afterEmail = await auth.api.submitPrompt({
 
 const done = await auth.api.submitPrompt({
 	name: "password",
-	value: "foo",
+	value: "correct horse battery staple",
 	state: afterEmail.state,
 });
 // { tokens: { access_token, id_token, refresh_token }, session, identity }
@@ -127,7 +122,7 @@ Over HTTP, you make the same three calls. Every route is `POST`, and every paylo
 ```ts
 const r1 = await post("/sign-in");
 const r2 = await post("/submit-prompt", { name: "email", value: "john.doe@example.com", state: r1.state });
-const r3 = await post("/submit-prompt", { name: "password", value: "foo", state: r2.state });
+const r3 = await post("/submit-prompt", { name: "password", value: "correct horse battery staple", state: r2.state });
 // r3.tokens
 ```
 
@@ -146,7 +141,7 @@ A choreography is a tree of three node kinds: `component`, `sequence` and `choic
 `component(name)`.
 
 ```ts
-import { choice, component, pick, sequence } from "auth-dance/choreography";
+import { choice, component, pick, sequence } from "auth-dance";
 
 sequence("email", "password"); // email, then password
 choice("password", "passkey"); // either one
@@ -175,7 +170,12 @@ interface AuthDanceComponent {
 	verifiable: boolean; // implies verificationComponent
 	getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput>;
 	sendPrompt?(locale: string, context: AuthDanceComponentContext): Promise<AuthDanceMessage>;
-	getIdentityComponent(component: string, value: unknown, confirmed: boolean): Promise<AuthDanceIdentityComponent[]>;
+	getIdentityComponent(
+		component: string,
+		value: unknown,
+		confirmed: boolean,
+		context: AuthDanceComponentContext,
+	): Promise<AuthDanceIdentityComponent[]>;
 	verificationComponent?(context: AuthDanceComponentContext): Promise<AuthDanceComponent>;
 	verifyPrompt(value: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]>;
 }
@@ -186,14 +186,16 @@ who it is_. Two components that resolve different identities in one dance produc
 
 `AuthDanceComponentContext` carries `{ storage, stateId, name, flow, identity? }`. `flow` is one of
 `"sign-in" | "sign-up" | "enroll" | "rotate" | "recover" | "subscribe"`, so a component can behave one way during enrollment and another way
-during authentication.
+during authentication. On `getIdentityComponent`, `identity` is the identity _as it stands_ — during a rotation the value being replaced is
+still on it, during a sign-up the components collected so far are — which is what lets a component refuse a value on grounds the value alone
+cannot show.
 
 Three components ship in the box:
 
 | Component                                               | Kind           | Verifiable | Notes                                                                                               |
 | ------------------------------------------------------- | -------------- | ---------- | --------------------------------------------------------------------------------------------------- |
 | `EmailAuthDanceComponent(channel)`                      | identification | yes        | Resolves the identity by address, and verifies it with an OTP. Also contributes a linked `channel`. |
-| `PasswordAuthDanceComponent(salt)`                      | challenge      | no         | `base64(SHA-512(salt:password))`. See [Known gaps](#known-gaps).                                    |
+| `PasswordAuthDanceComponent(pepper, options?)`          | challenge      | no         | Argon2id, per-record salt, stored as a PHC string. See [Passwords](#passwords).                     |
 | `OtpAuthDanceComponent(channel, digits = 6, ttl = 300)` | challenge      | no         | The only sendable component. Stores the code in KV under `otp/<stateId>/<name>`.                    |
 
 ### Channels
@@ -243,7 +245,11 @@ interface AuthDanceRateLimiterProvider {
 ```
 
 An adapter sees these key spaces: `session/<id>`, `sessions/<identityId>/<id>` and `otp/<stateId>/<name>`. Only `MemoryIdentityProvider`,
-`MemoryKvProvider` and `MemoryRateLimiterProvider` ship today, so you write the persistent adapters yourself. See [Known gaps](#known-gaps).
+`MemoryKvProvider` and `MemoryRateLimiterProvider` ship today, so you write the persistent adapters yourself.
+
+A missing or expired key is `KVKeyNotFoundError` (`KV_KEY_NOT_FOUND`), exported from the package root like every other error. Note that
+`MemoryKvProvider.get` rejects with it rather than resolving `undefined`, even though the interface allows both, so write your adapter to
+the behaviour rather than to the signature.
 
 ### Sessions and tokens
 
@@ -256,8 +262,8 @@ a fresh sign-in. Otherwise they answer `FRESH_SIGN_IN_REQUIRED`.
 ## HTTP API
 
 You reach the HTTP API through `createAuthDance(...).fetch`. The Hono instance behind that handler is returned as `.app`, if you would
-rather mount it inside an app of your own. **All routes are `POST`.** They sit at the root: `app: { basePath }` is meant to prefix them but
-has no effect today, so mount them yourself. See [Known gaps](#known-gaps). 🔒 means the route needs `Authorization: Bearer <access_token>`.
+rather mount it inside an app of your own. **All routes are `POST`.** They sit at the root unless you pass `app: { basePath }`, which
+prefixes every one of them. 🔒 means the route needs `Authorization: Bearer <access_token>`.
 
 | Route                 | Body                       | 200                                    |
 | --------------------- | -------------------------- | -------------------------------------- |
@@ -284,7 +290,9 @@ has no effect today, so mount them yourself. See [Known gaps](#known-gaps). 🔒
 
 An error is always a single-key body: `{ "error": "CODE" }`. Malformed input is `400 BAD_REQUEST`. A rate limit is `429 RATE_LIMITED`, with
 a `Retry-After` header when the library knows the delay. Everything else is `500` with a code from the `Errors` registry: `INVALID_STATE`,
-`WOULD_LOCK_OUT`, `FRESH_SIGN_IN_REQUIRED`, `IDENTITY_MISMATCH` and more, 32 in all, with `UNKNOWN` as the fallback.
+`WOULD_LOCK_OUT`, `FRESH_SIGN_IN_REQUIRED`, `IDENTITY_MISMATCH` and more, 34 in all, with `UNKNOWN` as the fallback. `POLICY_VIOLATION` is
+the one to expect from a component's own rules — a password below the configured length — as opposed to `INVALID_PROMPT_VALUE`, which means
+the value did not verify.
 
 `auth.generateOpenAPISchema()` produces a full spec, error picklist included. Its `info` block is whatever you passed to `createAuthDance`;
 leave `info` out and the document carries hono-openapi's placeholder instead — `Hono Documentation`, version `0.0.0`.
@@ -327,7 +335,7 @@ Rate limits are `{ limit, window }` buckets. Per identity (`identity_rate_limit`
 The project defines no `tasks` block yet, so run the tools directly:
 
 ```sh
-deno test                          # 6 files, 126 steps, no permission flags
+deno test                          # 7 files, 138 steps, no permission flags
 deno test src/api.test.ts
 deno test --filter "should sign-in"
 deno fmt                           # tabs, line width 140

@@ -28,6 +28,11 @@ export class IdentityNotFoundError extends AuthDanceError {
 	readonly code: "IDENTITY_NOT_FOUND" = "IDENTITY_NOT_FOUND";
 }
 
+// KV
+export class KVKeyNotFoundError extends AuthDanceError {
+	readonly code: "KV_KEY_NOT_FOUND" = "KV_KEY_NOT_FOUND";
+}
+
 // Choreography state
 export class InvalidStateError extends AuthDanceError {
 	readonly code: "INVALID_STATE" = "INVALID_STATE";
@@ -120,6 +125,9 @@ export class InvalidPromptValueError extends AuthDanceError {
 export class InvalidValidationValueError extends AuthDanceError {
 	readonly code: "INVALID_VALIDATION_VALUE" = "INVALID_VALIDATION_VALUE";
 }
+export class PolicyViolationError extends AuthDanceError {
+	readonly code: "POLICY_VIOLATION" = "POLICY_VIOLATION";
+}
 export class IdentityNotResolvedError extends AuthDanceError {
 	readonly code: "IDENTITY_NOT_RESOLVED" = "IDENTITY_NOT_RESOLVED";
 }
@@ -141,36 +149,38 @@ export class AuthDanceUnknownError extends AuthDanceError {
 
 /** Registry mapping every code to its class, so the per-method unions below stay derived rather than restated. */
 export const Errors = {
-	INVALID_ACCESS_TOKEN: InvalidAccessTokenError,
-	INVALID_REFRESH_TOKEN: InvalidRefreshTokenError,
-	SESSION_NOT_FOUND: SessionNotFoundError,
-	IDENTITY_NOT_FOUND: IdentityNotFoundError,
-	INVALID_STATE: InvalidStateError,
-	INVALID_STATE_FOR_FLOW: InvalidStateForFlowError,
+	CHANNEL_ALREADY_SUBSCRIBED: ChannelAlreadySubscribedError,
+	CHANNEL_IN_USE: ChannelInUseError,
+	CHANNEL_NOT_SUBSCRIBED: ChannelNotSubscribedError,
+	CHOREOGRAPHY_EMPTY: ChoreographyEmptyError,
+	COMPONENT_ALREADY_COLLECTED: ComponentAlreadyCollectedError,
+	COMPONENT_ALREADY_ENROLLED: ComponentAlreadyEnrolledError,
+	COMPONENT_NOT_COLLECTED: ComponentNotCollectedError,
+	COMPONENT_NOT_ENROLLED: ComponentNotEnrolledError,
+	COMPONENT_NOT_IN_CHOREOGRAPHY: ComponentNotInChoreographyError,
+	COMPONENT_NOT_RECOVERABLE: ComponentNotRecoverableError,
+	COMPONENT_NOT_SENDABLE: ComponentNotSendableError,
+	COMPONENT_NOT_VERIFIABLE: ComponentNotVerifiableError,
+	CONFIRMATION_REQUIRED: ConfirmationRequiredError,
 	CONTROL_NOT_PROVEN: ControlNotProvenError,
 	FRESH_SIGN_IN_REQUIRED: FreshSignInRequiredError,
-	RATE_LIMITED: RateLimitedError,
-	UNKNOWN_COMPONENT: UnknownComponentError,
-	UNKNOWN_CHANNEL: UnknownChannelError,
-	COMPONENT_NOT_IN_CHOREOGRAPHY: ComponentNotInChoreographyError,
-	COMPONENT_NOT_VERIFIABLE: ComponentNotVerifiableError,
-	COMPONENT_NOT_SENDABLE: ComponentNotSendableError,
-	COMPONENT_NOT_RECOVERABLE: ComponentNotRecoverableError,
-	CHOREOGRAPHY_EMPTY: ChoreographyEmptyError,
-	COMPONENT_ALREADY_ENROLLED: ComponentAlreadyEnrolledError,
-	COMPONENT_NOT_ENROLLED: ComponentNotEnrolledError,
-	COMPONENT_ALREADY_COLLECTED: ComponentAlreadyCollectedError,
-	COMPONENT_NOT_COLLECTED: ComponentNotCollectedError,
-	WOULD_LOCK_OUT: WouldLockOutError,
-	CHANNEL_ALREADY_SUBSCRIBED: ChannelAlreadySubscribedError,
-	CHANNEL_NOT_SUBSCRIBED: ChannelNotSubscribedError,
-	CHANNEL_IN_USE: ChannelInUseError,
-	NO_VERIFICATION_CHANNEL: NoVerificationChannelError,
-	CONFIRMATION_REQUIRED: ConfirmationRequiredError,
-	INVALID_PROMPT_VALUE: InvalidPromptValueError,
-	INVALID_VALIDATION_VALUE: InvalidValidationValueError,
-	IDENTITY_NOT_RESOLVED: IdentityNotResolvedError,
 	IDENTITY_MISMATCH: IdentityMismatchError,
+	IDENTITY_NOT_FOUND: IdentityNotFoundError,
+	IDENTITY_NOT_RESOLVED: IdentityNotResolvedError,
+	INVALID_ACCESS_TOKEN: InvalidAccessTokenError,
+	INVALID_PROMPT_VALUE: InvalidPromptValueError,
+	INVALID_REFRESH_TOKEN: InvalidRefreshTokenError,
+	INVALID_STATE_FOR_FLOW: InvalidStateForFlowError,
+	INVALID_STATE: InvalidStateError,
+	INVALID_VALIDATION_VALUE: InvalidValidationValueError,
+	KV_KEY_NOT_FOUND: KVKeyNotFoundError,
+	NO_VERIFICATION_CHANNEL: NoVerificationChannelError,
+	POLICY_VIOLATION: PolicyViolationError,
+	RATE_LIMITED: RateLimitedError,
 	RECOVERY_NOT_IDENTIFIED: RecoveryNotIdentifiedError,
+	SESSION_NOT_FOUND: SessionNotFoundError,
+	UNKNOWN_CHANNEL: UnknownChannelError,
+	UNKNOWN_COMPONENT: UnknownComponentError,
 	UNKNOWN: AuthDanceUnknownError,
+	WOULD_LOCK_OUT: WouldLockOutError,
 } as const;

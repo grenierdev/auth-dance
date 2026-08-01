@@ -4,10 +4,14 @@ import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, Memor
 import type { AuthDanceApiOptions } from "./api.ts";
 import { choice, sequence } from "./choreography.ts";
 import EmailAuthDanceComponent from "./components/email.ts";
+import type { AuthDanceComponentContext } from "./component.ts";
 import PasswordAuthDanceComponent from "./components/password.ts";
 import { AuthDanceStorage } from "./storage.ts";
 import type { AuthDanceKvProvider } from "./provider.ts";
 import { type AuthDance, createAuthDance } from "./mod.ts";
+
+// Same reasoning as api.test.ts: the cheapest hash the algorithm allows, and a length policy "foo" satisfies.
+const TEST_PASSWORD_OPTIONS = { params: { memorySize: 1024, iterations: 1 }, policy: { minLength: 3 } };
 
 // Every response is JSON, failures included, so a call only ever yields a status and a parsed body.
 // deno-lint-ignore no-explicit-any
@@ -32,13 +36,19 @@ describe("App", () => {
 	let email2: EmailAuthDanceComponent;
 	let password: PasswordAuthDanceComponent;
 
+	// Seeding an identity outside a flow: nothing is enrolled yet, which is the shape the state machine hands a
+	// component on the first step of a sign-up.
+	function seedContext(name: string): AuthDanceComponentContext {
+		return { storage, stateId: "state_seed", name, flow: "sign-up" };
+	}
+
 	beforeEach(() => {
 		channelEmail = new MemoryAuthDanceChannel("email");
 		channelEmail2 = new MemoryAuthDanceChannel("email2");
 		channelSms = new MemoryAuthDanceChannel("phone");
 		email = new EmailAuthDanceComponent("email");
 		email2 = new EmailAuthDanceComponent("email2");
-		password = new PasswordAuthDanceComponent("salty");
+		password = new PasswordAuthDanceComponent("salty", TEST_PASSWORD_OPTIONS);
 		storage = new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),
 			kv: new MemoryKvProvider(),
@@ -104,7 +114,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 			],
 		);
 		const [status1, result1] = await post("/sign-in");
@@ -139,7 +149,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 			],
 		);
 		const [, result1] = await post("/sign-in");
@@ -182,7 +192,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 			],
 		);
 		const first = await signIn();
@@ -229,7 +239,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 			],
 		);
 		const session = await signIn();
@@ -334,7 +344,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 			],
 		);
 		const result3 = await signIn();
@@ -383,7 +393,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 			],
 		);
 		const result3 = await signIn();
@@ -406,7 +416,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 				await channelSms.getIdentityChannel("sms", "5551234567", true),
 			],
 		);
@@ -442,7 +452,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 			],
 		);
 		const result3 = await signIn();
@@ -466,7 +476,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 				await channelSms.getIdentityChannel("sms", "5551234567", true),
 			],
 		);
@@ -519,7 +529,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 			],
 		);
 		const result3 = await signIn();
@@ -541,7 +551,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 				...await email2.getIdentityComponent(
 					"email2",
 					"john.doe2@example.com",
@@ -581,7 +591,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 				...await email2.getIdentityComponent(
 					"email2",
 					"john.doe2@example.com",
@@ -622,7 +632,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 				...await email2.getIdentityComponent(
 					"email2",
 					"john.doe2@example.com",
@@ -661,7 +671,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 			],
 		);
 		const result3 = await signIn();
@@ -704,7 +714,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 			],
 		);
 		const result3 = await signIn();
@@ -734,7 +744,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 			],
 		);
 		const result3 = await signIn();
@@ -769,7 +779,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 			],
 		);
 		const result3 = await signIn();
@@ -839,7 +849,7 @@ describe("App", () => {
 					"john.doe@example.com",
 					true,
 				),
-				...await password.getIdentityComponent("password", "foo", true),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 			],
 		);
 		const [, result1] = await post("/recover", { name: "email" });
@@ -994,7 +1004,7 @@ describe("App", () => {
 						"john.doe@example.com",
 						true,
 					),
-					...await password.getIdentityComponent("password", "foo", true),
+					...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
 				],
 			);
 			const [, result1] = await post("/sign-in");

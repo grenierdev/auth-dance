@@ -23,5 +23,3 @@ export interface AuthDanceRateLimiterResult {
 export interface AuthDanceRateLimiterProvider {
 	limit: (key: string, limit: number, window: number) => Promise<AuthDanceRateLimiterResult>;
 }
-
-export class KVKeyNotFoundError extends Error {}
