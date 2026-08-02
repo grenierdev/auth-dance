@@ -138,10 +138,131 @@ export interface AuthDanceAddressRateLimits {
 }
 
 /**
+ * The flows that change an identity. Each one reports the change to one of the three identity hooks.
+ *
+ * A sign-in is absent from the list. It reads an identity and it changes nothing on it.
+ */
+export type AuthDanceIdentityEventFlow =
+	| "sign-up"
+	| "enroll"
+	| "unenroll"
+	| "rotate"
+	| "recover"
+	| "subscribe"
+	| "unsubscribe"
+	| "delete";
+
+/**
+ * What the library hands an identity hook.
+ *
+ * @typeParam TFlow The flows the hook that reads this event reports.
+ */
+export interface AuthDanceIdentityEvent<TFlow extends AuthDanceIdentityEventFlow = AuthDanceIdentityEventFlow> {
+	/** Which flow changed the identity. */
+	flow: TFlow;
+	/**
+	 * The identity the change produced, exactly as the library saved it.
+	 *
+	 * `onIdentityDeleted` is the one hook that reads an identity the store no longer holds. It gets the identity
+	 * as it stood one moment before the library removed it, because a hook that reports a delete has nothing left
+	 * to read.
+	 */
+	identity: AuthDanceIdentity;
+	/**
+	 * The component or the channel the flow acts on, under the name `options.components` or `options.channels`
+	 * declares it. A recovery names the component it started from, never a component it resets.
+	 *
+	 * The type marks it optional, but every flow `onIdentityUpdated` reports names one. A sign-up and a delete
+	 * act on the whole identity, so `onIdentityCreated` and `onIdentityDeleted` name nothing.
+	 */
+	name?: string;
+}
+
+/** The flows that create, renew or delete a session. Each one reports the change to one of the three session hooks. */
+export type AuthDanceSessionEventFlow = "sign-in" | "sign-up" | "refresh" | "sign-out" | "delete";
+
+/**
+ * What the library hands a session hook.
+ *
+ * The event carries no token. A hook records what happened, and a token that reaches a log or a queue is a
+ * credential in the wrong place.
+ *
+ * @typeParam TFlow The flows the hook that reads this event reports.
+ */
+export interface AuthDanceSessionEvent<TFlow extends AuthDanceSessionEventFlow = AuthDanceSessionEventFlow> {
+	/** Which flow created, renewed or deleted the session. */
+	flow: TFlow;
+	/**
+	 * The session the flow acts on. A refresh mints a new pair of tokens on the session it already holds, so the
+	 * record it reports is the one the sign-in created.
+	 */
+	session: AuthDanceSession;
+	/** The identity the session signs in. */
+	identity: AuthDanceIdentity;
+}
+
+/** What the library hands `onError` when another hook rejects. */
+export interface AuthDanceHookErrorEvent {
+	/** Which hook rejected. */
+	hook: Exclude<keyof AuthDanceApiHooks, "onError">;
+	/** What that hook rejected with. */
+	cause: unknown;
+}
+
+/**
+ * The listeners the library calls after it changes an identity or a session. A deployment reacts to a change
+ * here: it publishes an event, it writes an audit record, or it warns the owner that an account changed.
+ *
+ * A hook reports a change, it never decides one. The library calls it after the write, and a hook that rejects
+ * never fails the flow. The tokens of a completed sign-in are already minted, and the identity of a completed
+ * delete is already gone, so a listener cannot undo what it reads. `onError` gets every rejection.
+ *
+ * The library awaits each hook, so a hook that publishes an event finishes before the caller reads the answer. A
+ * slow hook therefore slows the call that fires it. Return at once, and do the long work outside the flow.
+ */
+export interface AuthDanceApiHooks {
+	/** A sign-up completed and the store now holds a new identity. The session hook follows for the same flow. */
+	onIdentityCreated?(event: AuthDanceIdentityEvent<"sign-up">): void | Promise<void>;
+	/**
+	 * A flow changed the components of an identity that already existed, and the store holds the change.
+	 *
+	 * One flow reports one change, whatever it moved. A recovery that resets three components fires this hook one
+	 * time, after the last one.
+	 */
+	onIdentityUpdated?(event: AuthDanceIdentityEvent<Exclude<AuthDanceIdentityEventFlow, "sign-up" | "delete">>): void | Promise<void>;
+	/**
+	 * A delete flow removed an identity. Every session of that identity is already gone, and `onSessionDeleted`
+	 * reported each one before this hook.
+	 */
+	onIdentityDeleted?(event: AuthDanceIdentityEvent<"delete">): void | Promise<void>;
+	/** A sign-in or a sign-up minted a session, together with the first pair of tokens on it. */
+	onSessionCreated?(event: AuthDanceSessionEvent<"sign-in" | "sign-up">): void | Promise<void>;
+	/**
+	 * A refresh minted a new pair of tokens on a session that already existed.
+	 *
+	 * The hook reports the exchange alone. It does not report a new sign-in, because a refresh carries the
+	 * `auth_time` of the original sign-in unchanged.
+	 */
+	onSessionRefreshed?(event: AuthDanceSessionEvent<"refresh">): void | Promise<void>;
+	/**
+	 * The library deleted a session. A sign-out that takes every session of the identity fires this hook one time
+	 * for each one, and a delete flow does the same before it removes the identity.
+	 */
+	onSessionDeleted?(event: AuthDanceSessionEvent<"sign-out" | "delete">): void | Promise<void>;
+	/**
+	 * Another hook rejected. This is the one place a deployment sees a listener that is down, because the library
+	 * keeps that rejection away from the flow.
+	 *
+	 * A rejection from this hook has nowhere left to go, and the library drops it.
+	 */
+	onError?(event: AuthDanceHookErrorEvent): void | Promise<void>;
+}
+
+/**
  * Everything `AuthDanceApi` needs to run the dance.
  *
- * The five required options declare the policy. The three optional groups tune the durations, the rate limits
- * and the token issuer.
+ * The five required options declare the policy. The four optional groups tune the durations, the rate limits,
+ * the token issuer and the lifecycle hooks.
  */
 export interface AuthDanceApiOptions {
 	/** Where the library delivers a message, keyed by the channel name a component asks for. */
@@ -208,6 +329,12 @@ export interface AuthDanceApiOptions {
 		 */
 		issuer?: string;
 	};
+	/**
+	 * The listeners the library calls after it changes an identity or a session. Any hook you omit reports nothing.
+	 *
+	 * @defaultValue No listener. The library changes an identity and a session exactly the same way without them.
+	 */
+	hooks?: AuthDanceApiHooks;
 }
 
 /**
@@ -232,6 +359,9 @@ export const IdentityRateLimits: Required<AuthDanceIdentityRateLimits> = {
  * Each method raises an `AuthDanceError` for a failure the caller can act on. Any other failure escapes as
  * `AuthDanceUnknownError` and carries the original failure in `cause`. `accessTokenIdentity` is the one
  * exception, because it lets an unexpected failure escape as it stands.
+ *
+ * A flow that changes an identity or a session reports the change to `options.hooks` after it saves it. A hook
+ * that rejects never fails the flow. Read `AuthDanceApiHooks` about what each one reports.
  *
  * @example
  * ```ts
@@ -275,6 +405,32 @@ export class AuthDanceApi {
 				throw cause;
 			}
 			throw new AuthDanceUnknownError(`${method} failed`, { cause });
+		}
+	}
+
+	// The deliberate hole in #guard above. A hook reports a write that has already happened, so a listener that
+	// rejects must not turn a completed flow into a failure: a sign-in whose audit queue is down still signed in,
+	// and surfacing that as UNKNOWN would tell the caller their tokens are worthless when they are not. The
+	// rejection goes to onError instead, the one place a deployment sees a broken listener. A rejecting onError
+	// has nowhere left to report to.
+	async #emit<TKey extends Exclude<keyof AuthDanceApiHooks, "onError">>(
+		hook: TKey,
+		event: Parameters<NonNullable<AuthDanceApiHooks[TKey]>>[0],
+	): Promise<void> {
+		// One key of a union of listener types, each narrower than the union of their events — hence the cast.
+		// The generic keeps every call site honest, which is where it matters.
+		const listener = this.#options.hooks?.[hook] as ((event: unknown) => void | Promise<void>) | undefined;
+		if (!listener) {
+			return;
+		}
+		try {
+			await listener(event);
+		} catch (cause) {
+			try {
+				await this.#options.hooks?.onError?.({ hook, cause });
+			} catch {
+				// Nowhere left to report to.
+			}
 		}
 	}
 
@@ -441,6 +597,8 @@ export class AuthDanceApi {
 	 * long the client may use the session, and never how recently its holder proved who they are. It cannot
 	 * re-open the elevated window, so it needs no fresh sign-in and grants none.
 	 *
+	 * A completed exchange fires `onSessionRefreshed`.
+	 *
 	 * @returns A new access token, id token and refresh token, plus the session and the scoped identity data.
 	 * @throws InvalidRefreshTokenError when the token is tampered with, expired, or missing a claim.
 	 * @throws RateLimitedError when the `refresh` bucket of the session is empty.
@@ -459,7 +617,9 @@ export class AuthDanceApi {
 			if (!identity) {
 				throw new IdentityNotFoundError(session.identityId);
 			}
-			return this.#generateTokens({ identity, scopes: session.scopes, session, authTime });
+			const tokens = await this.#generateTokens({ identity, scopes: session.scopes, session, authTime });
+			await this.#emit("onSessionRefreshed", { flow: "refresh", session, identity });
+			return tokens;
 		});
 	}
 
@@ -467,6 +627,8 @@ export class AuthDanceApi {
 	 * Destroys the session the access token names, or every session of its identity.
 	 *
 	 * A sign-out needs no fresh sign-in. It only removes access, so an old session is enough to ask for it.
+	 *
+	 * The call fires `onSessionDeleted` one time for each session it destroys.
 	 *
 	 * @param access_token The access token of the session to destroy.
 	 * @param others Pass `true` to destroy every session of the identity, this one included.
@@ -478,13 +640,15 @@ export class AuthDanceApi {
 	 */
 	signOut(access_token: string, others: boolean = false): Promise<AuthDanceResponseResult> {
 		return this.#guard("signOut", async () => {
-			const { session } = await this.accessTokenIdentity(access_token);
+			const { session, identity } = await this.accessTokenIdentity(access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
-			if (!others) {
-				await this.#options.storage.deleteSession(session.id);
-			} else {
-				const sessions = await this.#options.storage.listSession(session.identityId);
-				await Promise.all(sessions.map((s) => this.#options.storage.deleteSession(s.id)));
+			// The hook fires one time for each session the call destroyed, and only after the store agrees it is
+			// gone. A sign-out that takes them all reports each one rather than the sweep, so a listener sees the
+			// same event whichever way a session ended.
+			const deleted = others ? await this.#options.storage.listSession(session.identityId) : [session];
+			await Promise.all(deleted.map((s) => this.#options.storage.deleteSession(s.id)));
+			for (const s of deleted) {
+				await this.#emit("onSessionDeleted", { flow: "sign-out", session: s, identity });
 			}
 			return { success: true };
 		});
@@ -554,6 +718,7 @@ export class AuthDanceApi {
 		identity: AuthDanceIdentity;
 		expireAt: Date;
 		flow: string;
+		name?: string;
 		persist?: boolean;
 		address?: string;
 		userAgent?: string;
@@ -565,11 +730,32 @@ export class AuthDanceApi {
 		const authFlow = options.flow === "sign-in" || options.flow === "sign-up";
 		const nextMove = authFlow || options.flow === "recover" ? peek(this.#options.choreography, options.path) : null;
 		if (nextMove === null) {
+			// Every identity hook fires from this one place, so a hook reports a change the store already holds and
+			// never one a later step could still reject. A flow that walks several components — a recovery — passes
+			// here one time, after the last of them.
 			if (options.persist) {
 				await this.#options.storage.setIdentity(options.identity);
+				if (options.flow === "sign-up") {
+					await this.#emit("onIdentityCreated", { flow: options.flow, identity: options.identity });
+				} else {
+					// A flow reaches this line only through a branch of #submitPrompt or #submitValidation, and each
+					// one of those sets a flow AuthDanceIdentityEventFlow names. The bag they share types it as a
+					// plain string, hence the cast.
+					await this.#emit("onIdentityUpdated", {
+						flow: options.flow as Exclude<AuthDanceIdentityEventFlow, "sign-up" | "delete">,
+						identity: options.identity,
+						name: options.name,
+					});
+				}
 			}
 			if (authFlow) {
-				return this.#issueTokens(options.identity, options);
+				const issued = await this.#issueTokens(options.identity, options);
+				await this.#emit("onSessionCreated", {
+					flow: options.flow === "sign-up" ? "sign-up" : "sign-in",
+					session: issued.session,
+					identity: options.identity,
+				});
+				return issued;
 			}
 			return { success: true };
 		}
@@ -1370,6 +1556,10 @@ export class AuthDanceApi {
 	 * The library checks the elevated window when a flow starts, so this method does not check it again. It needs no
 	 * access token either, because the state carries the session the flow started from.
 	 *
+	 * A step that completes a flow reports it to `options.hooks`. A sign-in fires `onSessionCreated`. A sign-up
+	 * fires `onIdentityCreated` and then `onSessionCreated`. A delete fires `onSessionDeleted` for each session and
+	 * then `onIdentityDeleted`. Any other flow fires `onIdentityUpdated`.
+	 *
 	 * @param options `name` selects which component to answer when the current step is a choice. `value` is what
 	 * the client collected. `state` is the opaque string the previous call returned. The library stores `address`
 	 * and `userAgent` on the session a completed sign-in or sign-up mints.
@@ -1416,6 +1606,7 @@ export class AuthDanceApi {
 			identity: void 0 as unknown as AuthDanceIdentity,
 			expireAt,
 			flow: "",
+			name: undefined as string | undefined,
 			persist: undefined as boolean | undefined,
 			address: options.address,
 			userAgent: options.userAgent,
@@ -1514,6 +1705,7 @@ export class AuthDanceApi {
 				...advanceOptions,
 				identity,
 				flow: "enroll",
+				name: state.component,
 				persist: true,
 			};
 		} else if (state.kind === "rotate") {
@@ -1548,6 +1740,7 @@ export class AuthDanceApi {
 				...advanceOptions,
 				identity,
 				flow: "rotate",
+				name: state.component,
 				persist: true,
 			};
 		} else if (state.kind === "recover") {
@@ -1606,6 +1799,9 @@ export class AuthDanceApi {
 				...advanceOptions,
 				identity,
 				flow: "recover",
+				// The component the recovery proved control of, which is what a listener acts on. Which components
+				// the reset walked through after it is on the identity the event carries.
+				name: state.component,
 				path: [...path, choreographyComponent.component],
 				persist: true,
 			};
@@ -1622,6 +1818,7 @@ export class AuthDanceApi {
 				...advanceOptions,
 				identity,
 				flow: "unenroll",
+				name: state.component,
 				persist: true,
 			};
 		} else if (state.kind === "subscribe") {
@@ -1649,6 +1846,7 @@ export class AuthDanceApi {
 				...advanceOptions,
 				identity,
 				flow: "unsubscribe",
+				name: state.channel,
 				persist: true,
 			};
 		} else if (state.kind === "delete") {
@@ -1663,6 +1861,13 @@ export class AuthDanceApi {
 			const sessions = await this.#options.storage.listSession(identity.id);
 			await Promise.all(sessions.map((s) => this.#options.storage.deleteSession(s.id)));
 			await this.#options.storage.deleteIdentity(identity.id);
+			// The hooks follow the same order as the two writes above, so a listener never reads an identity that
+			// still holds a session the store already dropped. This is also the one identity a hook receives that
+			// the store no longer holds: the event carries it as it stood one moment before the delete.
+			for (const session of sessions) {
+				await this.#emit("onSessionDeleted", { flow: "delete", session, identity });
+			}
+			await this.#emit("onIdentityDeleted", { flow: "delete", identity });
 			return { success: true };
 		} else {
 			// Every AuthDanceState kind is handled above, so `state` narrows to `never` here — hence the cast. The
@@ -1757,7 +1962,8 @@ export class AuthDanceApi {
 	 * collects the replacement. The second answer validates that replacement.
 	 *
 	 * A sign-up that completes here mints the tokens, exactly as `submitPrompt` does. A management flow and a
-	 * recovery complete with a plain success result.
+	 * recovery complete with a plain success result. Either way the completed flow reports itself to
+	 * `options.hooks`, the same way `submitPrompt` does.
 	 *
 	 * The library checks the elevated window when a flow starts, so this method does not check it again. It needs no
 	 * access token either, because the state carries the session the flow started from.
@@ -1795,6 +2001,7 @@ export class AuthDanceApi {
 			identity: void 0 as unknown as AuthDanceIdentity,
 			expireAt,
 			flow: "",
+			name: undefined as string | undefined,
 			persist: undefined as boolean | undefined,
 			address: options.address,
 			userAgent: options.userAgent,
@@ -1828,6 +2035,7 @@ export class AuthDanceApi {
 				...advanceOptions,
 				identity,
 				flow: "enroll",
+				name: state.component,
 				persist: true,
 			};
 		} else if (state.kind === "rotate") {
@@ -1848,6 +2056,7 @@ export class AuthDanceApi {
 				...advanceOptions,
 				identity,
 				flow: "rotate",
+				name: state.component,
 				persist: true,
 			};
 		} else if (state.kind === "recover") {
@@ -1883,6 +2092,7 @@ export class AuthDanceApi {
 					...advanceOptions,
 					identity,
 					flow: "recover",
+					name: state.component,
 					path: [...path, choreographyComponent.component],
 					persist: true,
 				};
@@ -1903,6 +2113,7 @@ export class AuthDanceApi {
 				...advanceOptions,
 				identity,
 				flow: "subscribe",
+				name: state.channel.channel,
 				persist: true,
 			};
 		} else {

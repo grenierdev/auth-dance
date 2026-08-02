@@ -310,7 +310,7 @@ Sign-in and sign-up are not special. Every management flow uses the same state-p
 
 ## Configuration
 
-Three optional groups sit beside the required options: `api.durations`, `api.limits` and `api.tokens`.
+Four optional groups sit beside the required options: `api.durations`, `api.limits`, `api.tokens` and `api.hooks`.
 
 Every duration is in seconds, under `api.durations`. One key per flow, so recovering an account may be given more room than signing in, and
 a confirmation-only flow such as `unenroll` less:
@@ -330,6 +330,44 @@ Rate limits are `{ limit, window }` buckets, under `api.limits`. Per identity (`
 60/min.
 
 `api.tokens.issuer` is the `iss` claim of every minted JWT and of the encrypted state, `"acme"` by default.
+
+### Hooks
+
+`api.hooks` is how a deployment reacts to a change — publish an event, write an audit record, warn the owner. Each listener is optional:
+
+| Hook                 | Fires when                                            | `flow`                                                                |
+| -------------------- | ----------------------------------------------------- | --------------------------------------------------------------------- |
+| `onIdentityCreated`  | a sign-up saved a new identity                        | `sign-up`                                                             |
+| `onIdentityUpdated`  | a flow changed the components of an existing identity | `enroll`, `unenroll`, `rotate`, `recover`, `subscribe`, `unsubscribe` |
+| `onIdentityDeleted`  | a delete removed an identity, after its sessions      | `delete`                                                              |
+| `onSessionCreated`   | a sign-in or a sign-up minted a session               | `sign-in`, `sign-up`                                                  |
+| `onSessionRefreshed` | a refresh minted new tokens on an existing session    | `refresh`                                                             |
+| `onSessionDeleted`   | a session was destroyed, one event per session        | `sign-out`, `delete`                                                  |
+| `onError`            | one of the hooks above rejected                       | —                                                                     |
+
+```ts
+const auth = createAuthDance({
+	api: {
+		channels,
+		choreography: sequence("email", "password"),
+		components,
+		secret,
+		storage,
+		hooks: {
+			onIdentityUpdated: ({ flow, name, identity }) => bus.publish(`identity.${flow}`, { id: identity.id, name }),
+			onError: ({ hook, cause }) => logger.error({ hook, cause }, "auth hook failed"),
+		},
+	},
+});
+```
+
+An identity hook fires after the write, and a session hook after the session exists or is gone, so a listener never reads a change a later
+step could still reject. `onIdentityDeleted` is the one that receives an identity storage no longer holds: the event carries it as it stood
+one moment before the delete.
+
+A hook reports a change, it never decides one — a listener that rejects never fails the flow, and `onError` receives the rejection. The
+library awaits each listener, so a slow hook slows the call that fires it: return quickly and do the long work elsewhere. Only the state
+machine fires hooks; a write straight through `AuthDanceStorage` reports nothing.
 
 ## Development
 

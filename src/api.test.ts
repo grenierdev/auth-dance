@@ -1,7 +1,15 @@
 import { beforeEach, describe, it } from "@std/testing/bdd";
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "./providers/memory.ts";
-import { AuthDanceApi, type AuthDanceApiOptions } from "./api.ts";
+import {
+	AuthDanceApi,
+	type AuthDanceApiHooks,
+	type AuthDanceApiOptions,
+	type AuthDanceHookErrorEvent,
+	type AuthDanceIdentityEvent,
+	type AuthDanceSessionEvent,
+} from "./api.ts";
+import type { AuthDanceResponseTokens } from "./response.ts";
 import { choice, sequence } from "./choreography.ts";
 import EmailAuthDanceComponent from "./components/email.ts";
 import type { AuthDanceComponentContext } from "./component.ts";
@@ -33,6 +41,40 @@ describe("Api", () => {
 	// component on the first step of a sign-up.
 	function seedContext(name: string): AuthDanceComponentContext {
 		return { storage, stateId: "state_seed", name, flow: "sign-up" };
+	}
+
+	// The identity every suite below signs in as, seeded straight into storage rather than through a sign-up.
+	async function johnDoe(): Promise<void> {
+		await storage.createIdentity(
+			{ name: "John Doe" },
+			[
+				...await email.getIdentityComponent(
+					"email",
+					"john.doe@example.com",
+					true,
+				),
+				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
+			],
+		);
+	}
+
+	// The two steps of sequence("email", "password"), for a suite that asserts on what happens after a sign-in
+	// rather than on the sign-in itself.
+	async function signInAsJohnDoe(api: AuthDanceApi): Promise<AuthDanceResponseTokens> {
+		const result1 = await api.signIn();
+		const result2 = await api.submitPrompt({
+			name: "email",
+			value: "john.doe@example.com",
+			state: result1.state,
+		});
+		assert("state" in result2);
+		const result3 = await api.submitPrompt({
+			name: "password",
+			value: "foo",
+			state: result2.state,
+		});
+		assert("tokens" in result3);
+		return result3;
 	}
 
 	beforeEach(() => {
@@ -1148,20 +1190,6 @@ describe("Api", () => {
 	// abuse only. Spreading the same abuse over many identities is bucketed per address at the edge instead —
 	// see app.test.ts.
 	describe("rate limit", () => {
-		async function johnDoe(): Promise<void> {
-			await storage.createIdentity(
-				{ name: "John Doe" },
-				[
-					...await email.getIdentityComponent(
-						"email",
-						"john.doe@example.com",
-						true,
-					),
-					...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-				],
-			);
-		}
-
 		function limitedApi(options: Pick<AuthDanceApiOptions, "durations" | "limits">): AuthDanceApi {
 			return new AuthDanceApi({ ...apiOptions, ...options });
 		}
@@ -1336,6 +1364,331 @@ describe("Api", () => {
 			);
 			assertEquals(blocked.code, "RATE_LIMITED");
 			assertEquals(JSON.stringify(blocked), '{"code":"RATE_LIMITED"}');
+		});
+	});
+
+	// A hook is how a deployment learns that something changed: it publishes an event, writes an audit record, or
+	// warns the owner. What matters is therefore which hook fires, in which order, and with what on it — not that
+	// something fired at all. Every suite below reads the whole lifecycle of one flow off the same recorder.
+	describe("hooks", () => {
+		interface HookRecord {
+			hook: string;
+			flow: string;
+			identityId: string;
+			name?: string;
+			sessionId?: string;
+		}
+
+		function recorder(): { records: HookRecord[]; hooks: AuthDanceApiHooks } {
+			const records: HookRecord[] = [];
+			const identityHook = (hook: string) => (event: AuthDanceIdentityEvent): void => {
+				records.push({ hook, flow: event.flow, identityId: event.identity.id, name: event.name });
+			};
+			const sessionHook = (hook: string) => (event: AuthDanceSessionEvent): void => {
+				records.push({ hook, flow: event.flow, identityId: event.identity.id, sessionId: event.session.id });
+			};
+			return {
+				records,
+				hooks: {
+					onIdentityCreated: identityHook("onIdentityCreated"),
+					onIdentityUpdated: identityHook("onIdentityUpdated"),
+					onIdentityDeleted: identityHook("onIdentityDeleted"),
+					onSessionCreated: sessionHook("onSessionCreated"),
+					onSessionRefreshed: sessionHook("onSessionRefreshed"),
+					onSessionDeleted: sessionHook("onSessionDeleted"),
+				},
+			};
+		}
+
+		function recordingApi(): { records: HookRecord[]; api: AuthDanceApi } {
+			const { records, hooks } = recorder();
+			return { records, api: new AuthDanceApi({ ...apiOptions, hooks }) };
+		}
+
+		it("should report a sign-up as a new identity and then its first session", async () => {
+			const { records, api } = recordingApi();
+			const result1 = await api.signUp();
+			const result2 = await api.submitPrompt({
+				name: "email",
+				value: "john.doe@example.com",
+				state: result1.state,
+			});
+			assert("state" in result2);
+			await api.sendValidation({ name: "email", locale: "en", state: result2.state });
+			const code = channelEmail.messages[0].content["text/x-code"];
+			assert(code);
+			const result3 = await api.submitValidation({
+				name: "email",
+				value: code,
+				state: result2.state,
+			});
+			assert("state" in result3);
+			// Storage holds nothing until the choreography completes, so a half-walked sign-up reports nothing
+			// either. A hook never names an identity a later step could still reject.
+			assertEquals(records, []);
+			const result4 = await api.submitPrompt({
+				name: "password",
+				value: "bar",
+				state: result3.state,
+			});
+			assert("tokens" in result4);
+			// The identity exists before the session that signs it in, and both name the flow that produced them.
+			assertEquals(records.map((r) => r.hook), ["onIdentityCreated", "onSessionCreated"]);
+			assertEquals(records.map((r) => r.flow), ["sign-up", "sign-up"]);
+			assertEquals(records[0].identityId, result4.identity.id);
+			assertEquals(records[1].sessionId, result4.session.id);
+		});
+
+		it("should report a sign-in as a session alone", async () => {
+			const { records, api } = recordingApi();
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			// A sign-in reads an identity and changes nothing on it, so no identity hook fires for one.
+			assertEquals(records.map((r) => r.hook), ["onSessionCreated"]);
+			assertEquals(records[0].flow, "sign-in");
+			assertEquals(records[0].sessionId, signedIn.session.id);
+			assertEquals(records[0].identityId, signedIn.identity.id);
+		});
+
+		it("should report a refresh on the session the sign-in created", async () => {
+			const { records, api } = recordingApi();
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			const refreshed = await api.refreshToken(signedIn.tokens.refresh_token);
+			// A refresh mints a new pair of tokens on the session that already exists. It creates none, so the
+			// hook that reports it is not the hook that reports a sign-in.
+			assertEquals(records.map((r) => r.hook), ["onSessionCreated", "onSessionRefreshed"]);
+			assertEquals(records[1].flow, "refresh");
+			assertEquals(records[1].sessionId, signedIn.session.id);
+			assertEquals(refreshed.session.id, signedIn.session.id);
+		});
+
+		it("should report every session a sign-out destroys", async () => {
+			const { records, api } = recordingApi();
+			await johnDoe();
+			const first = await signInAsJohnDoe(api);
+			const second = await signInAsJohnDoe(api);
+			const signedOut = await api.signOut(first.tokens.access_token, true);
+			assert(signedOut.success);
+			// One event for each session, not one for the sweep: a listener sees the same event whichever way a
+			// session ended.
+			const deleted = records.filter((r) => r.hook === "onSessionDeleted");
+			assertEquals(deleted.map((r) => r.flow), ["sign-out", "sign-out"]);
+			assertEquals(
+				deleted.map((r) => r.sessionId).sort(),
+				[first.session.id, second.session.id].sort(),
+			);
+		});
+
+		it("should report an enroll with the component it added", async () => {
+			const { records, api } = recordingApi();
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			const enrolling = await api.enroll({
+				name: "email2",
+				access_token: signedIn.tokens.access_token,
+			});
+			const collected = await api.submitPrompt({
+				name: "email2",
+				value: "john.doe2@example.com",
+				state: enrolling.state,
+			});
+			assert("state" in collected);
+			await api.sendValidation({ name: "email2", locale: "en", state: collected.state });
+			const code = channelEmail2.messages[0].content["text/x-code"];
+			assert(code);
+			const done = await api.submitValidation({
+				name: "email2",
+				value: code,
+				state: collected.state,
+			});
+			assert("success" in done);
+			const updated = records.filter((r) => r.hook === "onIdentityUpdated");
+			assertEquals(updated.length, 1);
+			assertEquals(updated[0].flow, "enroll");
+			assertEquals(updated[0].name, "email2");
+			assertEquals(updated[0].identityId, signedIn.identity.id);
+		});
+
+		it("should report a subscribe with the channel it added", async () => {
+			const { records, api } = recordingApi();
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			const subscribing = await api.subscribe({
+				name: "sms",
+				access_token: signedIn.tokens.access_token,
+			});
+			const collected = await api.submitPrompt({
+				name: "sms",
+				value: "5551234567",
+				state: subscribing.state,
+			});
+			assert("state" in collected);
+			await api.sendValidation({ name: "email", locale: "en", state: collected.state });
+			const code = channelEmail.messages[0].content["text/x-code"];
+			assert(code);
+			const done = await api.submitValidation({
+				name: "sms",
+				value: code,
+				state: collected.state,
+			});
+			assert("success" in done);
+			const updated = records.filter((r) => r.hook === "onIdentityUpdated");
+			assertEquals(updated.length, 1);
+			assertEquals(updated[0].flow, "subscribe");
+			// A channel names itself the same way a component does, so one field carries both.
+			assertEquals(updated[0].name, "sms");
+		});
+
+		it("should report an unenroll with the component it removed", async () => {
+			const { records, api } = recordingApi();
+			await storage.createIdentity(
+				{ name: "John Doe" },
+				[
+					...await email.getIdentityComponent(
+						"email",
+						"john.doe@example.com",
+						true,
+					),
+					...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
+					...await email2.getIdentityComponent(
+						"email2",
+						"john.doe2@example.com",
+						true,
+					),
+				],
+			);
+			const signedIn = await signInAsJohnDoe(api);
+			const unenrolling = await api.unenroll({
+				name: "email2",
+				access_token: signedIn.tokens.access_token,
+			});
+			const done = await api.submitPrompt({
+				name: "email2",
+				value: true,
+				state: unenrolling.state,
+			});
+			assert("success" in done);
+			const updated = records.filter((r) => r.hook === "onIdentityUpdated");
+			assertEquals(updated.length, 1);
+			assertEquals(updated[0].flow, "unenroll");
+			assertEquals(updated[0].name, "email2");
+		});
+
+		it("should report a recovery one time, and mint no session for it", async () => {
+			const { records, api } = recordingApi();
+			await johnDoe();
+			const result1 = await api.recover({ name: "email" });
+			const result2 = await api.submitPrompt({
+				name: "email",
+				value: "john.doe@example.com",
+				state: result1.state,
+			});
+			assert("state" in result2);
+			await api.sendValidation({ name: "email", locale: "en", state: result2.state });
+			const code = channelEmail.messages[0].content["text/x-code"];
+			assert(code);
+			const result3 = await api.submitValidation({
+				name: "email",
+				value: code,
+				state: result2.state,
+			});
+			assert("state" in result3);
+			const result4 = await api.submitPrompt({
+				name: "password",
+				value: "bar",
+				state: result3.state,
+			});
+			assert("success" in result4);
+			// Proving control of one component is not a sign-in, so a recovery reports no session at all. The one
+			// identity event names the component the recovery started from, not the password it reset.
+			assertEquals(records.map((r) => r.hook), ["onIdentityUpdated"]);
+			assertEquals(records[0].flow, "recover");
+			assertEquals(records[0].name, "email");
+		});
+
+		it("should report every session of a delete before the identity itself", async () => {
+			const { records, api } = recordingApi();
+			await johnDoe();
+			const first = await signInAsJohnDoe(api);
+			const second = await signInAsJohnDoe(api);
+			const deleting = await api.delete({ access_token: first.tokens.access_token });
+			const done = await api.submitPrompt({
+				name: "identity",
+				value: true,
+				state: deleting.state,
+			});
+			assert("success" in done);
+			assertEquals(records.map((r) => r.hook), [
+				"onSessionCreated",
+				"onSessionCreated",
+				"onSessionDeleted",
+				"onSessionDeleted",
+				"onIdentityDeleted",
+			]);
+			assertEquals(
+				records.slice(2, 4).map((r) => r.sessionId).sort(),
+				[first.session.id, second.session.id].sort(),
+			);
+			// The identity comes last and carries the record as it stood one moment before the delete, because
+			// storage holds nothing to read by the time the hook runs.
+			assertEquals(records[4].flow, "delete");
+			assertEquals(records[4].identityId, first.identity.id);
+			assertEquals(await storage.getIdentity(first.identity.id), undefined);
+		});
+
+		it("should await a hook before it answers the caller", async () => {
+			let published = false;
+			const api = new AuthDanceApi({
+				...apiOptions,
+				hooks: {
+					onSessionCreated: async () => {
+						await new Promise((resolve) => setTimeout(resolve, 10));
+						published = true;
+					},
+				},
+			});
+			await johnDoe();
+			await signInAsJohnDoe(api);
+			// A hook that publishes an event finishes before the caller reads the tokens, so a deployment can
+			// order that event against the response it belongs to.
+			assert(published);
+		});
+
+		it("should not fail a flow when a hook rejects", async () => {
+			const boom = new Error("the queue is down");
+			const errors: AuthDanceHookErrorEvent[] = [];
+			const api = new AuthDanceApi({
+				...apiOptions,
+				hooks: {
+					onSessionCreated: () => Promise.reject(boom),
+					onError: (event) => {
+						errors.push(event);
+					},
+				},
+			});
+			await johnDoe();
+			// The tokens are minted before the hook runs. Surfacing a listener that is down as a failed sign-in
+			// would tell the caller their tokens are worthless when they are not.
+			const signedIn = await signInAsJohnDoe(api);
+			assert(signedIn.tokens.access_token);
+			assertEquals(errors.length, 1);
+			assertEquals(errors[0].hook, "onSessionCreated");
+			assertEquals(errors[0].cause, boom);
+		});
+
+		it("should keep a rejecting onError out of the flow too", async () => {
+			const api = new AuthDanceApi({
+				...apiOptions,
+				hooks: {
+					onSessionCreated: () => Promise.reject(new Error("the queue is down")),
+					onError: () => Promise.reject(new Error("the log is down as well")),
+				},
+			});
+			await johnDoe();
+			// Nowhere left to report to, and still not the business of the sign-in.
+			const signedIn = await signInAsJohnDoe(api);
+			assert(signedIn.tokens.access_token);
 		});
 	});
 });
