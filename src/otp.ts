@@ -1,48 +1,77 @@
 import { decodeBase32 } from "@std/encoding/base32";
 
-/** HMAC algorithm used for OTP generation. */
+/**
+ * The name of the HMAC hash that derives a one-time password.
+ * WebCrypto accepts each of these four names.
+ */
 export type OTPAlgorithm = "SHA-1" | "SHA-256" | "SHA-384" | "SHA-512";
 
 /**
- * Options for generating an HMAC-Based One-Time Password (HOTP).
+ * Options for {@link hotp}, the counter-based one-time password of RFC 4226.
  */
 export type HOTPOptions = {
+	/**
+	 * The shared key. `hotp` reads a string as base32, so the string length must be a multiple of 8.
+	 * A `CryptoKey` must carry the `HMAC` algorithm.
+	 */
 	readonly key: string | CryptoKey;
+	/**
+	 * The HMAC hash that derives the code.
+	 * @defaultValue `"SHA-1"`
+	 */
 	readonly algorithm?: OTPAlgorithm;
+	/**
+	 * The number of digits in the code. `hotp` adds leading zeros until the code reaches this number of digits.
+	 * @defaultValue `6`
+	 */
 	readonly digits?: number;
 };
 
 /**
- * Options for generating a Time-Based One-Time Password (TOTP).
+ * Options for {@link totp}, the time-based one-time password of RFC 6238.
  */
 export type TOTPOptions = {
+	/**
+	 * The shared key. `totp` hands it to {@link hotp}, which reads a string as base32.
+	 */
 	readonly key: string | CryptoKey;
+	/**
+	 * The length of one time step in seconds. `totp` divides the time by this value to get the counter,
+	 * so one code stays valid for one step.
+	 */
 	readonly period: number;
+	/**
+	 * The HMAC hash that derives the code.
+	 * @defaultValue `"SHA-1"`
+	 */
 	readonly algorithm?: OTPAlgorithm;
+	/**
+	 * The number of digits in the code.
+	 * @defaultValue `6`
+	 */
 	readonly digits?: number;
 };
 
 /**
- * Options for generating a random one-time password.
+ * Options for {@link otp}. A random code needs no key and no counter, so the options carry only the number of digits.
  */
 export type OTPOptions = {
+	/**
+	 * The number of digits in the code.
+	 * @defaultValue `6`
+	 */
 	readonly digits?: number;
 };
 
-/**
- * Checks whether `value` is a valid {@link OTPAlgorithm} string.
- * @param value The value to test.
- * @returns `true` if `value` is a supported HMAC algorithm identifier.
- */
+/** Tests whether `value` is one of the four hash names of {@link OTPAlgorithm}. */
 export function isOTPAlgorithm(value?: unknown): value is OTPAlgorithm {
 	return !!value && typeof value === "string" &&
 		["SHA-1", "SHA-256", "SHA-384", "SHA-512"].includes(value);
 }
 
 /**
- * Asserts that `value` is a valid {@link OTPAlgorithm} string.
- * @param value The value to assert.
- * @throws {@link InvalidOTPAlgorithmError} When `value` is not a supported algorithm.
+ * Narrows `value` to {@link OTPAlgorithm}. {@link hotp} calls this before it imports the key.
+ * @throws {@link InvalidOTPAlgorithmError} When `value` is not one of the four hash names.
  */
 export function assertOTPAlgorithm(
 	value?: unknown,
@@ -52,13 +81,12 @@ export function assertOTPAlgorithm(
 	}
 }
 
-/** Error thrown when an invalid {@link OTPAlgorithm} value is encountered. */
+/** {@link assertOTPAlgorithm} throws this error when `value` is not one of the four hash names of {@link OTPAlgorithm}. */
 export class InvalidOTPAlgorithmError extends Error {}
 
 /**
- * Checks whether `value` is a valid {@link HOTPOptions} object.
- * @param value The value to test.
- * @returns `true` if `value` satisfies the {@link HOTPOptions} shape.
+ * Tests whether `value` carries a `key` that is a string or a `CryptoKey`.
+ * The guard also checks `algorithm` and `digits`, but only when `value` carries them.
  */
 export function isHOTPOptions(value?: unknown): value is HOTPOptions {
 	return !!value && typeof value === "object" && "key" in value &&
@@ -68,9 +96,8 @@ export function isHOTPOptions(value?: unknown): value is HOTPOptions {
 }
 
 /**
- * Asserts that `value` is a valid {@link HOTPOptions} object.
- * @param value The value to assert.
- * @throws {@link InvalidHOTPOptionsError} When `value` is not valid HOTP options.
+ * Narrows `value` to {@link HOTPOptions}.
+ * @throws {@link InvalidHOTPOptionsError} When `value` does not match the shape.
  */
 export function assertHOTPOptions(
 	value?: unknown,
@@ -80,13 +107,12 @@ export function assertHOTPOptions(
 	}
 }
 
-/** Error thrown when invalid {@link HOTPOptions} are encountered. */
+/** {@link assertHOTPOptions} throws this error for a value that does not match {@link HOTPOptions}. */
 export class InvalidHOTPOptionsError extends Error {}
 
 /**
- * Checks whether `value` is a valid {@link TOTPOptions} object.
- * @param value The value to test.
- * @returns `true` if `value` satisfies the {@link TOTPOptions} shape.
+ * Tests whether `value` carries a numeric `period` and a `key` that is a string or a `CryptoKey`.
+ * The guard also checks `algorithm` and `digits`, but only when `value` carries them.
  */
 export function isTOTPOptions(value?: unknown): value is TOTPOptions {
 	return !!value && typeof value === "object" && "key" in value &&
@@ -97,9 +123,8 @@ export function isTOTPOptions(value?: unknown): value is TOTPOptions {
 }
 
 /**
- * Asserts that `value` is a valid {@link TOTPOptions} object.
- * @param value The value to assert.
- * @throws {@link InvalidTOTPOptionsError} When `value` is not valid TOTP options.
+ * Narrows `value` to {@link TOTPOptions}.
+ * @throws {@link InvalidTOTPOptionsError} When `value` does not match the shape.
  */
 export function assertTOTPOptions(
 	value?: unknown,
@@ -109,13 +134,12 @@ export function assertTOTPOptions(
 	}
 }
 
-/** Error thrown when invalid {@link TOTPOptions} are encountered. */
+/** {@link assertTOTPOptions} throws this error for a value that does not match {@link TOTPOptions}. */
 export class InvalidTOTPOptionsError extends Error {}
 
 /**
- * Checks whether `value` is a valid {@link OTPOptions} object.
- * @param value The value to test.
- * @returns `true` if `value` satisfies the {@link OTPOptions} shape.
+ * Tests whether `value` carries a numeric `digits`.
+ * The guard requires `digits`, although {@link OTPOptions} marks the field optional.
  */
 export function isOTPOptions(value?: unknown): value is OTPOptions {
 	return !!value && typeof value === "object" && "digits" in value &&
@@ -123,9 +147,8 @@ export function isOTPOptions(value?: unknown): value is OTPOptions {
 }
 
 /**
- * Asserts that `value` is a valid {@link OTPOptions} object.
- * @param value The value to assert.
- * @throws {@link InvalidOTPOptionsError} When `value` is not valid OTP options.
+ * Narrows `value` to {@link OTPOptions}.
+ * @throws {@link InvalidOTPOptionsError} When `value` does not match the shape.
  */
 export function assertOTPOptions(
 	value?: unknown,
@@ -135,13 +158,12 @@ export function assertOTPOptions(
 	}
 }
 
-/** Error thrown when invalid {@link OTPOptions} are encountered. */
+/** {@link assertOTPOptions} throws this error for a value that does not match {@link OTPOptions}. */
 export class InvalidOTPOptionsError extends Error {}
 
 /**
- * Converts a counter value to a 128-bit Uint8Array representation with padding.
- * @param {number} counter - The counter value to convert.
- * @returns {Uint8Array} - A Uint8Array representing the counter value padded to 128 bits.
+ * Writes `counter` as the 8-byte block that HMAC signs. RFC 4226 fixes this length.
+ * @returns The counter as 8 bytes, with leading zeros.
  */
 function padCounter(counter: number): Uint8Array<ArrayBuffer> {
 	const pairs = counter.toString(16).padStart(16, "0").match(/..?/g)!;
@@ -150,9 +172,13 @@ function padCounter(counter: number): Uint8Array<ArrayBuffer> {
 }
 
 /**
- * Truncates an HMAC (Hash-based Message AuthDanceentication Code) represented as a Uint8Array.
- * @param {Uint8Array} hmac - The HMAC value to truncate.
- * @returns {number} - The truncated value extracted from the HMAC.
+ * Extracts a 31-bit number from an HMAC, the dynamic truncation of RFC 4226.
+ *
+ * The low four bits of byte 19 give an offset. The function reads four bytes from that offset and clears the sign bit.
+ * RFC 4226 reads the last byte of the HMAC. Byte 19 is the last byte of a SHA-1 HMAC only.
+ * A larger hash therefore gives a code that another implementation does not match.
+ *
+ * @returns The truncated value of the HMAC.
  */
 function truncate(hmac: Uint8Array): number {
 	const offset = hmac[19] & 0b1111;
@@ -161,15 +187,21 @@ function truncate(hmac: Uint8Array): number {
 }
 
 /**
- * Generates a HOTP (HMAC-based One-Time Password) using the provided key, counter, and options.
- * @async
- * @param {object} params - The parameters for generating the HOTP.
- * @param {string|CryptoKey} params.key - The key to use for generating the HOTP. It can be either a string or a CryptoKey object.
- * @param {number} params.counter - The counter value to use for generating the HOTP.
- * @param {string} [params.algorithm="SHA-1"] - The algorithm to use for generating the HMAC. Defaults to "SHA-1". Allowed values are "SHA-1", "SHA-256", "SHA-384", and "SHA-512".
- * @param {number} [params.digits=6] - The number of digits to include in the generated HOTP. Defaults to 6.
- * @returns {Promise<string>} - A Promise that resolves to the generated HOTP as a string.
- * @throws {Error} - Throws an error if the provided key is not valid.
+ * Generates a counter-based one-time password, the HOTP of RFC 4226.
+ *
+ * The function signs the counter with the HMAC key, truncates the signature, and keeps the last `digits` digits.
+ * The function decodes a string key from base32 and imports it as an HMAC key. It uses a `CryptoKey` directly.
+ *
+ * @param counter The counter of the code. The client and the server must hold the same value.
+ * @returns The code as a string of `digits` characters, with leading zeros.
+ * @throws {@link InvalidOTPAlgorithmError} When `algorithm` is not one of the names of {@link OTPAlgorithm}.
+ * @throws {RangeError} When `key` is a string and the length is not a multiple of 8, the base32 block size.
+ * @throws {Error} When `key` is a `CryptoKey` for another algorithm than `HMAC`.
+ * @throws {Error} When `key` is neither a string nor a `CryptoKey`.
+ * @example
+ * ```ts
+ * const code = await hotp({ key: generateKey(16), counter: 1 });
+ * ```
  */
 export async function hotp(
 	{ key, counter, algorithm = "SHA-1", digits = 6 }: HOTPOptions & {
@@ -207,14 +239,19 @@ export async function hotp(
 }
 
 /**
- * Generates a TOTP (Time-based One-Time Password) using the provided key, time, and options.
- * @param {object} params - The parameters for generating the TOTP.
- * @param {string|CryptoKey} params.key - The key to use for generating the TOTP. It can be either a string or a CryptoKey object.
- * @param {number} [params.time=Date.now() / 1000] - The time value to use for generating the TOTP. Defaults to the current time in seconds since epoch divided by 1000.
- * @param {number} [params.period=60] - The time period for which the TOTP is valid, in seconds. Defaults to 60 seconds.
- * @param {string} [params.algorithm] - The algorithm to use for generating the HMAC. Allowed values are "SHA-1", "SHA-256", "SHA-384", and "SHA-512".
- * @param {number} [params.digits] - The number of digits to include in the generated TOTP. If not provided, the value from the `hotp` function will be used, which defaults to 6.
- * @returns {string} - The generated TOTP as a string.
+ * Generates a time-based one-time password, the TOTP of RFC 6238.
+ *
+ * The function divides the time by `period` to get a counter, then it calls {@link hotp}.
+ * `hotp` validates the key and the algorithm, so the promise rejects with an error of `hotp`.
+ *
+ * @param time The time in seconds since the epoch. The default is the current time.
+ * @param period The length of one time step in seconds. {@link TOTPOptions} requires this value,
+ * so the default of `60` applies to an untyped caller only.
+ * @returns The code as a string of `digits` characters, with leading zeros.
+ * @example
+ * ```ts
+ * const code = await totp({ key: generateKey(16), period: 30 });
+ * ```
  */
 export function totp(
 	{ key, time = Date.now() / 1000, period = 60, algorithm, digits }:
@@ -225,10 +262,14 @@ export function totp(
 }
 
 /**
- * Generates a one-time password (OTP) using a random key.
- * @param {object} options - The options for generating the OTP.
- * @param {number} [options.digits=6] - The number of digits to include in the generated OTP. Defaults to 6.
- * @returns {string} - The generated OTP as a string.
+ * Generates a random code from `crypto.getRandomValues`.
+ *
+ * No key and no counter derive this code, so the sender must keep it to check the answer.
+ * `OtpAuthDanceComponent` writes the code to the key-value store and returns the message that carries it.
+ * The code stays in the store until the owner submits it, or until the time to live drops it.
+ *
+ * @param digits The number of digits in the code. The default is `6`.
+ * @returns The code as a string of `digits` characters, with leading zeros.
  */
 export function otp({ digits = 6 }: { digits?: number } = {}): string {
 	const hmac = new Uint8Array(digits);
@@ -238,9 +279,15 @@ export function otp({ digits = 6 }: { digits?: number } = {}): string {
 }
 
 /**
- * Generates a random key for use in OTP generation.
- * @param {number} [length=16] - The length of the key to generate, in bytes. Defaults to 16.
- * @returns {string} - The generated random key encoded as a base32 string.
+ * Generates a random shared key for {@link hotp} and {@link totp}.
+ *
+ * The function picks one character at random from `alphabet` for each position of the key.
+ * The default alphabet is the base32 alphabet of RFC 4648, so the key is base32 and `hotp` decodes it.
+ * Give a `length` that is a multiple of 8, because `hotp` rejects a string key of any other length.
+ *
+ * @param length The number of characters in the key. The default is `16`.
+ * @param alphabet The characters that the function picks. The default is the base32 alphabet, `"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"`.
+ * @returns The key as a string of `length` characters.
  */
 export function generateKey(length = 16, alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"): string {
 	const buffer = new Uint8Array(length);
@@ -253,46 +300,72 @@ export function generateKey(length = 16, alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ2
 }
 
 /**
- * Options for building an `otpauth://` URI.
+ * Options for {@link toURI}, which builds an `otpauth://` URI.
  *
- * Use the `"hotp"` variant for counter-based codes and the `"totp"` variant
- * for time-based codes.
+ * Use the `"hotp"` variant for a counter-based code and the `"totp"` variant for a time-based code.
  */
 export type OTPAuthDanceURIOptions =
 	| {
-		/** Selects the HOTP (counter-based) URI scheme. */
+		/** Marks the URI as counter-based. `toURI` writes the value as the host of the URI. */
 		type: "hotp";
-		/** Base32-encoded shared secret. */
+		/** The shared key in base32, the same value that {@link hotp} takes as `key`. */
 		secret: string;
-		/** Human-readable account label shown in authenticator apps. */
+		/** The account name that the authenticator app shows. `toURI` encodes it into the path. */
 		label: string;
-		/** HMAC algorithm. Defaults to `"SHA-1"`. */
+		/**
+		 * The HMAC hash that derives the code.
+		 * @defaultValue `"SHA-1"`
+		 */
 		algorithm?: OTPAlgorithm;
-		/** Number of digits in the generated code. Defaults to `6`. */
+		/**
+		 * The number of digits in the code.
+		 * @defaultValue `6`
+		 */
 		digits?: number;
-		/** Initial counter value for the HOTP sequence. */
+		/** The first counter of the sequence. `toURI` rejects the `"hotp"` variant without it. */
 		counter: number;
 	}
 	| {
-		/** Selects the TOTP (time-based) URI scheme. */
+		/** Marks the URI as time-based. `toURI` writes the value as the host of the URI. */
 		type: "totp";
-		/** Base32-encoded shared secret. */
+		/** The shared key in base32, the same value that {@link totp} takes as `key`. */
 		secret: string;
-		/** Human-readable account label shown in authenticator apps. */
+		/** The account name that the authenticator app shows. `toURI` encodes it into the path. */
 		label: string;
-		/** HMAC algorithm. Defaults to `"SHA-1"`. */
+		/**
+		 * The HMAC hash that derives the code.
+		 * @defaultValue `"SHA-1"`
+		 */
 		algorithm?: OTPAlgorithm;
-		/** Number of digits in the generated code. Defaults to `6`. */
+		/**
+		 * The number of digits in the code.
+		 * @defaultValue `6`
+		 */
 		digits?: number;
-		/** Time step in seconds. Defaults to `30`. */
+		/**
+		 * The length of one time step in seconds. Pass the same value to {@link totp}, which uses `60` by default.
+		 * @defaultValue `30`
+		 */
 		period?: number;
 	};
 
 /**
- * Generates an OTPAuth URI based on the provided options.
- * @param {OTPAuthDanceURIOptions} options - The options for generating the OTPAuth URI.
- * @returns {string} - The generated OTPAuth URI.
- * @throws {Error} - Throws an error if the provided options are invalid.
+ * Builds the `otpauth://` URI that an authenticator app reads from a QR code.
+ *
+ * The function writes the default `digits` and `algorithm` values into the given `options` object.
+ * For the `"totp"` variant, it also writes the default `period`. The caller sees these changes.
+ * The function then writes every remaining option as a query parameter.
+ *
+ * @returns The URI. The host is the type, the path is the encoded label, and the query carries the secret and the other options.
+ * @throws {Error} When the `"hotp"` variant carries no numeric `counter`.
+ * @throws {Error} When the `"totp"` variant carries a `period` that is not a number.
+ * @throws {Error} When `digits` is not a number.
+ * @throws {Error} When `algorithm` is not one of the names of {@link OTPAlgorithm}.
+ * @example
+ * ```ts
+ * toURI({ type: "totp", secret: generateKey(16), label: "john.doe@example.com" });
+ * // otpauth://totp/john.doe%40example.com?digits=6&algorithm=SHA-1&period=30&secret=…
+ * ```
  */
 export function toURI(options: OTPAuthDanceURIOptions): string {
 	options.digits ??= 6;

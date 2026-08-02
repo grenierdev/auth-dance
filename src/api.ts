@@ -75,71 +75,145 @@ import {
 	WouldLockOutError,
 } from "./error.ts";
 
-/** A single fixed-window bucket: `limit` calls per `window`, the window expressed in seconds like every other duration here. */
+/**
+ * One fixed-window rate limit bucket. It allows `limit` hits in each `window`.
+ *
+ * Every duration in this library is a number of seconds, and `window` keeps that rule.
+ */
 export interface AuthDanceRateLimit {
+	/** How many hits the bucket allows in one window. */
 	limit: number;
+	/** How long one window lasts, in seconds. */
 	window: number;
 }
 
 /**
- * The buckets `AuthDanceApi` consumes, keyed on the identity or session a call is attributable to. They guard
- * one identity against being hammered — brute-forcing its password, draining its OTP quota — so they are
- * deliberately tight; a caller spreading the same abuse over many identities is what the per-address
- * buckets at the edge are for.
+ * The buckets `AuthDanceApi` consumes. `AuthDanceApi` keys each one on the identity or the session a call belongs to.
+ *
+ * These buckets guard one identity against repeated attacks, for example a brute-force attack on its password,
+ * or many calls that drain its one-time code quota. They are tight on purpose. The per-address buckets of the
+ * HTTP layer handle a caller that spreads the same abuse over many identities.
  */
 export interface AuthDanceIdentityRateLimits {
-	/** Answering a prompt or a validation, i.e. every attempt at proving something. */
+	/**
+	 * Each answer to a prompt or to a validation. Every attempt to prove something costs one slot.
+	 * @defaultValue `{ limit: 10, window: 300 }`
+	 */
 	verify?: AuthDanceRateLimit;
-	/** Delivering a prompt or a validation over a channel — the buckets that cost real money. */
+	/**
+	 * Each prompt or validation the library delivers over a channel. These calls cost real money.
+	 * @defaultValue `{ limit: 5, window: 300 }`
+	 */
 	send?: AuthDanceRateLimit;
-	/** Starting a management flow (enroll, rotate, subscribe, …) or signing out. */
+	/**
+	 * Each start of a management flow, such as enroll, rotate or subscribe. A sign-out consumes this bucket too.
+	 * @defaultValue `{ limit: 20, window: 300 }`
+	 */
 	manage?: AuthDanceRateLimit;
-	/** Exchanging a refresh token. Legitimate clients do this often, so it is the loosest of the four. */
+	/**
+	 * Each exchange of a refresh token. A legitimate client does this often, so this bucket is the loosest of the four.
+	 * @defaultValue `{ limit: 60, window: 300 }`
+	 */
 	refresh?: AuthDanceRateLimit;
 }
 
 /**
- * The buckets the Hono edge consumes, keyed on the caller's address. They guard against distributed
- * abuse — many identities probed from one place — and are generous on purpose: a whole NATed campus
- * shares one address, so a limit tuned for a single client would lock out everybody behind it.
+ * The buckets the HTTP layer consumes. The HTTP layer keys each one on the address of the caller.
+ *
+ * These buckets guard against abuse from one address that probes many identities. They are generous on
+ * purpose. A whole NATed campus shares one address, so a limit tuned for a single client blocks everybody
+ * behind that address.
  */
 export interface AuthDanceAddressRateLimits {
-	/** Every request, whatever it is.  */
+	/**
+	 * Every request, whatever the route.
+	 * @defaultValue `{ limit: 300, window: 60 }`
+	 */
 	request?: AuthDanceRateLimit;
-	/** The two routes that put a message on a channel, on top of the `request` bucket. */
+	/**
+	 * The two routes that deliver a message over a channel. The HTTP layer consumes this bucket on top of `request`.
+	 * @defaultValue `{ limit: 60, window: 60 }`
+	 */
 	send?: AuthDanceRateLimit;
 }
 
+/**
+ * Everything `AuthDanceApi` needs to run the dance.
+ *
+ * The five required options declare the policy. The three optional groups tune the durations, the rate limits
+ * and the token issuer.
+ */
 export interface AuthDanceApiOptions {
+	/** Where the library delivers a message, keyed by the channel name a component asks for. */
 	channels: Record<string, AuthDanceChannel>;
+	/** The one declaration the sign-in, the sign-up, the recover and the unenroll flow read. `peek` picks the next step from it. */
 	choreography: AuthDanceChoreography;
+	/** What each step does, keyed by the name the choreography and the prompts use. */
 	components: Record<string, AuthDanceComponent>;
+	/** The base64url key. It signs every minted token and it encrypts the state. Keep it in a secret store. */
 	secret: string;
+	/** Where identities, sessions, one-time codes and rate limit counters live. */
 	storage: AuthDanceStorage;
+	/**
+	 * How long a flow, a token and the elevated window last, in seconds.
+	 *
+	 * There is one key per flow. A recovery can get more room than a sign-in, and a confirmation-only flow such
+	 * as `unenroll` can get less.
+	 */
 	durations?: {
+		/** How long a sign-in state stays valid. @defaultValue 300 */
 		sign_in?: number;
+		/** How long a sign-up state stays valid. @defaultValue 300 */
 		sign_up?: number;
+		/** How long an enroll state stays valid. @defaultValue 300 */
 		enroll?: number;
+		/** How long an unenroll confirmation stays valid. @defaultValue 300 */
 		unenroll?: number;
+		/** How long a rotate state stays valid, across both of its validation rounds. @defaultValue 300 */
 		rotate?: number;
+		/** How long a recover state stays valid, across the whole reset. @defaultValue 300 */
 		recover?: number;
+		/** How long a subscribe state stays valid. @defaultValue 300 */
 		subscribe?: number;
+		/** How long an unsubscribe confirmation stays valid. @defaultValue 300 */
 		unsubscribe?: number;
+		/** How long a delete confirmation stays valid. @defaultValue 300 */
 		delete?: number;
+		/** How long an access token stays valid. @defaultValue 300 */
 		access?: number;
+		/** How long a refresh token stays valid. @defaultValue 86400 */
 		refresh?: number;
+		/**
+		 * The window after a sign-in in which a session may still run a sensitive flow. Past this window `enroll`,
+		 * `unenroll`, `rotate`, `subscribe`, `unsubscribe` and `delete` raise `FreshSignInRequiredError`. A sign-out
+		 * needs no fresh sign-in. A refresh keeps `auth_time` unchanged, so it never re-opens the window either.
+		 * @defaultValue 300
+		 */
 		elevated?: number;
 	};
+	/** The rate limit buckets. Any bucket you omit keeps its default. */
 	limits?: {
+		/** The per-identity buckets `AuthDanceApi` consumes. */
 		identity?: AuthDanceIdentityRateLimits;
+		/** The per-address buckets the HTTP layer consumes. `AuthDanceApi` never reads them. */
 		address?: AuthDanceAddressRateLimits;
 	};
+	/** How the minted tokens present themselves. */
 	tokens?: {
+		/**
+		 * The `iss` claim of every minted token. The encrypted state carries the same value in its header.
+		 *
+		 * The default applies to the minted tokens only. Omit this option and the state header carries no issuer.
+		 * @defaultValue "acme"
+		 */
 		issuer?: string;
 	};
 }
 
-/** Tight, because they apply to one identity at a time. */
+/**
+ * The buckets `AuthDanceApi` uses when `limits.identity` omits one. They are tight, because each one applies
+ * to a single identity or to a single session.
+ */
 export const IdentityRateLimits: Required<AuthDanceIdentityRateLimits> = {
 	verify: { limit: 10, window: 5 * 60 },
 	send: { limit: 5, window: 5 * 60 },
@@ -147,15 +221,44 @@ export const IdentityRateLimits: Required<AuthDanceIdentityRateLimits> = {
 	refresh: { limit: 60, window: 5 * 60 },
 };
 
+/**
+ * The state machine of the library. It performs the dance the choreography declares.
+ *
+ * It covers nine flows: sign-in, sign-up, enroll, unenroll, rotate, recover, subscribe, unsubscribe and delete.
+ * A flow method returns the first prompt together with the state. The state is a JWE the client keeps and
+ * returns with every later call. The client then calls `submitPrompt` until the answer carries the tokens or a
+ * plain success result. When the library asks for proof of control, the client calls `submitValidation` instead.
+ *
+ * Each method raises an `AuthDanceError` for a failure the caller can act on. Any other failure escapes as
+ * `AuthDanceUnknownError` and carries the original failure in `cause`. `accessTokenIdentity` is the one
+ * exception, because it lets an unexpected failure escape as it stands.
+ *
+ * @example
+ * ```ts
+ * const started = await api.signIn();
+ * const next = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: started.state });
+ * ```
+ */
 export class AuthDanceApi {
 	#options: AuthDanceApiOptions;
 	#decodedSecret: Uint8Array;
 
+	/**
+	 * Builds the state machine from a policy. It decodes `options.secret` one time and keeps the raw key.
+	 *
+	 * `createAuthDanceApi` calls this constructor. `createAuthDance` reaches it through `createAuthDanceApi`.
+	 */
 	constructor(options: AuthDanceApiOptions) {
 		this.#options = options;
 		this.#decodedSecret = decode(this.#options.secret);
 	}
 
+	/**
+	 * The storage this instance reads and writes.
+	 *
+	 * The HTTP layer needs it for the read-only routes that follow `accessTokenIdentity`, and for the
+	 * per-address rate limit counters it keeps.
+	 */
 	get storage(): AuthDanceStorage {
 		return this.#options.storage;
 	}
@@ -183,6 +286,19 @@ export class AuthDanceApi {
 		return ch.sendMessage(message);
 	}
 
+	/**
+	 * Sends a message to one identity over a channel it subscribes to.
+	 *
+	 * No flow calls this. It serves the deployment around the library, which knows the identity it wants to
+	 * reach but not the recipient data the channel needs. This method resolves that recipient.
+	 *
+	 * @param identityId The id of the identity to reach.
+	 * @param channel The name of the channel, as `options.channels` declares it.
+	 * @param message The subject and the content. The method itself adds the recipient.
+	 * @throws IdentityNotFoundError when storage holds no identity under `identityId`.
+	 * @throws ChannelNotSubscribedError when the identity carries no channel component of that name.
+	 * @throws UnknownChannelError when `options.channels` declares no channel of that name.
+	 */
 	sendMessageTo(
 		identityId: string,
 		channel: string,
@@ -206,6 +322,14 @@ export class AuthDanceApi {
 		});
 	}
 
+	/**
+	 * Sends a message that already names its recipient.
+	 *
+	 * The recipient is a channel component. A caller that already holds one, from a previous
+	 * `accessTokenIdentity` read for example, skips the identity lookup `sendMessageTo` does.
+	 *
+	 * @throws UnknownChannelError when `options.channels` declares no channel the recipient names.
+	 */
 	sendMessage(message: AuthDanceMessage): Promise<AuthDanceResponseResult> {
 		return this.#guard("sendMessage", async () => {
 			await this.#sendMessage(message);
@@ -310,6 +434,19 @@ export class AuthDanceApi {
 		return `session:${state.sessionId}`;
 	}
 
+	/**
+	 * Exchanges a refresh token for a new set of tokens on the same session.
+	 *
+	 * The new tokens carry the `auth_time` of the original sign-in unchanged. A refresh therefore extends how
+	 * long the client may use the session, and never how recently its holder proved who they are. It cannot
+	 * re-open the elevated window, so it needs no fresh sign-in and grants none.
+	 *
+	 * @returns A new access token, id token and refresh token, plus the session and the scoped identity data.
+	 * @throws InvalidRefreshTokenError when the token is tampered with, expired, or missing a claim.
+	 * @throws RateLimitedError when the `refresh` bucket of the session is empty.
+	 * @throws SessionNotFoundError when the session the token names has expired or was signed out.
+	 * @throws IdentityNotFoundError when storage holds no identity for that session.
+	 */
 	refreshToken(refresh_token: string): Promise<AuthDanceResponseTokens> {
 		return this.#guard("refreshToken", async () => {
 			const { sub, authTime } = await this.#verifiedClaims(refresh_token, () => new InvalidRefreshTokenError());
@@ -326,6 +463,19 @@ export class AuthDanceApi {
 		});
 	}
 
+	/**
+	 * Destroys the session the access token names, or every session of its identity.
+	 *
+	 * A sign-out needs no fresh sign-in. It only removes access, so an old session is enough to ask for it.
+	 *
+	 * @param access_token The access token of the session to destroy.
+	 * @param others Pass `true` to destroy every session of the identity, this one included.
+	 * @defaultValue `others` is `false`
+	 * @throws InvalidAccessTokenError when the token is tampered with, expired, or missing a claim.
+	 * @throws RateLimitedError when the `manage` bucket of the session is empty.
+	 * @throws SessionNotFoundError when the session has already expired or was signed out.
+	 * @throws IdentityNotFoundError when storage holds no identity for that session.
+	 */
 	signOut(access_token: string, others: boolean = false): Promise<AuthDanceResponseResult> {
 		return this.#guard("signOut", async () => {
 			const { session } = await this.accessTokenIdentity(access_token);
@@ -485,12 +635,18 @@ export class AuthDanceApi {
 	}
 
 	/**
-	 * Resolves the session and identity an access token was minted for, along with its `auth_time`.
+	 * Resolves the session and the identity of an access token, and returns its `auth_time`.
 	 *
-	 * Management flows (enroll, subscribe, …) are performed by an already authenticated caller: they start
-	 * from the access token instead of stepping through the choreography. Public because the read-only
-	 * routes — listing sessions, listing components — are nothing but this call followed by a storage read,
-	 * and wrapping each of them in a method here would add a layer that decides nothing.
+	 * An already authenticated caller runs a management flow such as enroll or subscribe. Such a flow starts
+	 * from the access token, not from a step through the choreography.
+	 *
+	 * This method is public because the read-only routes — list the sessions, list the components — are this
+	 * call plus one storage read. A method here for each of them adds a layer that decides nothing.
+	 *
+	 * @returns The session, the identity behind it, and the `auth_time` claim of the token in seconds.
+	 * @throws InvalidAccessTokenError when the token is tampered with, expired, or missing a claim.
+	 * @throws SessionNotFoundError when the session has already expired or was signed out.
+	 * @throws IdentityNotFoundError when storage holds no identity for that session.
 	 */
 	async accessTokenIdentity(access_token: string): Promise<{ session: AuthDanceSession; identity: AuthDanceIdentity; authTime: number }> {
 		const { sub, authTime } = await this.#verifiedClaims(access_token, () => new InvalidAccessTokenError());
@@ -773,6 +929,17 @@ export class AuthDanceApi {
 		}
 	}
 
+	/**
+	 * Starts an authentication and returns the first prompt of the choreography.
+	 *
+	 * The state holds no identity yet. A component resolves one during the dance, so no per-identity bucket can
+	 * key on anything before that step. Until then, only the per-address buckets of the HTTP layer guard this flow.
+	 * This flow needs no access token and no fresh sign-in.
+	 *
+	 * @returns The encrypted state, the first prompt, and the moment the state expires.
+	 * @throws ChoreographyEmptyError when the choreography is already over at its first step.
+	 * @throws UnknownComponentError when the first step names a component `options.components` does not declare.
+	 */
 	signIn(): Promise<AuthDanceResponseState> {
 		return this.#guard("signIn", () => {
 			const expireAt = this.#expireAt(this.#options.durations?.sign_in);
@@ -790,6 +957,20 @@ export class AuthDanceApi {
 		});
 	}
 
+	/**
+	 * Starts a registration and returns the first prompt of the choreography.
+	 *
+	 * Sign-up walks the same steps sign-in verifies, so the two flows cannot differ. The state carries the
+	 * new identity id from the start, but storage keeps nothing until the choreography completes.
+	 *
+	 * Sign-up is the one flow with no per-identity bucket. It mints its own identity id and a caller can always
+	 * start another one, so there is nothing durable to key a bucket on. This flow needs no access token and no
+	 * fresh sign-in.
+	 *
+	 * @returns The encrypted state, the first prompt, and the moment the state expires.
+	 * @throws ChoreographyEmptyError when the choreography is already over at its first step.
+	 * @throws UnknownComponentError when the first step names a component `options.components` does not declare.
+	 */
 	signUp(): Promise<AuthDanceResponseState> {
 		return this.#guard("signUp", () => {
 			const expireAt = this.#expireAt(this.#options.durations?.sign_up);
@@ -807,6 +988,23 @@ export class AuthDanceApi {
 		});
 	}
 
+	/**
+	 * Starts the enrollment of a new component on the identity behind the access token.
+	 *
+	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
+	 *
+	 * The prompt collects the new value. The component sees the values this enrollment collected first, so a
+	 * validation targets the new value and not the ones the identity already carries. Answer that validation
+	 * with `sendValidation` and `submitValidation`.
+	 *
+	 * @param options `name` is the component to enroll, as `options.components` declares it.
+	 * @returns The encrypted state, the prompt of the component, and the moment the state expires.
+	 * @throws InvalidAccessTokenError, SessionNotFoundError or IdentityNotFoundError when the token resolves to nothing.
+	 * @throws RateLimitedError when the `manage` bucket of the session is empty.
+	 * @throws ComponentAlreadyEnrolledError when the identity already carries that component.
+	 * @throws UnknownComponentError when `options.components` declares no component of that name.
+	 * @throws FreshSignInRequiredError when the sign-in is older than the elevated window.
+	 */
 	enroll(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("enroll", async () => {
 			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
@@ -832,6 +1030,23 @@ export class AuthDanceApi {
 		});
 	}
 
+	/**
+	 * Starts the removal of a component from the identity behind the access token.
+	 *
+	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
+	 *
+	 * The library walks the choreography and refuses a removal that leaves no completable path. It answers with
+	 * a confirmation prompt. Submit the boolean `true` to it through `submitPrompt`.
+	 *
+	 * @param options `name` is the component to remove.
+	 * @returns The encrypted state, a confirmation prompt, and the moment the state expires.
+	 * @throws InvalidAccessTokenError, SessionNotFoundError or IdentityNotFoundError when the token resolves to nothing.
+	 * @throws RateLimitedError when the `manage` bucket of the session is empty.
+	 * @throws ComponentNotEnrolledError when the identity carries no such component.
+	 * @throws UnknownComponentError when `options.components` declares no component of that name.
+	 * @throws FreshSignInRequiredError when the sign-in is older than the elevated window.
+	 * @throws WouldLockOutError when no path through the choreography stays completable without the component.
+	 */
 	unenroll(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("unenroll", async () => {
 			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
@@ -861,6 +1076,23 @@ export class AuthDanceApi {
 		});
 	}
 
+	/**
+	 * Starts the replacement of an enrolled component on the identity behind the access token.
+	 *
+	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
+	 *
+	 * A component that can verify itself proves control of the current value first, so the flow has two
+	 * validation rounds. A component that cannot, a password for example, is proven from the start. Its first
+	 * prompt already collects the replacement.
+	 *
+	 * @param options `name` is the component to replace.
+	 * @returns The encrypted state, the first prompt, and the moment the state expires.
+	 * @throws InvalidAccessTokenError, SessionNotFoundError or IdentityNotFoundError when the token resolves to nothing.
+	 * @throws RateLimitedError when the `manage` bucket of the session is empty.
+	 * @throws ComponentNotEnrolledError when the identity carries no such component.
+	 * @throws UnknownComponentError when `options.components` declares no component of that name.
+	 * @throws FreshSignInRequiredError when the sign-in is older than the elevated window.
+	 */
 	rotate(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("rotate", async () => {
 			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
@@ -895,11 +1127,28 @@ export class AuthDanceApi {
 		});
 	}
 
-	// Recovery is a special case of the choreography: the caller proves control of one of the components the
-	// choreography can start with, then resets whatever it still requires after that component — precisely the
-	// components the caller could not provide. It is the only flow open to a caller with no session at all,
-	// which is why the component it starts from has to do both jobs on its own: resolve an identity (an
-	// identification) and prove control of it (a verification).
+	/**
+	 * Starts a recovery from one component the choreography can start with.
+	 *
+	 * Recovery is a special case of the choreography. The caller proves control of that one component. The flow
+	 * then resets whatever the choreography still requires after it, exactly the components the caller could not
+	 * provide.
+	 *
+	 * Apart from a sign-in and a sign-up, this is the only flow a caller with no session can start. The component
+	 * it starts from must therefore do both jobs on its own. It resolves an identity, as an identification does,
+	 * and it proves control of that identity, as a verification does. This flow needs no access token and no
+	 * fresh sign-in.
+	 *
+	 * The first prompt comes from the component itself, so the response discloses nothing about the identity.
+	 * Which identity the flow recovers stays unknown until `submitPrompt` resolves it. The flow completes with a
+	 * plain success result, never with tokens. Proof of control of a single component is not a sign-in.
+	 *
+	 * @param options `name` is the component the recovery starts from.
+	 * @returns The encrypted state, the prompt of the component, and the moment the state expires.
+	 * @throws UnknownComponentError when `options.components` declares no component of that name.
+	 * @throws ComponentNotRecoverableError when the component is not an identification, is not verifiable, or is
+	 * not a first move of the choreography.
+	 */
 	recover(options: { name: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("recover", async () => {
 			const authComponent = this.#options.components[options.name];
@@ -924,6 +1173,23 @@ export class AuthDanceApi {
 		});
 	}
 
+	/**
+	 * Starts the subscription of a channel for the identity behind the access token.
+	 *
+	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
+	 *
+	 * The prompt collects the recipient, a phone number for example. The library then confirms the new channel
+	 * with a one-time code. It delivers that code over a channel the identity has already confirmed. An identity
+	 * with no other confirmed channel therefore meets `NoVerificationChannelError` on the next step, not here.
+	 *
+	 * @param options `name` is the channel to subscribe, as `options.channels` declares it.
+	 * @returns The encrypted state, the prompt of the channel, and the moment the state expires.
+	 * @throws InvalidAccessTokenError, SessionNotFoundError or IdentityNotFoundError when the token resolves to nothing.
+	 * @throws RateLimitedError when the `manage` bucket of the session is empty.
+	 * @throws ChannelAlreadySubscribedError when the identity already carries that channel.
+	 * @throws UnknownChannelError when `options.channels` declares no channel of that name.
+	 * @throws FreshSignInRequiredError when the sign-in is older than the elevated window.
+	 */
 	subscribe(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("subscribe", async () => {
 			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
@@ -955,6 +1221,24 @@ export class AuthDanceApi {
 		});
 	}
 
+	/**
+	 * Starts the removal of a channel from the identity behind the access token.
+	 *
+	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
+	 *
+	 * A channel another enrolled component links to stays in place. That component needs the channel to reach the
+	 * identity. The library answers with a confirmation prompt. Submit the boolean `true` to it through
+	 * `submitPrompt`.
+	 *
+	 * @param options `name` is the channel to remove.
+	 * @returns The encrypted state, a confirmation prompt, and the moment the state expires.
+	 * @throws InvalidAccessTokenError, SessionNotFoundError or IdentityNotFoundError when the token resolves to nothing.
+	 * @throws RateLimitedError when the `manage` bucket of the session is empty.
+	 * @throws ChannelNotSubscribedError when the identity carries no such channel.
+	 * @throws UnknownChannelError when `options.channels` declares no channel of that name.
+	 * @throws FreshSignInRequiredError when the sign-in is older than the elevated window.
+	 * @throws ChannelInUseError when an enrolled component still links to the channel.
+	 */
 	unsubscribe(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("unsubscribe", async () => {
 			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
@@ -986,10 +1270,24 @@ export class AuthDanceApi {
 		});
 	}
 
-	// Deleting the identity is the one management flow with nothing left to protect afterwards, so it is
-	// gated exactly like the other destructive ones — a recent sign-in, then an explicit confirmation — and
-	// nothing more: there is no component to keep the choreography completable with, and no lock-out to
-	// avoid, since locking the identity out of itself is precisely what the caller asked for.
+	/**
+	 * Starts the deletion of the identity behind the access token.
+	 *
+	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
+	 *
+	 * A delete is the one management flow with nothing left to protect afterwards. The library gates it exactly
+	 * like the other destructive flows — a recent sign-in, then an explicit confirmation — and nothing more.
+	 * There is no component to keep the choreography completable with, and no lock-out to avoid. A lock-out of
+	 * the identity is exactly what the caller wants.
+	 *
+	 * `submitPrompt` takes the confirmation. It then deletes every session of the identity together with the
+	 * identity itself, so no token outlives it.
+	 *
+	 * @returns The encrypted state, a confirmation prompt, and the moment the state expires.
+	 * @throws InvalidAccessTokenError, SessionNotFoundError or IdentityNotFoundError when the token resolves to nothing.
+	 * @throws RateLimitedError when the `manage` bucket of the session is empty.
+	 * @throws FreshSignInRequiredError when the sign-in is older than the elevated window.
+	 */
 	delete(options: { access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("delete", async () => {
 			const { session, authTime } = await this.accessTokenIdentity(options.access_token);
@@ -1009,6 +1307,24 @@ export class AuthDanceApi {
 		});
 	}
 
+	/**
+	 * Delivers the current prompt over its channel, for a component the caller cannot simply type — a one-time
+	 * code, for example.
+	 *
+	 * Only a sign-in and a sign-up hold a prompt to deliver. Every other flow delivers a validation instead,
+	 * through `sendValidation`. This method needs no access token and no fresh sign-in, because the state carries
+	 * whatever the flow has established.
+	 *
+	 * @param options `name` selects which component to deliver when the current step is a choice. `locale` picks
+	 * the language of the message. `state` is the opaque string the previous call returned.
+	 * @throws InvalidStateError when the state does not decrypt, carries no expiry, or no longer matches the schema.
+	 * @throws RateLimitedError when the `send` bucket of the subject is empty.
+	 * @throws InvalidStateForFlowError when the state is neither a sign-in nor a sign-up.
+	 * @throws ComponentNotInChoreographyError when `name` is not a component the current step offers.
+	 * @throws UnknownComponentError when `options.components` declares no component of that name.
+	 * @throws ComponentNotSendableError when the component delivers nothing over a channel.
+	 * @throws UnknownChannelError when `options.channels` declares no channel the message names.
+	 */
 	sendPrompt(options: { name: string; locale: string; state: string }): Promise<AuthDanceResponseResult> {
 		return this.#guard("sendPrompt", async () => {
 			const { state } = await this.#decryptState(options.state);
@@ -1040,6 +1356,43 @@ export class AuthDanceApi {
 		});
 	}
 
+	/**
+	 * Answers the current prompt of any flow and moves the dance one step.
+	 *
+	 * The state names the flow, so this one method serves all nine of them. A sign-in verifies the value against
+	 * the choreography. A sign-up, an enroll, a rotate and a recover collect the value. An unenroll, an
+	 * unsubscribe and a delete take the boolean `true` as their confirmation. A subscribe stores the recipient
+	 * and moves to its one-time code.
+	 *
+	 * When the collected value still needs proof of control, the answer is a validation prompt instead of the
+	 * next step. Reply to it with `sendValidation` and `submitValidation`, then the dance continues.
+	 *
+	 * The library checks the elevated window when a flow starts, so this method does not check it again. It needs no
+	 * access token either, because the state carries the session the flow started from.
+	 *
+	 * @param options `name` selects which component to answer when the current step is a choice. `value` is what
+	 * the client collected. `state` is the opaque string the previous call returned. The library stores `address`
+	 * and `userAgent` on the session a completed sign-in or sign-up mints.
+	 * @returns The next state and prompt. A completed sign-in or sign-up returns the tokens instead. A completed
+	 * management flow or recovery returns a plain success result.
+	 * @throws InvalidStateError when the state does not decrypt, carries no expiry, or no longer matches the schema.
+	 * @throws RateLimitedError when the `verify` bucket of the subject is empty. The method consumes the bucket
+	 * before it reads the value, so a wrong password costs a slot.
+	 * @throws InvalidStateForFlowError when the state has no prompt left to answer, for example a subscribe that
+	 * already waits for its one-time code.
+	 * @throws ComponentNotInChoreographyError or UnknownComponentError when `name` is not the step the flow expects.
+	 * @throws InvalidPromptValueError when a sign-in step rejects the value.
+	 * @throws IdentityNotResolvedError when no step has resolved an identity and the value resolves none either.
+	 * @throws IdentityMismatchError when two components of one dance resolve two different identities.
+	 * @throws ComponentAlreadyCollectedError when the step already holds a value.
+	 * @throws ComponentNotCollectedError when the component yields no identification and no challenge.
+	 * @throws ControlNotProvenError when a rotate or a recover has not yet proven control of the current value.
+	 * @throws ComponentNotVerifiableError when a recovery component offers no verification.
+	 * @throws ConfirmationRequiredError when an unenroll, an unsubscribe or a delete gets a value other than `true`.
+	 * @throws WouldLockOutError when the unenroll leaves no completable path through the choreography.
+	 * @throws NoVerificationChannelError when a subscribe has no other confirmed channel to deliver the code over.
+	 * @throws SessionNotFoundError or IdentityNotFoundError when the session or the identity the state names is gone.
+	 */
 	submitPrompt(
 		options: { name: string; value: unknown; state: string; address?: string; userAgent?: string },
 	): Promise<AuthDanceResponse> {
@@ -1320,6 +1673,32 @@ export class AuthDanceApi {
 		return this.#advance(advanceOptions);
 	}
 
+	/**
+	 * Delivers the validation that proves control of a value the flow already collected. One example is the
+	 * one-time code that confirms the address the caller just gave.
+	 *
+	 * A sign-up, an enroll, a rotate, a recover and a subscribe all validate a value. A sign-in has no validation
+	 * phase, and a confirmation-only flow has none either. A rotate and a recover use this method in both of
+	 * their phases. Before the flow collects the replacement, the message proves control of the current value.
+	 * Afterwards it validates the replacement.
+	 *
+	 * For a subscribe the library picks the first confirmed channel other than the channel the flow subscribes
+	 * to, so `name` does not select it. This method needs no access token and no fresh sign-in.
+	 *
+	 * @param options `name` selects which component to validate when the reset or the sign-up step is a choice.
+	 * `locale` picks the language of the message. `state` is the opaque string the previous call returned.
+	 * @throws InvalidStateError when the state does not decrypt, carries no expiry, or no longer matches the schema.
+	 * @throws RateLimitedError when the `send` bucket of the subject is empty.
+	 * @throws InvalidStateForFlowError when the flow has no validation to deliver.
+	 * @throws ComponentNotInChoreographyError or UnknownComponentError when `name` is not the step the flow expects.
+	 * @throws ComponentNotVerifiableError when the component offers no verification.
+	 * @throws ComponentNotCollectedError when the flow has collected no value to validate yet.
+	 * @throws ComponentNotSendableError when the verification delivers nothing over a channel.
+	 * @throws NoVerificationChannelError when a subscribe has no other confirmed channel to deliver the code over.
+	 * @throws RecoveryNotIdentifiedError when a recovery has not resolved its identity yet.
+	 * @throws SessionNotFoundError or IdentityNotFoundError when the session or the identity the state names is gone.
+	 * @throws UnknownChannelError when `options.channels` declares no channel the message names.
+	 */
 	sendValidation(options: { name: string; locale: string; state: string }): Promise<AuthDanceResponseResult> {
 		return this.#guard("sendValidation", () => this.#sendValidation(options));
 	}
@@ -1370,6 +1749,35 @@ export class AuthDanceApi {
 		return { success: true };
 	}
 
+	/**
+	 * Answers the validation prompt and proves control of the value the flow collected.
+	 *
+	 * On success the value becomes confirmed and the dance continues. A rotate and a recover use this method
+	 * twice. The first answer proves control of the current value, and the library replies with the prompt that
+	 * collects the replacement. The second answer validates that replacement.
+	 *
+	 * A sign-up that completes here mints the tokens, exactly as `submitPrompt` does. A management flow and a
+	 * recovery complete with a plain success result.
+	 *
+	 * The library checks the elevated window when a flow starts, so this method does not check it again. It needs no
+	 * access token either, because the state carries the session the flow started from.
+	 *
+	 * @param options `name` selects which component to validate when the step is a choice. `value` is the proof the
+	 * client collected. `state` is the opaque string the previous call returned. The library stores `address` and
+	 * `userAgent` on the session a completed sign-up mints.
+	 * @returns The next state and prompt. A completed sign-up returns the tokens instead. A completed management
+	 * flow or recovery returns a plain success result.
+	 * @throws InvalidStateError when the state does not decrypt, carries no expiry, or no longer matches the schema.
+	 * @throws RateLimitedError when the `verify` bucket of the subject is empty.
+	 * @throws InvalidStateForFlowError when the flow has no validation to answer.
+	 * @throws InvalidValidationValueError when the verification rejects the value.
+	 * @throws ComponentNotInChoreographyError or UnknownComponentError when `name` is not the step the flow expects.
+	 * @throws ComponentNotVerifiableError when the component offers no verification.
+	 * @throws ComponentNotCollectedError when the flow has collected no value to validate yet.
+	 * @throws NoVerificationChannelError when a subscribe has no other confirmed channel to check the code against.
+	 * @throws RecoveryNotIdentifiedError when a recovery has not resolved its identity yet.
+	 * @throws SessionNotFoundError or IdentityNotFoundError when the session or the identity the state names is gone.
+	 */
 	submitValidation(
 		options: { name: string; value: unknown; state: string; address?: string; userAgent?: string },
 	): Promise<AuthDanceResponse> {
@@ -1504,6 +1912,12 @@ export class AuthDanceApi {
 	}
 }
 
+/**
+ * Builds an `AuthDanceApi` from a policy.
+ *
+ * `createAuthDance` calls this with its own `api` option group and returns the result as `api`. Call it directly
+ * when you want the state machine without the HTTP layer around it.
+ */
 export function createAuthDanceApi(options: AuthDanceApiOptions): AuthDanceApi {
 	return new AuthDanceApi(options);
 }

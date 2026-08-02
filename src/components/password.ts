@@ -5,51 +5,99 @@ import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "../identity.
 import type { AuthDancePromptInput } from "../prompt.ts";
 
 /**
- * Argon2id cost. The defaults are the OWASP floor for the `m=19456, t=2, p=1` profile — one hash costs about
- * 70ms and 19 MiB, which is the point: an attacker holding the store pays the same per guess. Lower them for a
- * test suite, never for a deployment.
+ * The Argon2id cost that `PasswordAuthDanceComponent` pays for every new hash.
+ *
+ * The defaults match the OWASP floor for the `m=19456, t=2, p=1` profile. One hash costs about 70 milliseconds and
+ * 19 MiB. The cost is deliberate, because an attacker who steals the store pays it again for every guess. A
+ * verification reads the cost from the stored record instead of from here. Lower these numbers for a test suite.
+ * Never lower them for a deployment.
  */
 export interface PasswordParams {
-	/** Kibibytes of memory one hash occupies. Memory-hardness is what a GPU cannot parallelise away. */
+	/** Kibibytes of memory that one hash occupies. Extra GPU cores do not remove this memory cost. */
 	memorySize: number;
+	/** Passes that Argon2id makes over the memory. This is the `t` cost, and it scales the time one hash takes. */
 	iterations: number;
+	/** Lanes that Argon2id runs. This is the `p` cost in the PHC string. */
 	parallelism: number;
 }
 
+/**
+ * The length bounds that a password must satisfy before the component stores it.
+ *
+ * The policy governs what the component writes to an identity. `verifyPrompt` does not apply it, because a length
+ * check would reject an old password faster than a wrong one.
+ */
 export interface PasswordPolicy {
-	/** NIST SP 800-63B puts length ahead of composition rules, so length is the only rule here. */
+	/**
+	 * The fewest code points a stored password may have. NIST SP 800-63B puts length ahead of composition rules,
+	 * so length is the only rule here.
+	 */
 	minLength: number;
-	/** A bound on the work one submission can ask for, not a statement about strength. */
+	/**
+	 * The most code points a stored password may have. This limits the work that one submission can cost. It says
+	 * nothing about strength.
+	 */
 	maxLength: number;
 }
 
+/**
+ * The cost that `PasswordAuthDanceComponent` uses when the caller passes no `params`.
+ *
+ * @defaultValue `{ memorySize: 19456, iterations: 2, parallelism: 1 }`
+ */
 export const DEFAULT_PASSWORD_PARAMS: PasswordParams = { memorySize: 19456, iterations: 2, parallelism: 1 };
+
+/**
+ * The length bounds that `PasswordAuthDanceComponent` uses when the caller passes no `policy`.
+ *
+ * @defaultValue `{ minLength: 12, maxLength: 256 }`
+ */
 export const DEFAULT_PASSWORD_POLICY: PasswordPolicy = { minLength: 12, maxLength: 256 };
 
 /**
- * A password, stored as an Argon2id PHC string in `data.hash`:
+ * A password component. It keeps the password as an Argon2id PHC string in `data.hash`:
  * `$argon2id$v=19$m=19456,t=2,p=1$<salt>$<digest>`.
  *
- * Three properties make that record safe to hold. Argon2id is memory-hard, so guessing costs the attacker what it
- * costs the server. The salt is 16 fresh random bytes per record, so no precomputation carries from one identity to
- * the next and two identities sharing a password do not share a record. The parameters travel inside the record,
- * so raising the cost later does not invalidate what is already stored — a record verifies against the cost it was
- * created with.
+ * Three properties make that record safe to hold. Argon2id is memory-hard, so a guess costs the attacker what it
+ * costs the server. The salt is 16 fresh random bytes per record. No precomputation carries from one identity to
+ * the next, and two identities with the same password do not share a record. The parameters travel inside the
+ * record, so a later cost increase does not invalidate what the store already holds. Each record verifies against
+ * the cost that created it.
  *
- * The constructor secret is a *pepper*, not a salt: it never reaches the identity store, so a dump of the store on
- * its own is not enough to begin cracking. It is applied as `HMAC-SHA256(pepper, password)` before the KDF rather
- * than concatenated, which also flattens the input to 32 bytes and makes the maximum length a policy choice
- * instead of a property of the construction. Keep it in a secret store, and note that changing it invalidates every
- * existing record — only `rotate` and `recover` can rebuild one.
+ * The constructor secret is a pepper, not a salt. It never reaches the identity store. A stolen copy of the store
+ * alone is therefore not enough to crack a password. The component applies the pepper as
+ * `HMAC-SHA256(pepper, password)` before the KDF instead of a concatenation. This also flattens the input to 32
+ * bytes, which makes the maximum length a policy choice instead of a property of the construction.
+ *
+ * Keep the pepper in a secret store. A new pepper invalidates every existing record. Only the `rotate` and
+ * `recover` flows can rebuild one.
  */
 export default class PasswordAuthDanceComponent implements AuthDanceComponent {
+	/** A password only proves a claim against an identity, so it is a `challenge` and never resolves an identity. */
 	readonly kind: AuthDanceIdentityComponent["kind"] = "challenge";
+	/**
+	 * A password cannot prove control of its own value. The same text typed a second time proves nothing. The class
+	 * therefore declares no `verificationComponent`.
+	 */
 	readonly verifiable = false;
 	#pepper: Promise<CryptoKey>;
 	#params: PasswordParams;
 	#policy: PasswordPolicy;
 	#decoy: Promise<string> | undefined;
 
+	/**
+	 * Imports the pepper as an HMAC-SHA256 key and merges the options over the defaults.
+	 *
+	 * @param pepper The secret that the component mixes into every password before the KDF. Keep it in a secret
+	 * store. Never put it in source code.
+	 * @param options `params` raises or lowers the Argon2id cost, and `policy` moves the length bounds. The
+	 * component merges each one over `DEFAULT_PASSWORD_PARAMS` and `DEFAULT_PASSWORD_POLICY`, so a partial object
+	 * is enough.
+	 * @example
+	 * ```ts
+	 * new PasswordAuthDanceComponent(Deno.env.get("PASSWORD_PEPPER")!, { policy: { minLength: 16 } });
+	 * ```
+	 */
 	constructor(pepper: string, options?: { params?: Partial<PasswordParams>; policy?: Partial<PasswordPolicy> }) {
 		this.#pepper = crypto.subtle.importKey("raw", new TextEncoder().encode(pepper), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
 		this.#params = { ...DEFAULT_PASSWORD_PARAMS, ...options?.params };
@@ -57,9 +105,15 @@ export default class PasswordAuthDanceComponent implements AuthDanceComponent {
 	}
 
 	/**
-	 * Everything that happens to a password before it reaches the KDF: the policy is enforced, the text is
-	 * NFKC-normalised so the same password typed on a different keyboard layout still verifies, and the pepper is
-	 * folded in. Returns the 32 bytes Argon2id consumes, so no plain text travels further than this method.
+	 * Turns a password into the bytes that Argon2id consumes. No plain text travels further than this method.
+	 *
+	 * The method normalizes the text to NFKC, so the same password from a different keyboard layout still verifies.
+	 * When `enforce` is `true`, the method also applies the length policy. Last, it mixes the pepper into the text
+	 * with HMAC-SHA256.
+	 *
+	 * @returns The 32 bytes that Argon2id consumes, or `null`. A value that is not a string gives `null`. An empty
+	 * string gives `null` when no length rule rejects it first.
+	 * @throws {PolicyViolationError} `enforce` is `true` and the length is outside the policy bounds.
 	 */
 	async #prepare(value: unknown, enforce: boolean): Promise<Uint8Array | null> {
 		if (typeof value !== "string") {
@@ -88,9 +142,12 @@ export default class PasswordAuthDanceComponent implements AuthDanceComponent {
 	}
 
 	/**
-	 * A record produced by another pepper, another algorithm, or an older version of this library is not a failure
-	 * of the library — it is a value that cannot verify. `argon2Verify` throws on anything that is not a PHC
-	 * string, which would otherwise escape as an `UNKNOWN` 500 instead of a rejected password.
+	 * Verifies the prepared bytes against a stored PHC string. The method returns `false` where `argon2Verify`
+	 * throws.
+	 *
+	 * Another pepper, another algorithm, or an older version of this library can leave a record that cannot verify.
+	 * That is not a failure of the library. `argon2Verify` throws on anything that is not a PHC string, and that
+	 * throw would escape as an `UNKNOWN` 500 instead of a rejected password.
 	 */
 	async #verify(prepared: Uint8Array, stored: string): Promise<boolean> {
 		return await argon2Verify({ password: prepared, hash: stored }).catch(() => false);
@@ -102,6 +159,27 @@ export default class PasswordAuthDanceComponent implements AuthDanceComponent {
 		return stored?.data?.hash as string | undefined;
 	}
 
+	/**
+	 * Turns a submitted password into the challenge record that the identity keeps. The `sign-up`, `enroll`, `rotate`
+	 * and `recover` flows call this method.
+	 *
+	 * The method applies three rules. The first is the length policy. The second rejects a value that verifies
+	 * against the record it replaces. The third rejects a value equal to an identification of its owner, and that
+	 * comparison ignores case. The last two rules need `context.identity`, because the value alone does not carry
+	 * them.
+	 *
+	 * `context.identity` is the identity as it stands. A rotation therefore still sees the record under
+	 * replacement, and a sign-up sees the address that an earlier step collected. `context.identity` is absent on
+	 * the first step of a sign-up, where the last two rules have nothing to check.
+	 *
+	 * @param component The component name that the record carries.
+	 * @param value The submitted password.
+	 * @param confirmed Whether the record starts as confirmed.
+	 * @param context The context of the dance, which carries the identity as it stands.
+	 * @returns One challenge record whose `data.hash` holds the Argon2id PHC string.
+	 * @throws {PolicyViolationError} The value is not a string, is empty, is outside the length bounds, matches the
+	 * record it replaces, or matches an identification of its owner.
+	 */
 	async getIdentityComponent(
 		component: string,
 		value: unknown,
@@ -112,9 +190,9 @@ export default class PasswordAuthDanceComponent implements AuthDanceComponent {
 		if (!prepared) {
 			throw new PolicyViolationError("password must be a non-empty string");
 		}
-		// The two rules a password cannot check on its own. `context.identity` is the identity as it stands, so
-		// during a rotation the record being replaced is still on it, and during a sign-up the address collected
-		// a step earlier is. It is absent on the first step of a sign-up, where neither rule has anything to say.
+		// The two rules that need the identity. `context.identity` is the identity as it stands. A rotation
+		// therefore still sees the record under replacement, and a sign-up sees the address that an earlier step
+		// collected. The library omits it on the first step of a sign-up, where neither rule has a target.
 		const stored = this.#storedHash(context);
 		if (stored && await this.#verify(prepared, stored)) {
 			throw new PolicyViolationError("password must differ from the one it replaces");
@@ -135,6 +213,16 @@ export default class PasswordAuthDanceComponent implements AuthDanceComponent {
 		];
 	}
 
+	/**
+	 * Describes the input that the client renders: a password field under the component name. The field is not
+	 * sendable, because a password has no message to deliver.
+	 *
+	 * The prompt carries `minLength` and `maxLength` in `options`. A client can therefore hold the owner to the
+	 * policy before it spends a round trip on the value.
+	 *
+	 * @param context The context of the dance, which carries the name of the component.
+	 * @returns One password input for the client to render.
+	 */
 	// deno-lint-ignore require-await
 	async getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput> {
 		return {
@@ -142,26 +230,44 @@ export default class PasswordAuthDanceComponent implements AuthDanceComponent {
 			name: context.name,
 			type: "password",
 			sendable: false,
-			// So a client can hold the owner to the policy before spending a round trip on it.
+			// So a client can hold the owner to the policy before it spends a round trip on the value.
 			options: { minLength: this.#policy.minLength, maxLength: this.#policy.maxLength },
 		};
 	}
 
+	/**
+	 * Checks a submitted password against the record that the identity holds.
+	 *
+	 * The length policy does not apply here. The policy governs what the component may store. A length check would
+	 * reject an old password faster than a wrong one, which is a disclosure in itself.
+	 *
+	 * An identity with no password enrolled costs what a wrong password costs. The component verifies the
+	 * submission against a throwaway record at the configured cost. A submission that is not a usable string takes
+	 * the same path. The response time then answers no question that the response body refuses to answer.
+	 *
+	 * @param response The submitted password.
+	 * @param context The context of the dance, which carries the identity to check the password against.
+	 * @returns `true` when the password matches the stored record, and `false` otherwise. A password never resolves
+	 * an identity, so this method never returns an identity id.
+	 */
 	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]> {
-		// The policy is not enforced here: it governs what may be stored, and applying it to a submission would
-		// reject an older password faster than it rejects a wrong one, which is a disclosure in itself.
+		// The policy does not apply here. It governs what the component may store. A length check on a submission
+		// would reject an older password faster than a wrong one, which is a disclosure in itself.
 		const prepared = await this.#prepare(response, false);
 		const stored = this.#storedHash(context);
 		if (!prepared || !stored) {
-			// An identity with no password enrolled has to cost what a wrong password costs, or the response time
-			// answers a question the response body refuses to.
+			// An identity with no password enrolled must cost what a wrong password costs. If it does not, the
+			// response time answers a question that the response body refuses to answer.
 			await this.#verify(prepared ?? new Uint8Array(32), await this.#decoyHash());
 			return false;
 		}
 		return await this.#verify(prepared, stored);
 	}
 
-	/** One throwaway record, hashed once per process at the configured cost, kept only to be verified against. */
+	/**
+	 * Hashes one throwaway value at the configured cost. The component caches the promise, so it pays this cost one
+	 * time only. `verifyPrompt` verifies against this record when it finds no stored record or no usable submission.
+	 */
 	#decoyHash(): Promise<string> {
 		return this.#decoy ??= this.#hash(crypto.getRandomValues(new Uint8Array(32)));
 	}
