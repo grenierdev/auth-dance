@@ -736,7 +736,7 @@ describe("Api", () => {
 		// Deleting is destructive and irreversible, so it sits behind the same elevated window as enroll.
 		const strictApi = new AuthDanceApi({
 			...apiOptions,
-			advanced: { elevated_duration: 0 },
+			durations: { elevated: 0 },
 		});
 		const result1 = await strictApi.signIn();
 		const result2 = await strictApi.submitPrompt({
@@ -997,7 +997,7 @@ describe("Api", () => {
 		// elevated_duration: 0 makes any sign-in — even this instant's — already too old.
 		const strictApi = new AuthDanceApi({
 			...apiOptions,
-			advanced: { elevated_duration: 0 },
+			durations: { elevated: 0 },
 		});
 		const result1 = await strictApi.signIn();
 		const result2 = await strictApi.submitPrompt({
@@ -1039,7 +1039,7 @@ describe("Api", () => {
 		);
 		const strictApi = new AuthDanceApi({
 			...apiOptions,
-			advanced: { elevated_duration: 0 },
+			durations: { elevated: 0 },
 		});
 		const result1 = await strictApi.signIn();
 		const result2 = await strictApi.submitPrompt({
@@ -1070,7 +1070,7 @@ describe("Api", () => {
 	it("should give each flow its own state duration", async () => {
 		const perFlowApi = new AuthDanceApi({
 			...apiOptions,
-			advanced: { sign_in_duration: 30, recover_duration: 15 * 60 },
+			durations: { sign_in: 30, recover: 15 * 60 },
 		});
 		const secondsFromNow = (expireAt: Date) => Math.round((expireAt.getTime() - Date.now()) / 1000);
 		assertEquals(secondsFromNow((await perFlowApi.signIn()).expireAt), 30);
@@ -1162,13 +1162,13 @@ describe("Api", () => {
 			);
 		}
 
-		function limitedApi(advanced: AuthDanceApiOptions["advanced"]): AuthDanceApi {
-			return new AuthDanceApi({ ...apiOptions, advanced });
+		function limitedApi(options: Pick<AuthDanceApiOptions, "durations" | "limits">): AuthDanceApi {
+			return new AuthDanceApi({ ...apiOptions, ...options });
 		}
 
 		it("should stop guessing a password once the verify bucket is exhausted", async () => {
 			const api = limitedApi({
-				identity_rate_limit: { verify: { limit: 2, window: 60 } },
+				limits: { identity: { verify: { limit: 2, window: 60 } } },
 			});
 			await johnDoe();
 			const result1 = await api.signIn();
@@ -1218,7 +1218,7 @@ describe("Api", () => {
 
 		it("should not bucket a step no identity is attributable to yet", async () => {
 			const api = limitedApi({
-				identity_rate_limit: { verify: { limit: 1, window: 60 } },
+				limits: { identity: { verify: { limit: 1, window: 60 } } },
 			});
 			// Probing for addresses resolves nothing, so there is no subject to bucket on and the tightest
 			// possible per-identity limit never fires. Only the per-address bucket can stop this.
@@ -1239,7 +1239,7 @@ describe("Api", () => {
 
 		it("should stop starting management flows once the manage bucket is exhausted", async () => {
 			const api = limitedApi({
-				identity_rate_limit: { manage: { limit: 1, window: 60 } },
+				limits: { identity: { manage: { limit: 1, window: 60 } } },
 			});
 			await johnDoe();
 			const result1 = await api.signIn();
@@ -1269,7 +1269,7 @@ describe("Api", () => {
 
 		it("should stop draining a channel once the send bucket is exhausted", async () => {
 			const api = limitedApi({
-				identity_rate_limit: { send: { limit: 1, window: 60 } },
+				limits: { identity: { send: { limit: 1, window: 60 } } },
 			});
 			await johnDoe();
 			const result1 = await api.signIn();
@@ -1313,7 +1313,7 @@ describe("Api", () => {
 
 		it("should keep the retryAfter hint out of the serialised error", async () => {
 			const api = limitedApi({
-				identity_rate_limit: { refresh: { limit: 1, window: 60 } },
+				limits: { identity: { refresh: { limit: 1, window: 60 } } },
 			});
 			await johnDoe();
 			const result1 = await api.signIn();

@@ -39,7 +39,7 @@ export function createAuthDance(options: AuthDanceOptions): AuthDance {
 	return {
 		api,
 		app,
-		fetch: (request) => app.fetch(request, { api, rate_limit: options.api.advanced?.address_rate_limit }),
+		fetch: (request) => app.fetch(request, { api, rate_limit: options.api.limits?.address }),
 		generateOpenAPISchema: () => generateSpecs(app, { documentation: { info: options.info } }),
 	} satisfies AuthDance;
 }

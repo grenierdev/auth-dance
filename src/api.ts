@@ -116,27 +116,25 @@ export interface AuthDanceApiOptions {
 	components: Record<string, AuthDanceComponent>;
 	secret: string;
 	storage: AuthDanceStorage;
-	advanced?: {
-		// How long an in-progress flow's state stays valid, in seconds — one key per flow, each defaulting to
-		// 5 minutes. Recovering an account may reasonably be given more room than signing in, and a
-		// confirmation-only flow such as unenroll less.
-		sign_in_duration?: number;
-		sign_up_duration?: number;
-		enroll_duration?: number;
-		unenroll_duration?: number;
-		rotate_duration?: number;
-		recover_duration?: number;
-		subscribe_duration?: number;
-		unsubscribe_duration?: number;
-		delete_duration?: number;
-		access_duration?: number;
-		refresh_duration?: number;
-		/** How long after signing in a session may still perform sensitive actions (enroll, rotate, …), in seconds. */
-		elevated_duration?: number;
-		/** Per-identity buckets, each defaulting to `IdentityRateLimits`. */
-		identity_rate_limit?: AuthDanceIdentityRateLimits;
-		/** Per-address buckets, each defaulting to `AddressRateLimits`. Consumed at the edge, not here — `choreoAuth` forwards them to the app's bindings. */
-		address_rate_limit?: AuthDanceAddressRateLimits;
+	durations?: {
+		sign_in?: number;
+		sign_up?: number;
+		enroll?: number;
+		unenroll?: number;
+		rotate?: number;
+		recover?: number;
+		subscribe?: number;
+		unsubscribe?: number;
+		delete?: number;
+		access?: number;
+		refresh?: number;
+		elevated?: number;
+	};
+	limits?: {
+		identity?: AuthDanceIdentityRateLimits;
+		address?: AuthDanceAddressRateLimits;
+	};
+	tokens?: {
 		issuer?: string;
 	};
 }
@@ -226,18 +224,18 @@ export class AuthDanceApi {
 
 		const access_token = await new SignJWT({ auth_time: authTime })
 			.setProtectedHeader({ alg: "HS256" })
-			.setIssuer(this.#options.advanced?.issuer ?? "acme")
+			.setIssuer(this.#options.tokens?.issuer ?? "acme")
 			.setIssuedAt()
-			.setExpirationTime(new Date(Date.now() + (this.#options.advanced?.access_duration ?? 5 * 60) * 1000))
+			.setExpirationTime(new Date(Date.now() + (this.#options.durations?.access ?? 5 * 60) * 1000))
 			.setSubject(options.session.id)
 			.setJti(ksuid())
 			.sign(this.#decodedSecret);
 
 		const refresh_token = await new SignJWT({ auth_time: authTime })
 			.setProtectedHeader({ alg: "HS256", scopes: options.scopes })
-			.setIssuer(this.#options.advanced?.issuer ?? "acme")
+			.setIssuer(this.#options.tokens?.issuer ?? "acme")
 			.setIssuedAt()
-			.setExpirationTime(new Date(Date.now() + (this.#options.advanced?.refresh_duration ?? 24 * 60 * 60) * 1000))
+			.setExpirationTime(new Date(Date.now() + (this.#options.durations?.refresh ?? 24 * 60 * 60) * 1000))
 			.setSubject(options.session.id)
 			.setJti(ksuid())
 			.sign(this.#decodedSecret);
@@ -250,7 +248,7 @@ export class AuthDanceApi {
 		}, {} as Record<string, unknown>);
 		const id_token = await new SignJWT({})
 			.setProtectedHeader({ ...claims, alg: "HS256" })
-			.setIssuer(this.#options.advanced?.issuer ?? "acme")
+			.setIssuer(this.#options.tokens?.issuer ?? "acme")
 			.setIssuedAt()
 			.setSubject(options.identity.id)
 			.sign(this.#decodedSecret);
@@ -267,7 +265,7 @@ export class AuthDanceApi {
 	// unknown. Every token this class mints carries both claims, so a token missing either is not one of ours.
 	async #verifiedClaims(token: string, invalid: () => AuthDanceError): Promise<{ sub: string; authTime: number }> {
 		const payload = await jwtVerify(token, this.#decodedSecret, {
-			issuer: this.#options.advanced?.issuer ?? "acme",
+			issuer: this.#options.tokens?.issuer ?? "acme",
 		}).then(({ payload }) => payload, () => undefined);
 		if (!payload?.sub || typeof payload.auth_time !== "number") {
 			throw invalid();
@@ -279,7 +277,7 @@ export class AuthDanceApi {
 	// session: the caller must have proven who they are recently. A refresh carries auth_time forward
 	// untouched, so it can never be used to walk out of this window.
 	#requireFreshSignIn(authTime: number): void {
-		const elevated = (this.#options.advanced?.elevated_duration ?? 5 * 60) * 1000;
+		const elevated = (this.#options.durations?.elevated ?? 5 * 60) * 1000;
 		if (Date.now() - authTime * 1000 > elevated) {
 			throw new FreshSignInRequiredError();
 		}
@@ -293,7 +291,7 @@ export class AuthDanceApi {
 		if (!subject) {
 			return;
 		}
-		const { limit, window } = this.#options.advanced?.identity_rate_limit?.[bucket] ?? IdentityRateLimits[bucket];
+		const { limit, window } = this.#options.limits?.identity?.[bucket] ?? IdentityRateLimits[bucket];
 		const { allowed, retryAfter } = await this.#options.storage.consumeRateLimit(`${bucket}:${subject}`, limit, window * 1000);
 		if (!allowed) {
 			throw new RateLimitedError(retryAfter);
@@ -752,7 +750,7 @@ export class AuthDanceApi {
 
 	#encryptState(state: AuthDanceState, expireAt: Date): Promise<string> {
 		const jwt = new EncryptJWT({ state })
-			.setProtectedHeader({ alg: "dir", enc: "A256GCM", issuer: this.#options.advanced?.issuer })
+			.setProtectedHeader({ alg: "dir", enc: "A256GCM", issuer: this.#options.tokens?.issuer })
 			.setIssuedAt()
 			.setExpirationTime(expireAt)
 			.encrypt(this.#decodedSecret);
@@ -763,7 +761,7 @@ export class AuthDanceApi {
 	// value coming from the client — expected input, not a server fault. jose and valibot both fail by
 	// throwing, so they are converted here rather than escaping as unknown.
 	async #decryptState(value: string): Promise<{ state: AuthDanceState; expireAt: Date }> {
-		const payload = await jwtDecrypt(value, this.#decodedSecret, { issuer: this.#options.advanced?.issuer })
+		const payload = await jwtDecrypt(value, this.#decodedSecret, { issuer: this.#options.tokens?.issuer })
 			.then(({ payload }) => payload, () => undefined);
 		if (!payload?.exp) {
 			throw new InvalidStateError();
@@ -777,7 +775,7 @@ export class AuthDanceApi {
 
 	signIn(): Promise<AuthDanceResponseState> {
 		return this.#guard("signIn", () => {
-			const expireAt = this.#expireAt(this.#options.advanced?.sign_in_duration);
+			const expireAt = this.#expireAt(this.#options.durations?.sign_in);
 			const state: AuthDanceStateSignIn = {
 				kind: "sign-in",
 				id: ksuid("st_"),
@@ -794,7 +792,7 @@ export class AuthDanceApi {
 
 	signUp(): Promise<AuthDanceResponseState> {
 		return this.#guard("signUp", () => {
-			const expireAt = this.#expireAt(this.#options.advanced?.sign_up_duration);
+			const expireAt = this.#expireAt(this.#options.durations?.sign_up);
 			const state: AuthDanceStateSignUp = {
 				kind: "sign-up",
 				id: ksuid("st_"),
@@ -821,7 +819,7 @@ export class AuthDanceApi {
 				throw new UnknownComponentError(options.name);
 			}
 			this.#requireFreshSignIn(authTime);
-			const expireAt = this.#expireAt(this.#options.advanced?.enroll_duration);
+			const expireAt = this.#expireAt(this.#options.durations?.enroll);
 			const state: AuthDanceStateEnroll = {
 				id: ksuid("st_"),
 				kind: "enroll",
@@ -848,7 +846,7 @@ export class AuthDanceApi {
 			if (!this.#isChoreographyCompletableWithout(identity, options.name)) {
 				throw new WouldLockOutError(options.name);
 			}
-			const expireAt = this.#expireAt(this.#options.advanced?.unenroll_duration);
+			const expireAt = this.#expireAt(this.#options.durations?.unenroll);
 			const state: AuthDanceStateUnenroll = {
 				id: ksuid("st_"),
 				kind: "unenroll",
@@ -875,7 +873,7 @@ export class AuthDanceApi {
 				throw new UnknownComponentError(options.name);
 			}
 			this.#requireFreshSignIn(authTime);
-			const expireAt = this.#expireAt(this.#options.advanced?.rotate_duration);
+			const expireAt = this.#expireAt(this.#options.durations?.rotate);
 			const state: AuthDanceStateRotate = {
 				id: ksuid("st_"),
 				kind: "rotate",
@@ -911,7 +909,7 @@ export class AuthDanceApi {
 			if (authComponent.kind !== "identification" || !authComponent.verifiable || !this.#isChoreographyFirstMove(options.name)) {
 				throw new ComponentNotRecoverableError(options.name);
 			}
-			const expireAt = this.#expireAt(this.#options.advanced?.recover_duration);
+			const expireAt = this.#expireAt(this.#options.durations?.recover);
 			const state: AuthDanceStateRecover = {
 				id: ksuid("st_"),
 				kind: "recover",
@@ -938,7 +936,7 @@ export class AuthDanceApi {
 				throw new UnknownChannelError(options.name);
 			}
 			this.#requireFreshSignIn(authTime);
-			const expireAt = this.#expireAt(this.#options.advanced?.subscribe_duration);
+			const expireAt = this.#expireAt(this.#options.durations?.subscribe);
 			const state: AuthDanceStateSubscribe = {
 				id: ksuid("st_"),
 				kind: "subscribe",
@@ -973,7 +971,7 @@ export class AuthDanceApi {
 			if (identity.components.some((c) => c.kind !== "channel" && linkedTo.includes(c.component))) {
 				throw new ChannelInUseError(options.name);
 			}
-			const expireAt = this.#expireAt(this.#options.advanced?.unsubscribe_duration);
+			const expireAt = this.#expireAt(this.#options.durations?.unsubscribe);
 			const state: AuthDanceStateUnsubscribe = {
 				id: ksuid("st_"),
 				kind: "unsubscribe",
@@ -997,7 +995,7 @@ export class AuthDanceApi {
 			const { session, authTime } = await this.accessTokenIdentity(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
 			this.#requireFreshSignIn(authTime);
-			const expireAt = this.#expireAt(this.#options.advanced?.delete_duration);
+			const expireAt = this.#expireAt(this.#options.durations?.delete);
 			const state: AuthDanceStateDelete = {
 				id: ksuid("st_"),
 				kind: "delete",

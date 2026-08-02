@@ -40,13 +40,6 @@ custom factor works in every flow, including the flows you did not think about y
 
 ## Getting Started
 
-> **Status: early.** Auth Dance is pre-release. The package has no `version` in `src/deno.jsonc`. The package is not published to JSR, and
-> only in-memory providers ship today. The API surface below is accurate but unstable.
-
-### Requirements
-
-Deno 2.x. The test suite needs no permission flags.
-
 ### Bootstrap
 
 `createAuthDance(options)` is the single entry point, and it is a named export. Options come in three groups: `api` configures the state
@@ -317,18 +310,26 @@ Sign-in and sign-up are not special. Every management flow uses the same state-p
 
 ## Configuration
 
-Every duration is in seconds and optional, under `api.advanced`:
+Three optional groups sit beside the required options: `api.durations`, `api.limits` and `api.tokens`.
 
-| Option                                                                                                                                                                                 | Default  |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| `sign_in_duration`, `sign_up_duration`, `enroll_duration`, `unenroll_duration`, `rotate_duration`, `recover_duration`, `subscribe_duration`, `unsubscribe_duration`, `delete_duration` | `300`    |
-| `access_duration`                                                                                                                                                                      | `300`    |
-| `refresh_duration`                                                                                                                                                                     | `86400`  |
-| `elevated_duration`                                                                                                                                                                    | `300`    |
-| `issuer`                                                                                                                                                                               | `"acme"` |
+Every duration is in seconds, under `api.durations`. One key per flow, so recovering an account may be given more room than signing in, and
+a confirmation-only flow such as `unenroll` less:
 
-Rate limits are `{ limit, window }` buckets. Per identity (`identity_rate_limit`): `verify` 10/5min, `send` 5/5min, `manage` 20/5min,
-`refresh` 60/5min. Per address (`address_rate_limit`, enforced by the HTTP layer): `request` 300/min, `send` 60/min.
+| Option                                                                                                | Default |
+| ----------------------------------------------------------------------------------------------------- | ------- |
+| `sign_in`, `sign_up`, `enroll`, `unenroll`, `rotate`, `recover`, `subscribe`, `unsubscribe`, `delete` | `300`   |
+| `access`                                                                                              | `300`   |
+| `refresh`                                                                                             | `86400` |
+| `elevated`                                                                                            | `300`   |
+
+`elevated` is the window after a sign-in during which a session may still perform sensitive actions. Past it, every authenticated management
+flow — `enroll`, `unenroll`, `rotate`, `subscribe`, `unsubscribe` and `delete` — answers `FRESH_SIGN_IN_REQUIRED`.
+
+Rate limits are `{ limit, window }` buckets, under `api.limits`. Per identity (`limits.identity`): `verify` 10/5min, `send` 5/5min, `manage`
+20/5min, `refresh` 60/5min. Per address (`limits.address`, enforced by the HTTP layer, not by the state machine): `request` 300/min, `send`
+60/min.
+
+`api.tokens.issuer` is the `iss` claim of every minted JWT and of the encrypted state, `"acme"` by default.
 
 ## Development
 

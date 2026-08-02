@@ -1056,11 +1056,11 @@ describe("App", () => {
 		describe("rate limit", () => {
 			function limitedPost(
 				address_rate_limit: NonNullable<
-					AuthDanceApiOptions["advanced"]
-				>["address_rate_limit"],
+					AuthDanceApiOptions["limits"]
+				>["address"],
 			): Post {
 				return client(
-					createAuthDance({ api: { ...apiOptions, advanced: { address_rate_limit } } }),
+					createAuthDance({ api: { ...apiOptions, limits: { address: address_rate_limit } } }),
 				);
 			}
 
