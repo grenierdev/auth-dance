@@ -13,7 +13,9 @@ import type { AuthDanceResponseTokens } from "./response.ts";
 import { choice, sequence } from "./choreography.ts";
 import EmailAuthDanceComponent from "./components/email.ts";
 import type { AuthDanceComponentContext } from "./component.ts";
-import PasswordAuthDanceComponent from "./components/password.ts";
+import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
+import { ksuid } from "./id.ts";
+import PasswordAuthDanceComponent, { pbkdf2PasswordHasher } from "./components/password.ts";
 import { AuthDanceStorage } from "./storage.ts";
 import { AuthDanceError } from "./error.ts";
 import type { AuthDanceKvProvider } from "./provider.ts";
@@ -21,10 +23,9 @@ import { decode } from "jose/base64url";
 import { decodeJwt } from "jose/jwt/decode";
 import { SignJWT } from "jose/jwt/sign";
 
-// Argon2id at its real cost is 19 MiB and ~70ms a hash, which these suites pay a few dozen times over. The cost is
-// the point in a deployment and pure latency here, so the tests buy the cheapest hash the algorithm allows and let
-// "foo" through the length policy.
-const TEST_PASSWORD_OPTIONS = { params: { memorySize: 1024, iterations: 1 }, policy: { minLength: 3 } };
+// PBKDF2 at its real cost is 600000 passes and ~200ms a hash, which these suites pay a few dozen times over. The
+// cost is the point in a deployment and pure latency here, so the tests buy a single pass.
+const TEST_PASSWORD_HASHER = pbkdf2PasswordHasher(1);
 
 describe("Api", () => {
 	let storage: AuthDanceStorage;
@@ -37,25 +38,29 @@ describe("Api", () => {
 	let email2: EmailAuthDanceComponent;
 	let password: PasswordAuthDanceComponent;
 
-	// Seeding an identity outside a flow: nothing is enrolled yet, which is the shape the state machine hands a
-	// component on the first step of a sign-up.
-	function seedContext(name: string): AuthDanceComponentContext {
-		return { storage, stateId: "state_seed", name, flow: "sign-up" };
+	// Seeding an identity outside a flow. The password record is salted with the id of the identity, so the id
+	// comes first and the components are built against it, the way a sign-up mints one before its first step.
+	// Hence `setIdentity` rather than `createIdentity`, which mints an id of its own after the fact.
+	async function seedIdentity(
+		data: Record<string, unknown>,
+		build: (seed: (name: string) => AuthDanceComponentContext) => Promise<AuthDanceIdentityComponent[]>,
+	): Promise<AuthDanceIdentity> {
+		const identity: AuthDanceIdentity = { id: ksuid("id_"), data, components: [] };
+		identity.components = await build((name) => ({ storage, stateId: "state_seed", name, flow: "sign-up", identity }));
+		await storage.setIdentity(identity);
+		return identity;
 	}
 
 	// The identity every suite below signs in as, seeded straight into storage rather than through a sign-up.
 	async function johnDoe(): Promise<void> {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 	}
 
 	// The two steps of sequence("email", "password"), for a suite that asserts on what happens after a sign-in
@@ -83,7 +88,7 @@ describe("Api", () => {
 		channelSms = new MemoryAuthDanceChannel("phone");
 		email = new EmailAuthDanceComponent("email");
 		email2 = new EmailAuthDanceComponent("email2");
-		password = new PasswordAuthDanceComponent("salty", TEST_PASSWORD_OPTIONS);
+		password = new PasswordAuthDanceComponent("salty", TEST_PASSWORD_HASHER);
 		storage = new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),
 			kv: new MemoryKvProvider(),
@@ -104,17 +109,14 @@ describe("Api", () => {
 	});
 
 	it("should sign-in", async () => {
-		const identity = await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		const identity = await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result1 = await api.signIn();
 		assert(result1.prompt.kind === "input");
 		assert(result1.prompt.type === "email");
@@ -135,17 +137,14 @@ describe("Api", () => {
 		assertEquals(result3.identity.id, identity.id);
 	});
 	it("should not sign-in with a wrong challenge", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -234,17 +233,14 @@ describe("Api", () => {
 		assertEquals(rejected.code, "INVALID_VALIDATION_VALUE");
 	});
 	it("should subscribe", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -293,17 +289,14 @@ describe("Api", () => {
 		);
 	});
 	it("should not subscribe a channel already subscribed to", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -329,18 +322,15 @@ describe("Api", () => {
 		assertEquals(rejected.code, "CHANNEL_ALREADY_SUBSCRIBED");
 	});
 	it("should unsubscribe", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-				await channelSms.getIdentityChannel("sms", "5551234567", true),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			await channelSms.getIdentityChannel("sms", "5551234567", true),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -375,17 +365,14 @@ describe("Api", () => {
 		);
 	});
 	it("should not unsubscribe a channel a component still relies on", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -412,18 +399,15 @@ describe("Api", () => {
 		assertEquals(rejected.code, "CHANNEL_IN_USE");
 	});
 	it("should enroll", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-				await channelSms.getIdentityChannel("sms", "5551234567", true),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			await channelSms.getIdentityChannel("sms", "5551234567", true),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -475,17 +459,14 @@ describe("Api", () => {
 		);
 	});
 	it("should not enroll a component already enrolled", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -510,22 +491,19 @@ describe("Api", () => {
 		assertEquals(rejected.code, "COMPONENT_ALREADY_ENROLLED");
 	});
 	it("should unenroll", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-				...await email2.getIdentityComponent(
-					"email2",
-					"john.doe2@example.com",
-					true,
-				),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			...await email2.getIdentityComponent(
+				"email2",
+				"john.doe2@example.com",
+				true,
+			),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -560,22 +538,19 @@ describe("Api", () => {
 		);
 	});
 	it("should not unenroll a component the choreography cannot do without", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-				...await email2.getIdentityComponent(
-					"email2",
-					"john.doe2@example.com",
-					true,
-				),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			...await email2.getIdentityComponent(
+				"email2",
+				"john.doe2@example.com",
+				true,
+			),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -610,22 +585,19 @@ describe("Api", () => {
 			...apiOptions,
 			choreography: choice(sequence("email", "password"), "email2"),
 		});
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-				...await email2.getIdentityComponent(
-					"email2",
-					"john.doe2@example.com",
-					true,
-				),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			...await email2.getIdentityComponent(
+				"email2",
+				"john.doe2@example.com",
+				true,
+			),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -659,17 +631,14 @@ describe("Api", () => {
 		);
 	});
 	it("should delete the identity", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -722,17 +691,14 @@ describe("Api", () => {
 		);
 	});
 	it("should not delete the identity without an explicit confirmation", async () => {
-		const identity = await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		const identity = await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -764,17 +730,14 @@ describe("Api", () => {
 		assert(await storage.getIdentity(identity.id));
 	});
 	it("should require a fresh sign-in to delete the identity", async () => {
-		const identity = await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		const identity = await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		// Deleting is destructive and irreversible, so it sits behind the same elevated window as enroll.
 		const strictApi = new AuthDanceApi({
 			...apiOptions,
@@ -801,17 +764,14 @@ describe("Api", () => {
 		assert(await storage.getIdentity(identity.id));
 	});
 	it("should rotate password", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -846,17 +806,14 @@ describe("Api", () => {
 		);
 	});
 	it("should rotate email", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -926,17 +883,14 @@ describe("Api", () => {
 		);
 	});
 	it("should recover password", async () => {
-		const identity1 = await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		const identity1 = await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result1 = await api.recover({ name: "email" });
 		assert(result1.prompt.kind === "input");
 		assert(result1.prompt.type === "email");
@@ -987,17 +941,14 @@ describe("Api", () => {
 		assertEquals(rejected.code, "COMPONENT_NOT_RECOVERABLE");
 	});
 	it("should keep the original sign-in date when refreshing tokens", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result1 = await api.signIn();
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -1025,17 +976,14 @@ describe("Api", () => {
 		);
 	});
 	it("should require a fresh sign-in for a sensitive action once the elevated window has elapsed", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		// elevated_duration: 0 makes any sign-in — even this instant's — already too old.
 		const strictApi = new AuthDanceApi({
 			...apiOptions,
@@ -1068,17 +1016,14 @@ describe("Api", () => {
 		assert(signedOut.success);
 	});
 	it("should not let a refresh renew the elevated window", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const strictApi = new AuthDanceApi({
 			...apiOptions,
 			durations: { elevated: 0 },
@@ -1542,22 +1487,19 @@ describe("Api", () => {
 
 		it("should report an unenroll with the component it removed", async () => {
 			const { records, api } = recordingApi();
-			await storage.createIdentity(
-				{ name: "John Doe" },
-				[
-					...await email.getIdentityComponent(
-						"email",
-						"john.doe@example.com",
-						true,
-					),
-					...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-					...await email2.getIdentityComponent(
-						"email2",
-						"john.doe2@example.com",
-						true,
-					),
-				],
-			);
+			await seedIdentity({ name: "John Doe" }, async (seed) => [
+				...await email.getIdentityComponent(
+					"email",
+					"john.doe@example.com",
+					true,
+				),
+				...await password.getIdentityComponent("password", "foo", true, seed("password")),
+				...await email2.getIdentityComponent(
+					"email2",
+					"john.doe2@example.com",
+					true,
+				),
+			]);
 			const signedIn = await signInAsJohnDoe(api);
 			const unenrolling = await api.unenroll({
 				name: "email2",

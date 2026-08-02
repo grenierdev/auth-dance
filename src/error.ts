@@ -237,7 +237,14 @@ export class ConfirmationRequiredError extends AuthDanceError {
 }
 
 // Verification
-/** A sign-in component rejected the submitted value, for example a wrong password. The choreography never advances after this. */
+/**
+ * A component rejected the submitted value. The choreography never advances after this.
+ *
+ * A sign-in raises it for a value that does not verify, a wrong password for example. A flow that collects a
+ * value raises it for a value the component refuses to store by its own rules. `PasswordAuthDanceComponent`
+ * refuses a value that is not a string, an empty one, one that matches the password it replaces, and one that
+ * matches the value that identifies its owner.
+ */
 export class InvalidPromptValueError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"INVALID_PROMPT_VALUE"}`. */
 	readonly code: "INVALID_PROMPT_VALUE" = "INVALID_PROMPT_VALUE";
@@ -249,17 +256,6 @@ export class InvalidPromptValueError extends AuthDanceError {
 export class InvalidValidationValueError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"INVALID_VALIDATION_VALUE"}`. */
 	readonly code: "INVALID_VALIDATION_VALUE" = "INVALID_VALIDATION_VALUE";
-}
-/**
- * A component refused a value by its own rules while the flow collected it, before any validation.
- *
- * `PasswordAuthDanceComponent` raises it in four cases. The value is not a string, or it is empty. The
- * length is outside the policy bounds. The password equals the one it replaces. The password equals the
- * value that identifies its owner.
- */
-export class PolicyViolationError extends AuthDanceError {
-	/** The app layer answers HTTP 500 with `{"error":"POLICY_VIOLATION"}`. */
-	readonly code: "POLICY_VIOLATION" = "POLICY_VIOLATION";
 }
 /**
  * A step needs an identity, but no step resolved one.
@@ -331,7 +327,6 @@ export const Errors = {
 	INVALID_VALIDATION_VALUE: InvalidValidationValueError,
 	KV_KEY_NOT_FOUND: KVKeyNotFoundError,
 	NO_VERIFICATION_CHANNEL: NoVerificationChannelError,
-	POLICY_VIOLATION: PolicyViolationError,
 	RATE_LIMITED: RateLimitedError,
 	RECOVERY_NOT_IDENTIFIED: RecoveryNotIdentifiedError,
 	SESSION_NOT_FOUND: SessionNotFoundError,

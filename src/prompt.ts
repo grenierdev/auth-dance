@@ -26,8 +26,9 @@ export interface AuthDancePromptInput {
 	 */
 	sendable: boolean;
 	/**
-	 * Extra rules the component publishes about the value, the length policy of a password for example.
-	 * A client can hold the owner to the policy before it spends a round trip on it.
+	 * Extra rules a component publishes about the value, length bounds for example. A client can hold the owner
+	 * to those rules before it spends a round trip on the value. No component in the box fills this field, and
+	 * the library never reads it. What it holds is between a component of your own and your client.
 	 */
 	options?: Record<string, unknown>;
 }

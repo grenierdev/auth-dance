@@ -100,7 +100,7 @@ const afterEmail = await auth.api.submitPrompt({
 	value: "john.doe@example.com",
 	state: started.state,
 });
-// { state: "<opaque>", prompt: { kind: "input", name: "password", type: "password", … }, expireAt }
+// { state: "<opaque>", prompt: { kind: "input", name: "password", type: "password", sendable: false }, expireAt }
 
 const done = await auth.api.submitPrompt({
 	name: "password",
@@ -188,8 +188,27 @@ Three components ship in the box:
 | Component                                               | Kind           | Verifiable | Notes                                                                                               |
 | ------------------------------------------------------- | -------------- | ---------- | --------------------------------------------------------------------------------------------------- |
 | `EmailAuthDanceComponent(channel)`                      | identification | yes        | Resolves the identity by address, and verifies it with an OTP. Also contributes a linked `channel`. |
-| `PasswordAuthDanceComponent(pepper, options?)`          | challenge      | no         | Argon2id, per-record salt, stored as a PHC string. See [Passwords](#passwords).                     |
+| `PasswordAuthDanceComponent(pepper, hasher?)`           | challenge      | no         | PBKDF2 by default, salted with the pepper and the identity id. Pass a `hasher` of your own.         |
 | `OtpAuthDanceComponent(channel, digits = 6, ttl = 300)` | challenge      | no         | The only sendable component. Stores the code in KV under `otp/<stateId>/<name>`.                    |
+
+The password component hashes through a function you can replace, so the KDF is not baked into the library. 🥔
+
+```ts
+import PasswordAuthDanceComponent, { type PasswordHasher, pbkdf2PasswordHasher } from "auth-dance/components/password";
+
+// The default: PBKDF2-HMAC-SHA256 over crypto.subtle, 600000 passes, stored as `<iterations>:<salt>:<digest>`.
+new PasswordAuthDanceComponent(pepper, pbkdf2PasswordHasher());
+
+// Or bring a memory-hard one.
+const argon2: PasswordHasher = (value) => argon2id({ password: value, salt: SALT, /* … */ outputType: "encoded" });
+new PasswordAuthDanceComponent(pepper, argon2);
+```
+
+Two rules bind a hasher. It must answer the same string for the same input every time, because `verifyPrompt` hashes the submission and
+compares that string against the stored one — a hasher that draws a random salt of its own rejects every password it stored. And it needs no
+salt, because the component puts the pepper and the id of the identity in front of the password before it calls the hasher. That id salts
+the record: a password record verifies against the one identity it was written for, and nowhere else. An identity seeded outside a flow
+therefore needs its id before its password record is built.
 
 ### Channels
 
@@ -283,9 +302,8 @@ prefixes every one of them. 🔒 means the route needs `Authorization: Bearer <a
 
 An error is always a single-key body: `{ "error": "CODE" }`. Malformed input is `400 BAD_REQUEST`. A rate limit is `429 RATE_LIMITED`, with
 a `Retry-After` header when the library knows the delay. Everything else is `500` with a code from the `Errors` registry: `INVALID_STATE`,
-`WOULD_LOCK_OUT`, `FRESH_SIGN_IN_REQUIRED`, `IDENTITY_MISMATCH` and more, 34 in all, with `UNKNOWN` as the fallback. `POLICY_VIOLATION` is
-the one to expect from a component's own rules — a password below the configured length — as opposed to `INVALID_PROMPT_VALUE`, which means
-the value did not verify.
+`WOULD_LOCK_OUT`, `FRESH_SIGN_IN_REQUIRED`, `IDENTITY_MISMATCH` and more, 33 in all, with `UNKNOWN` as the fallback. `INVALID_PROMPT_VALUE`
+is the one to expect from a component: the value did not verify, or the component refused to store it.
 
 `auth.generateOpenAPISchema()` produces a full spec, error picklist included. Its `info` block is whatever you passed to `createAuthDance`;
 leave `info` out and the document carries hono-openapi's placeholder instead — `Hono Documentation`, version `0.0.0`.

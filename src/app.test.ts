@@ -5,13 +5,15 @@ import type { AuthDanceApiOptions } from "./api.ts";
 import { choice, sequence } from "./choreography.ts";
 import EmailAuthDanceComponent from "./components/email.ts";
 import type { AuthDanceComponentContext } from "./component.ts";
-import PasswordAuthDanceComponent from "./components/password.ts";
+import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
+import { ksuid } from "./id.ts";
+import PasswordAuthDanceComponent, { pbkdf2PasswordHasher } from "./components/password.ts";
 import { AuthDanceStorage } from "./storage.ts";
 import type { AuthDanceKvProvider } from "./provider.ts";
 import { type AuthDance, createAuthDance } from "./mod.ts";
 
-// Same reasoning as api.test.ts: the cheapest hash the algorithm allows, and a length policy "foo" satisfies.
-const TEST_PASSWORD_OPTIONS = { params: { memorySize: 1024, iterations: 1 }, policy: { minLength: 3 } };
+// Same reasoning as api.test.ts: the cheapest hash the algorithm allows.
+const TEST_PASSWORD_HASHER = pbkdf2PasswordHasher(1);
 
 // Every response is JSON, failures included, so a call only ever yields a status and a parsed body.
 // deno-lint-ignore no-explicit-any
@@ -36,10 +38,17 @@ describe("App", () => {
 	let email2: EmailAuthDanceComponent;
 	let password: PasswordAuthDanceComponent;
 
-	// Seeding an identity outside a flow: nothing is enrolled yet, which is the shape the state machine hands a
-	// component on the first step of a sign-up.
-	function seedContext(name: string): AuthDanceComponentContext {
-		return { storage, stateId: "state_seed", name, flow: "sign-up" };
+	// Seeding an identity outside a flow. The password record is salted with the id of the identity, so the id
+	// comes first and the components are built against it, the way a sign-up mints one before its first step.
+	// Hence `setIdentity` rather than `createIdentity`, which mints an id of its own after the fact.
+	async function seedIdentity(
+		data: Record<string, unknown>,
+		build: (seed: (name: string) => AuthDanceComponentContext) => Promise<AuthDanceIdentityComponent[]>,
+	): Promise<AuthDanceIdentity> {
+		const identity: AuthDanceIdentity = { id: ksuid("id_"), data, components: [] };
+		identity.components = await build((name) => ({ storage, stateId: "state_seed", name, flow: "sign-up", identity }));
+		await storage.setIdentity(identity);
+		return identity;
 	}
 
 	beforeEach(() => {
@@ -48,7 +57,7 @@ describe("App", () => {
 		channelSms = new MemoryAuthDanceChannel("phone");
 		email = new EmailAuthDanceComponent("email");
 		email2 = new EmailAuthDanceComponent("email2");
-		password = new PasswordAuthDanceComponent("salty", TEST_PASSWORD_OPTIONS);
+		password = new PasswordAuthDanceComponent("salty", TEST_PASSWORD_HASHER);
 		storage = new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),
 			kv: new MemoryKvProvider(),
@@ -106,17 +115,14 @@ describe("App", () => {
 	}
 
 	it("should sign-in", async () => {
-		const identity = await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		const identity = await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const [status1, result1] = await post("/sign-in");
 		assertEquals(status1, 200);
 		assertEquals(result1.prompt.kind, "input");
@@ -141,17 +147,14 @@ describe("App", () => {
 	});
 
 	it("should not sign-in with a wrong challenge", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const [, result1] = await post("/sign-in");
 		const [, result2] = await post("/submit-prompt", {
 			name: "email",
@@ -184,17 +187,14 @@ describe("App", () => {
 	});
 
 	it("should list the sessions open on the identity", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const first = await signIn();
 		const second = await signIn();
 		const [status, listed] = await post(
@@ -231,17 +231,14 @@ describe("App", () => {
 	});
 
 	it("should list the components enrolled on the identity", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const session = await signIn();
 		const [status, listed] = await post(
 			"/list-components",
@@ -336,17 +333,14 @@ describe("App", () => {
 	});
 
 	it("should subscribe", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result3 = await signIn();
 		const [, result4] = await post(
 			"/subscribe",
@@ -385,17 +379,14 @@ describe("App", () => {
 	});
 
 	it("should not subscribe a channel already subscribed to", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result3 = await signIn();
 		// The email component emits its own "email" channel, so the identity is already subscribed to it.
 		const [status, rejected] = await post(
@@ -408,18 +399,15 @@ describe("App", () => {
 	});
 
 	it("should unsubscribe", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-				await channelSms.getIdentityChannel("sms", "5551234567", true),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			await channelSms.getIdentityChannel("sms", "5551234567", true),
+		]);
 		const result3 = await signIn();
 		const [, result4] = await post(
 			"/unsubscribe",
@@ -444,17 +432,14 @@ describe("App", () => {
 	});
 
 	it("should not unsubscribe a channel a component still relies on", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result3 = await signIn();
 		// The "email" channel carries linkedTo: ["email"], and that component is still enrolled — dropping the
 		// channel would leave it with no way to verify itself.
@@ -468,18 +453,15 @@ describe("App", () => {
 	});
 
 	it("should enroll", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-				await channelSms.getIdentityChannel("sms", "5551234567", true),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			await channelSms.getIdentityChannel("sms", "5551234567", true),
+		]);
 		const result3 = await signIn();
 		const [, result4] = await post(
 			"/enroll",
@@ -521,17 +503,14 @@ describe("App", () => {
 	});
 
 	it("should not enroll a component already enrolled", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result3 = await signIn();
 		const [status, rejected] = await post(
 			"/enroll",
@@ -543,22 +522,19 @@ describe("App", () => {
 	});
 
 	it("should unenroll", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-				...await email2.getIdentityComponent(
-					"email2",
-					"john.doe2@example.com",
-					true,
-				),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			...await email2.getIdentityComponent(
+				"email2",
+				"john.doe2@example.com",
+				true,
+			),
+		]);
 		const result3 = await signIn();
 		const [, result4] = await post(
 			"/unenroll",
@@ -583,22 +559,19 @@ describe("App", () => {
 	});
 
 	it("should not unenroll a component the choreography cannot do without", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-				...await email2.getIdentityComponent(
-					"email2",
-					"john.doe2@example.com",
-					true,
-				),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			...await email2.getIdentityComponent(
+				"email2",
+				"john.doe2@example.com",
+				true,
+			),
+		]);
 		const result3 = await signIn();
 		// sequence("email", "password") has no path to an end without "password", enrolled "email2" or not.
 		const [status, rejected] = await post(
@@ -624,22 +597,19 @@ describe("App", () => {
 				},
 			}),
 		);
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-				...await email2.getIdentityComponent(
-					"email2",
-					"john.doe2@example.com",
-					true,
-				),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			...await email2.getIdentityComponent(
+				"email2",
+				"john.doe2@example.com",
+				true,
+			),
+		]);
 		const result3 = await signIn();
 		const [, result4] = await post(
 			"/unenroll",
@@ -663,17 +633,14 @@ describe("App", () => {
 	});
 
 	it("should delete the identity", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result3 = await signIn();
 		// A second session, to show the deletion takes every session with it and not just the calling one.
 		const other = await signIn();
@@ -706,17 +673,14 @@ describe("App", () => {
 	});
 
 	it("should not delete the identity without an explicit confirmation", async () => {
-		const identity = await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		const identity = await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result3 = await signIn();
 		const [, result4] = await post(
 			"/delete",
@@ -736,17 +700,14 @@ describe("App", () => {
 	});
 
 	it("should rotate password", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result3 = await signIn();
 		const [, result4] = await post(
 			"/rotate",
@@ -771,17 +732,14 @@ describe("App", () => {
 	});
 
 	it("should rotate email", async () => {
-		await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result3 = await signIn();
 		const [, result4] = await post(
 			"/rotate",
@@ -841,17 +799,14 @@ describe("App", () => {
 	});
 
 	it("should recover password", async () => {
-		const identity1 = await storage.createIdentity(
-			{ name: "John Doe" },
-			[
-				...await email.getIdentityComponent(
-					"email",
-					"john.doe@example.com",
-					true,
-				),
-				...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-			],
-		);
+		const identity1 = await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const [, result1] = await post("/recover", { name: "email" });
 		assertEquals(result1.prompt.kind, "input");
 		assertEquals(result1.prompt.type, "email");
@@ -996,17 +951,14 @@ describe("App", () => {
 		// address and userAgent describe the caller, so they are read from the connection and never from the
 		// body — a client must not be able to choose what gets recorded against its own session.
 		it("should record the caller from the request headers", async () => {
-			await storage.createIdentity(
-				{ name: "John Doe" },
-				[
-					...await email.getIdentityComponent(
-						"email",
-						"john.doe@example.com",
-						true,
-					),
-					...await password.getIdentityComponent("password", "foo", true, seedContext("password")),
-				],
-			);
+			await seedIdentity({ name: "John Doe" }, async (seed) => [
+				...await email.getIdentityComponent(
+					"email",
+					"john.doe@example.com",
+					true,
+				),
+				...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			]);
 			const [, result1] = await post("/sign-in");
 			const [, result2] = await post("/submit-prompt", {
 				name: "email",

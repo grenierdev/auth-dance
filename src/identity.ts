@@ -93,8 +93,8 @@ export interface AuthDanceIdentityChallengePublic {
 /** A challenge as the identity store holds it: the disclosed shape plus the private `data` bag. */
 export interface AuthDanceIdentityChallenge extends AuthDanceIdentityChallengePublic {
 	/**
-	 * The private `data` bag this component owns on the record. `PasswordAuthDanceComponent` writes the Argon2id
-	 * PHC string to `data.hash`, and it verifies each submission against that string. `OtpAuthDanceComponent`
+	 * The private `data` bag this component owns on the record. `PasswordAuthDanceComponent` writes the password
+	 * hash to `data.hash`, and it verifies each submission against that string. `OtpAuthDanceComponent`
 	 * writes the submitted value to `data.recipient`, and it keeps the code itself in KV under
 	 * `otp/<stateId>/<name>`. The `/list-components` route drops this field, so no client sees it.
 	 */

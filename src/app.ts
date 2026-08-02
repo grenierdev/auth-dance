@@ -105,7 +105,7 @@ function bearer(c: Context): string {
 	return token;
 }
 
-// `data` is the private store of the component. `PasswordAuthDanceComponent` keeps the Argon2id hash under
+// `data` is the private store of the component. `PasswordAuthDanceComponent` keeps the password hash under
 // `data.hash`, and `EmailAuthDanceComponent` keeps the address under `data.email`. No component declares which of
 // its keys are safe to disclose, so this function drops the whole field rather than some of its keys. A client
 // needs two facts from this list: which components exist, and whether each one is confirmed. It never needs the
