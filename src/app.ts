@@ -425,11 +425,11 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		describeRoute({
 			summary: "Start a recovery",
 			description:
-				"The one flow open to a caller with no session at all. The caller proves control of a single component the choreography can start with, then resets whatever the choreography still requires after it — precisely the components the caller could not provide. The component must therefore both resolve an identity and prove control of it, or the request is refused with COMPONENT_NOT_RECOVERABLE.",
+				"The one flow open to a caller with no session at all. `name` is the component the caller can no longer provide. The answer offers every component of the choreography that can identify the caller and prove control on its own — the recovered one excluded — and the caller proves control of one of them before the library resets what they named. With no such component left the request is refused with COMPONENT_NOT_RECOVERABLE.",
 			tags: ["Auth"],
 			responses: {
 				200: {
-					description: "The component's own prompt. Nothing about the identity is disclosed yet.",
+					description: "The choice of components to identify through. Nothing about the identity is disclosed yet.",
 					content: { "application/json": { schema: resolver(StateResponse) } },
 				},
 				...withErrorResponses(),

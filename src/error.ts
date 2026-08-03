@@ -159,8 +159,9 @@ export class ComponentNotSendableError extends AuthDanceError {
 	readonly code: "COMPONENT_NOT_SENDABLE" = "COMPONENT_NOT_SENDABLE";
 }
 /**
- * `recover` named a component that cannot start a recovery. The component must be an identification, it
- * must be verifiable, and the choreography must be able to start with it.
+ * `recover` named a component the flow cannot reset. A step of the choreography must carry that name, and
+ * another step of it must both resolve an identity and prove control of it, so the caller has something left
+ * to identify themselves through.
  */
 export class ComponentNotRecoverableError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"COMPONENT_NOT_RECOVERABLE"}`. */
@@ -263,7 +264,7 @@ export class InvalidValidationValueError extends AuthDanceError {
  * A sign-in needs an identification to resolve the identity before a challenge can prove a claim against
  * it. The prompt verified, it yielded no identity, and the state holds none either.
  *
- * A recovery starts from a component that resolves the identity on its own. That component raises this
+ * A recovery identifies through a component that resolves the identity on its own. That component raises this
  * error for a rejected value too, because the step accepts only an identity id.
  */
 export class IdentityNotResolvedError extends AuthDanceError {

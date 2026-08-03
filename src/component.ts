@@ -62,9 +62,9 @@ export interface AuthDanceComponent {
 	 * A component that sets this to `true` must also declare `verificationComponent`. Without that method a
 	 * recovery raises `ComponentNotVerifiableError` on the first submit.
 	 *
-	 * `recover` is the only flow that reads this flag. A recovery starts from one component alone. That component
-	 * must resolve an identity, prove control of it, and be a first move of the choreography. `recover` raises
-	 * `ComponentNotRecoverableError` for any other component.
+	 * `recover` is the only flow that reads this flag. A caller with no session identifies themselves through one
+	 * component alone, so `recover` offers exactly the components of the choreography that are an `identification`
+	 * and carry this flag, the one being recovered excluded. With none left it raises `ComponentNotRecoverableError`.
 	 */
 	verifiable: boolean;
 	/** Builds the prompt the client renders for this step. */

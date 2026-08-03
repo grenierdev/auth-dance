@@ -891,8 +891,12 @@ describe("Api", () => {
 			),
 			...await password.getIdentityComponent("password", "foo", true, seed("password")),
 		]);
-		const result1 = await api.recover({ name: "email" });
+		// The recovery names what the owner lost, not what they can still prove. sequence("email", "password")
+		// leaves "email" as the only component that both resolves an identity and proves control of it, so the
+		// choice of one collapses to that component's own prompt.
+		const result1 = await api.recover({ name: "password" });
 		assert(result1.prompt.kind === "input");
+		assert(result1.prompt.name === "email");
 		assert(result1.prompt.type === "email");
 		const result2 = await api.submitPrompt({
 			name: "email",
@@ -932,13 +936,61 @@ describe("Api", () => {
 		const passwordComponent2 = identity2?.components.find((c) => c.kind === "challenge" && c.component === "password");
 		assert(passwordComponent1?.data?.hash !== passwordComponent2?.data?.hash);
 	});
-	it("should not recover a component that cannot identify and verify on its own", async () => {
-		// "password" is a challenge, not a verifiable identification, so recovery cannot start from it.
+	it("should offer every component a recovery can be proven through", async () => {
+		// Two components of this choreography identify and verify on their own, so the owner picks which one of
+		// them to prove. The choice is one between components and not between values, so it discloses nothing
+		// about an identity — this call resolves none, and there is none seeded here.
+		const api = new AuthDanceApi({
+			...apiOptions,
+			choreography: sequence(choice("email", "email2"), "password"),
+		});
+		const result1 = await api.recover({ name: "password" });
+		assert(result1.prompt.kind === "choice");
+		assertEquals(
+			result1.prompt.components.map((p) => (p.kind === "input" ? p.name : null)),
+			["email", "email2"],
+		);
+	});
+	it("should not identify a recovery through a component it did not offer", async () => {
+		await johnDoe();
+		const result1 = await api.recover({ name: "password" });
+		// "password" is the component being recovered, and it identifies nobody anyway. Answering the choice with
+		// it does not start the recovery from it.
 		const rejected = await assertRejects(
-			() => api.recover({ name: "password" }),
+			() =>
+				api.submitPrompt({
+					name: "password",
+					value: "foo",
+					state: result1.state,
+				}),
+			AuthDanceError,
+		);
+		assertEquals(rejected.code, "COMPONENT_NOT_IN_CHOREOGRAPHY");
+	});
+	it("should not recover a component the caller has nothing left to identify through", async () => {
+		// "email" is the only component of sequence("email", "password") that identifies and verifies on its own,
+		// and it is the one being recovered — so there is no one left to prove they own the account.
+		const rejected = await assertRejects(
+			() => api.recover({ name: "email" }),
 			AuthDanceError,
 		);
 		assertEquals(rejected.code, "COMPONENT_NOT_RECOVERABLE");
+	});
+	it("should not recover a component the choreography does not know", async () => {
+		// "email2" is a declared component, but no step of sequence("email", "password") asks for it, so a
+		// recovery has nothing to reset.
+		const rejected = await assertRejects(
+			() => api.recover({ name: "email2" }),
+			AuthDanceError,
+		);
+		assertEquals(rejected.code, "COMPONENT_NOT_RECOVERABLE");
+	});
+	it("should not recover a component that is not declared at all", async () => {
+		const rejected = await assertRejects(
+			() => api.recover({ name: "totp" }),
+			AuthDanceError,
+		);
+		assertEquals(rejected.code, "UNKNOWN_COMPONENT");
 	});
 	it("should keep the original sign-in date when refreshing tokens", async () => {
 		await seedIdentity({ name: "John Doe" }, async (seed) => [
@@ -1062,7 +1114,7 @@ describe("Api", () => {
 		const secondsFromNow = (expireAt: Date) => Math.round((expireAt.getTime() - Date.now()) / 1000);
 		assertEquals(secondsFromNow((await perFlowApi.signIn()).expireAt), 30);
 		assertEquals(
-			secondsFromNow((await perFlowApi.recover({ name: "email" })).expireAt),
+			secondsFromNow((await perFlowApi.recover({ name: "password" })).expireAt),
 			15 * 60,
 		);
 		// A flow left unconfigured keeps the 5 minute default.
@@ -1549,7 +1601,7 @@ describe("Api", () => {
 		it("should report a recovery one time, and mint no session for it", async () => {
 			const { records, api } = recordingApi();
 			await johnDoe();
-			const result1 = await api.recover({ name: "email" });
+			const result1 = await api.recover({ name: "password" });
 			const result2 = await api.submitPrompt({
 				name: "email",
 				value: "john.doe@example.com",
@@ -1572,10 +1624,10 @@ describe("Api", () => {
 			});
 			assert("success" in result4);
 			// Proving control of one component is not a sign-in, so a recovery reports no session at all. The one
-			// identity event names the component the recovery started from, not the password it reset.
+			// identity event names the component it reset, not the email the caller proved along the way.
 			assertEquals(records.map((r) => r.hook), ["onIdentityUpdated"]);
 			assertEquals(records[0].flow, "recover");
-			assertEquals(records[0].name, "email");
+			assertEquals(records[0].name, "password");
 		});
 
 		it("should report every session of a delete before the identity itself", async () => {

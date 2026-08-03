@@ -381,7 +381,8 @@ const ERROR_HINTS: Record<string, string> = {
 	CHANNEL_IN_USE: "A component still links to this channel, so it cannot be detached.",
 	COMPONENT_ALREADY_ENROLLED: "The identity already holds this component. Rotate it instead.",
 	CHANNEL_ALREADY_SUBSCRIBED: "The identity already holds this channel.",
-	COMPONENT_NOT_RECOVERABLE: "A recovery starts from a component that both resolves an identity and proves control of it.",
+	COMPONENT_NOT_RECOVERABLE:
+		"This component is not part of the choreography, or nothing else in it can identify you and prove control on its own.",
 	FRESH_SIGN_IN_REQUIRED: "The elevated window closed. Sign in again to run a sensitive flow.",
 	INVALID_ACCESS_TOKEN: "This route needs a valid access token.",
 	INVALID_STATE: "The state is gone or expired. Start the flow again.",

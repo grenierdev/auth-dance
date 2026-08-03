@@ -218,11 +218,12 @@ export const AuthDanceStateRotate: v.GenericSchema<AuthDanceStateRotate> = v.pip
 );
 
 /**
- * The in-progress dance of a caller with no session who recovers an identity.
+ * The in-progress dance of a caller with no session who recovers one component of an identity.
  *
- * The caller proves control of one component the choreography can start with. The library then resets every
- * component the choreography still requires after it, which is exactly what the caller could not provide. The flow
- * completes with a success result, never with tokens.
+ * The caller names the component they can no longer provide. The library answers with the components of the
+ * choreography that can resolve an identity and prove control of it, the caller picks one of them and proves
+ * control of it, and the library then resets the named component. The flow completes with a success result, never
+ * with tokens.
  */
 export interface AuthDanceStateRecover {
 	/** The id of this dance, a ksuid with an `st_` prefix. */
@@ -230,31 +231,38 @@ export interface AuthDanceStateRecover {
 	/** The discriminator that tells the library this dance is a recovery. */
 	kind: "recover";
 	/**
-	 * The name of the component the recovery started from.
+	 * The name of the component the recovery resets, as the caller named it.
 	 *
-	 * The component has to be an identification. It has to be verifiable. It has to be a first move of the
-	 * choreography. Otherwise the library answers `COMPONENT_NOT_RECOVERABLE`. This name also opens the path the
-	 * reset walks.
+	 * A step of the choreography has to carry that name, and at least one other step has to be able to identify
+	 * the owner and prove control on its own. Otherwise the library answers `COMPONENT_NOT_RECOVERABLE`.
 	 */
 	component: string;
 	/**
-	 * The identity the recovery component resolved, absent until the caller submits the identification.
+	 * The name of the component the caller proves control through, absent until the caller picks one.
 	 *
-	 * The first prompt is the component's own, so nothing about the identity reaches the caller before that step. A
-	 * validation call before that step fails with `RECOVERY_NOT_IDENTIFIED`.
+	 * The first prompt of the flow is a choice between every component of the choreography that resolves an
+	 * identity and proves control of it, the component being recovered excluded. The answer to that choice lands
+	 * here.
+	 */
+	identification?: string;
+	/**
+	 * The identity the picked component resolved, absent until the caller answers the choice above.
+	 *
+	 * The first prompt belongs to the components themselves, so nothing about the identity reaches the caller
+	 * before that step. A validation call before that step fails with `RECOVERY_NOT_IDENTIFIED`.
 	 */
 	identityId?: string;
 	/**
-	 * True once the caller proves control of the component the recovery started from.
+	 * True once the caller proves control of the component they picked to identify with.
 	 *
 	 * The library resets nothing before then, and it answers `CONTROL_NOT_PROVEN` to a value the caller submits early.
 	 */
 	verified: boolean;
 	/**
-	 * The replacement components collected during the reset.
+	 * The replacement the recovered component produced, plus any channel it also yields.
 	 *
-	 * The confirmed identifications and challenges follow the recovery component on the path, so the choreography
-	 * gives the next component to reset. The library writes each replacement to the identity by name.
+	 * An empty list means the library has not collected the replacement yet. The library writes the replacement to
+	 * the identity by name, so it supersedes the value the caller lost instead of joining it.
 	 */
 	components: AuthDanceIdentityComponent[];
 }
@@ -265,13 +273,14 @@ export const AuthDanceStateRecover: v.GenericSchema<AuthDanceStateRecover> = v.p
 		id: v.string(),
 		kind: v.literal("recover"),
 		component: v.string(),
+		identification: v.optional(v.string()),
 		identityId: v.optional(v.string()),
 		verified: v.boolean(),
 		components: v.array(AuthDanceIdentityComponent),
 	}),
 	v.title("AuthDanceStateRecover"),
 	v.description(
-		"An authentication state object that represents the recovery of an identity through one of its components, including the state id, kind, the name of the component the recovery started from, the identity that component resolved to, whether control of it has been proven, and the replacement components collected so far.",
+		"An authentication state object that represents the recovery of one component of an identity, including the state id, kind, the name of the component being recovered, the component the caller proves control through, the identity that component resolved to, whether control of it has been proven, and the replacement collected so far.",
 	),
 );
 

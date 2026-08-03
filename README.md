@@ -317,8 +317,11 @@ Sign-in and sign-up are not special. Every management flow uses the same state-p
 - **`rotate`** — replace a credential. For a _verifiable_ component, the first prompt proves control of the current value. The library then
   collects the new value and validates it, so the flow has two validation rounds. A non-verifiable component such as a password needs one
   `submit-prompt`.
-- **`recover`** — unauthenticated. The component must be an `identification`, must be `verifiable`, and must be a valid _first move_ of the
-  choreography. Otherwise the library answers `COMPONENT_NOT_RECOVERABLE`. The flow completes with `{ success: true }`, not with tokens.
+- **`recover`** — unauthenticated. `name` is the component the owner can no longer provide, a forgotten password for instance. The first
+  prompt is a choice between every component of the choreography that is an `identification` _and_ `verifiable` — one that both resolves an
+  identity and proves control of it — the recovered one excluded. Pick one and prove control of it, and the library then collects and
+  validates the replacement of the component you named. With none of those left, or with no step of the choreography carrying that name, the
+  library answers `COMPONENT_NOT_RECOVERABLE`. The flow completes with `{ success: true }`, not with tokens.
 - **`subscribe` / `unsubscribe`** — manage channels. Note the asymmetry of a subscription. The library delivers the confirming code over an
   _already-confirmed_ channel, so `send-validation` names that existing channel while `submit-validation` names the new one.
 - **`delete`** — wipes the identity.

@@ -807,8 +807,11 @@ describe("App", () => {
 			),
 			...await password.getIdentityComponent("password", "foo", true, seed("password")),
 		]);
-		const [, result1] = await post("/recover", { name: "email" });
+		// The body names what the owner lost. "email" is the only component of sequence("email", "password") that
+		// both resolves an identity and proves control of it, so the choice of one collapses to its own prompt.
+		const [, result1] = await post("/recover", { name: "password" });
 		assertEquals(result1.prompt.kind, "input");
+		assertEquals(result1.prompt.name, "email");
 		assertEquals(result1.prompt.type, "email");
 		const [, result2] = await post("/submit-prompt", {
 			name: "email",
@@ -849,9 +852,10 @@ describe("App", () => {
 		assert(passwordComponent1?.data?.hash !== passwordComponent2?.data?.hash);
 	});
 
-	it("should not recover a component that cannot identify and verify on its own", async () => {
-		// "password" is a challenge, not a verifiable identification, so recovery cannot start from it.
-		const [status, rejected] = await post("/recover", { name: "password" });
+	it("should not recover a component the caller has nothing left to identify through", async () => {
+		// "email" is the only component of sequence("email", "password") that identifies and verifies on its own,
+		// and it is the one being recovered — so nobody is left to prove they own the account.
+		const [status, rejected] = await post("/recover", { name: "email" });
 		assertEquals(status, 500);
 		assertEquals(rejected.error, "COMPONENT_NOT_RECOVERABLE");
 	});
@@ -1039,7 +1043,7 @@ describe("App", () => {
 				assertEquals(rejected.error, "RATE_LIMITED");
 				// The bucket is on the address, not on the route: a different flow shares the same allowance.
 				assertEquals(
-					(await post("/recover", { name: "email" }, from("203.0.113.7")))[0],
+					(await post("/recover", { name: "password" }, from("203.0.113.7")))[0],
 					429,
 				);
 			});

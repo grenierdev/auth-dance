@@ -5,7 +5,10 @@ import {
 	type AuthDanceChoreography,
 	type AuthDanceChoreographyChoice,
 	type AuthDanceChoreographyComponent,
+	choice,
+	component,
 	peek,
+	simplify,
 	walk,
 } from "./choreography.ts";
 import type { AuthDanceComponent, AuthDanceComponentContext } from "./component.ts";
@@ -170,7 +173,7 @@ export interface AuthDanceIdentityEvent<TFlow extends AuthDanceIdentityEventFlow
 	identity: AuthDanceIdentity;
 	/**
 	 * The component or the channel the flow acts on, under the name `options.components` or `options.channels`
-	 * declares it. A recovery names the component it started from, never a component it resets.
+	 * declares it. A recovery names the component it reset, never the component it was proven through.
 	 *
 	 * The type marks it optional, but every flow `onIdentityUpdated` reports names one. A sign-up and a delete
 	 * act on the whole identity, so `onIdentityCreated` and `onIdentityDeleted` name nothing.
@@ -226,8 +229,8 @@ export interface AuthDanceApiHooks {
 	/**
 	 * A flow changed the components of an identity that already existed, and the store holds the change.
 	 *
-	 * One flow reports one change, whatever it moved. A recovery that resets three components fires this hook one
-	 * time, after the last one.
+	 * One flow reports one change, whatever it moved. A recovery therefore fires this hook one time, for the
+	 * component it reset.
 	 */
 	onIdentityUpdated?(event: AuthDanceIdentityEvent<Exclude<AuthDanceIdentityEventFlow, "sign-up" | "delete">>): void | Promise<void>;
 	/**
@@ -725,16 +728,14 @@ export class AuthDanceApi {
 		address?: string;
 		userAgent?: string;
 	}): Promise<AuthDanceResponse> {
-		// Only the authentication flows mint tokens; management flows (subscribe, …) have no further steps
-		// and complete with a plain success result. Recovery is in between: it walks the choreography like an
-		// authentication flow — resetting whatever it still requires after the recovered component — but
-		// proving control of a single component is not a sign-in, so it completes without tokens.
+		// Only the authentication flows walk the choreography and mint tokens; every other flow — a recovery
+		// included — acts on the one component it names and completes with a plain success result. Proving
+		// control of a single component is not a sign-in.
 		const authFlow = options.flow === "sign-in" || options.flow === "sign-up";
-		const nextMove = authFlow || options.flow === "recover" ? peek(this.#options.choreography, options.path) : null;
+		const nextMove = authFlow ? peek(this.#options.choreography, options.path) : null;
 		if (nextMove === null) {
 			// Every identity hook fires from this one place, so a hook reports a change the store already holds and
-			// never one a later step could still reject. A flow that walks several components — a recovery — passes
-			// here one time, after the last of them.
+			// never one a later step could still reject.
 			if (options.persist) {
 				await this.#options.storage.setIdentity(options.identity);
 				if (options.flow === "sign-up") {
@@ -967,19 +968,34 @@ export class AuthDanceApi {
 		identity.components.push(...components);
 	}
 
-	// The recovery component is the step control has been proven for, so it opens the path; every component
-	// reset since then follows it, exactly like #signUpPath tracks what sign-up has collected so far.
-	#recoverPath(state: AuthDanceStateRecover): string[] {
-		return [
-			state.component,
-			...state.components
-				.filter((c): c is AuthDanceIdentityIdentification | AuthDanceIdentityChallenge => c.confirmed && c.kind !== "channel")
-				.map((c) => c.component),
-		];
+	// Which components of the choreography a recovery can be proven through: one that resolves an identity on
+	// its own, as an identification does, and proves control of it, as a verification does. The component being
+	// recovered is never one of them — the value the caller no longer has cannot be the value they prove.
+	#recoverIdentifications(recovering: string): string[] {
+		const names: string[] = [];
+		for (const { component } of walk(this.#options.choreography)) {
+			if (!component || component.component === recovering || names.includes(component.component)) {
+				continue;
+			}
+			const authComponent = this.#options.components[component.component];
+			if (authComponent?.kind === "identification" && authComponent.verifiable) {
+				names.push(component.component);
+			}
+		}
+		return names;
+	}
+
+	#isChoreographyComponent(component: string): boolean {
+		for (const { component: step } of walk(this.#options.choreography)) {
+			if (step?.component === component) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	// Same layering as #rotateContext: a replacement collected during the reset shadows the value it replaces,
-	// so its verification targets the new one. While control of the recovery component is still being proven
+	// so its verification targets the new one. While control of the picked component is still being proven
 	// nothing has been collected and the identity is seen as it stands — which is what proving control needs.
 	// The identity itself is unknown until the identification has been submitted.
 	#recoverContext(state: AuthDanceStateRecover, component: string, identity: AuthDanceIdentity | undefined): AuthDanceComponentContext {
@@ -1003,54 +1019,52 @@ export class AuthDanceApi {
 		return identity;
 	}
 
-	// First phase: prove control of the component the recovery started from.
+	// First phase: prove control of the component the caller picked to identify with.
 	async #resolveRecoverControl(state: AuthDanceStateRecover, identity: AuthDanceIdentity): Promise<{
 		ctx: AuthDanceComponentContext;
 		verificationAuthDanceComponent: AuthDanceComponent;
 	}> {
+		if (!state.identification) {
+			throw new RecoveryNotIdentifiedError(state.component);
+		}
+		const authComponent = this.#options.components[state.identification];
+		if (!authComponent) {
+			throw new UnknownComponentError(state.identification);
+		}
+		if (!authComponent.verificationComponent) {
+			throw new ComponentNotVerifiableError(state.identification);
+		}
+		const ctx = this.#recoverContext(state, state.identification, identity);
+		return { ctx, verificationAuthDanceComponent: await authComponent.verificationComponent(ctx) };
+	}
+
+	// Second phase: the component being recovered. It collects the replacement, exactly as an enroll does.
+	#resolveRecoverReset(
+		state: AuthDanceStateRecover,
+		identity: AuthDanceIdentity,
+	): { authComponent: AuthDanceComponent; ctx: AuthDanceComponentContext } {
 		const authComponent = this.#options.components[state.component];
 		if (!authComponent) {
 			throw new UnknownComponentError(state.component);
 		}
-		if (!authComponent.verificationComponent) {
-			throw new ComponentNotVerifiableError(state.component);
-		}
-		const ctx = this.#recoverContext(state, state.component, identity);
-		return { ctx, verificationAuthDanceComponent: await authComponent.verificationComponent(ctx) };
+		return { authComponent, ctx: this.#recoverContext(state, state.component, identity) };
 	}
 
-	// Second phase: validate the replacement collected for the component currently being reset.
-	async #resolveRecoverReset(state: AuthDanceStateRecover, identity: AuthDanceIdentity, componentName?: string): Promise<{
-		path: string[];
-		choreographyComponent: AuthDanceChoreographyComponent;
+	// Second phase again: validate the replacement the recovered component asked to prove control of.
+	async #resolveRecoverResetVerification(state: AuthDanceStateRecover, identity: AuthDanceIdentity): Promise<{
 		identityComponent: AuthDanceIdentityIdentification | AuthDanceIdentityChallenge;
 		ctx: AuthDanceComponentContext;
 		verificationAuthDanceComponent: AuthDanceComponent;
 	}> {
-		const path = this.#recoverPath(state);
-		const { choreographyComponent, authComponent } = this.#resolveStep(path, componentName);
+		const { authComponent, ctx } = this.#resolveRecoverReset(state, identity);
 		if (!authComponent.verificationComponent) {
-			throw new ComponentNotVerifiableError(choreographyComponent.component);
+			throw new ComponentNotVerifiableError(state.component);
 		}
-		const identityComponent = this.#collectedIdentityComponent(state.components, choreographyComponent.component);
-		const ctx = this.#recoverContext(state, choreographyComponent.component, identity);
 		return {
-			path,
-			choreographyComponent,
-			identityComponent,
+			identityComponent: this.#collectedIdentityComponent(state.components, state.component),
 			ctx,
 			verificationAuthDanceComponent: await authComponent.verificationComponent(ctx),
 		};
-	}
-
-	// The reset walks the choreography from the recovered component, so that component has to be a step the
-	// choreography can actually start with — otherwise there is no continuation to reset.
-	#isChoreographyFirstMove(component: string): boolean {
-		const firstMove = peek(this.#options.choreography, []);
-		if (firstMove === null) {
-			return false;
-		}
-		return firstMove.kind === "component" ? firstMove.component === component : firstMove.components.some((c) => c.component === component);
 	}
 
 	// Unenrolling must not lock the identity out of its own account: walk the choreography and keep the
@@ -1319,34 +1333,34 @@ export class AuthDanceApi {
 	}
 
 	/**
-	 * Starts a recovery from one component the choreography can start with.
+	 * Starts the recovery of one component, for a caller who can no longer provide it.
 	 *
-	 * Recovery is a special case of the choreography. The caller proves control of that one component. The flow
-	 * then resets whatever the choreography still requires after it, exactly the components the caller could not
-	 * provide.
+	 * Apart from a sign-in and a sign-up, this is the only flow a caller with no session can start. The caller
+	 * therefore has to identify themselves and prove control through another component, and one component has to do
+	 * both jobs on its own. It resolves an identity, as an identification does, and it proves control of that
+	 * identity, as a verification does. The first prompt is a choice between every such component of the
+	 * choreography, or that component's own prompt when the choreography holds exactly one. This flow needs no
+	 * access token and no fresh sign-in.
 	 *
-	 * Apart from a sign-in and a sign-up, this is the only flow a caller with no session can start. The component
-	 * it starts from must therefore do both jobs on its own. It resolves an identity, as an identification does,
-	 * and it proves control of that identity, as a verification does. This flow needs no access token and no
-	 * fresh sign-in.
+	 * The choice is one between components, never between values, so the response discloses nothing about the
+	 * identity. Which identity the flow recovers stays unknown until `submitPrompt` answers that choice. Once
+	 * control of the picked component is proven, the flow collects the replacement of the recovered component and
+	 * validates it, exactly as an enroll does. It completes with a plain success result, never with tokens. Proof
+	 * of control of a single component is not a sign-in.
 	 *
-	 * The first prompt comes from the component itself, so the response discloses nothing about the identity.
-	 * Which identity the flow recovers stays unknown until `submitPrompt` resolves it. The flow completes with a
-	 * plain success result, never with tokens. Proof of control of a single component is not a sign-in.
-	 *
-	 * @param options `name` is the component the recovery starts from.
-	 * @returns The encrypted state, the prompt of the component, and the moment the state expires.
+	 * @param options `name` is the component the recovery resets.
+	 * @returns The encrypted state, the choice of components to identify with, and the moment the state expires.
 	 * @throws UnknownComponentError when `options.components` declares no component of that name.
-	 * @throws ComponentNotRecoverableError when the component is not an identification, is not verifiable, or is
-	 * not a first move of the choreography.
+	 * @throws ComponentNotRecoverableError when no step of the choreography carries that name, or when no other
+	 * step of it both resolves an identity and proves control of it.
 	 */
 	recover(options: { name: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("recover", async () => {
-			const authComponent = this.#options.components[options.name];
-			if (!authComponent) {
+			if (!this.#options.components[options.name]) {
 				throw new UnknownComponentError(options.name);
 			}
-			if (authComponent.kind !== "identification" || !authComponent.verifiable || !this.#isChoreographyFirstMove(options.name)) {
+			const identifications = this.#recoverIdentifications(options.name);
+			if (!this.#isChoreographyComponent(options.name) || identifications.length === 0) {
 				throw new ComponentNotRecoverableError(options.name);
 			}
 			const expireAt = this.#expireAt(this.#options.durations?.recover);
@@ -1357,9 +1371,16 @@ export class AuthDanceApi {
 				verified: false,
 				components: [],
 			};
-			// Which identity is being recovered is unknown until the identification is submitted, so the first
-			// prompt is the component's own and nothing about the identity is disclosed.
-			const prompt = await authComponent.getPrompt(this.#recoverContext(state, options.name, undefined));
+			// Which identity is being recovered is unknown until the choice is answered, so every prompt of it is
+			// the component's own and nothing about the identity is disclosed.
+			const prompt = await this.#getPromptFromChoreography({
+				choreography: simplify(choice(...identifications.map(component))) as
+					| AuthDanceChoreographyComponent
+					| AuthDanceChoreographyChoice<AuthDanceChoreographyComponent>,
+				stateId: state.id,
+				flow: "recover",
+				identity: undefined,
+			});
 			return { state: await this.#encryptState(state, expireAt), prompt, expireAt };
 		});
 	}
@@ -1551,7 +1572,8 @@ export class AuthDanceApi {
 	 * Answers the current prompt of any flow and moves the dance one step.
 	 *
 	 * The state names the flow, so this one method serves all nine of them. A sign-in verifies the value against
-	 * the choreography. A sign-up, an enroll, a rotate and a recover collect the value. An unenroll, an
+	 * the choreography. A sign-up, an enroll and a rotate collect the value. A recover answers the choice of
+	 * components to identify with, and later collects the replacement of the component it resets. An unenroll, an
 	 * unsubscribe and a delete take the boolean `true` as their confirmation. A subscribe stores the recipient
 	 * and moves to its one-time code.
 	 *
@@ -1582,7 +1604,7 @@ export class AuthDanceApi {
 	 * @throws ComponentAlreadyCollectedError when the step already holds a value.
 	 * @throws ComponentNotCollectedError when the component yields no identification and no challenge.
 	 * @throws ControlNotProvenError when a rotate or a recover has not yet proven control of the current value.
-	 * @throws ComponentNotVerifiableError when a recovery component offers no verification.
+	 * @throws ComponentNotVerifiableError when the component a recovery identifies through offers no verification.
 	 * @throws ConfirmationRequiredError when an unenroll, an unsubscribe or a delete gets a value other than `true`.
 	 * @throws WouldLockOutError when the unenroll leaves no completable path through the choreography.
 	 * @throws NoVerificationChannelError when a subscribe has no other confirmed channel to deliver the code over.
@@ -1749,21 +1771,23 @@ export class AuthDanceApi {
 				persist: true,
 			};
 		} else if (state.kind === "recover") {
-			if (!state.identityId) {
-				// Which identity is being recovered is established here and only here: the component resolves the
-				// submitted value to an identity, then its verification takes over to prove control of it.
-				const authComponent = this.#options.components[state.component];
+			if (!state.identification) {
+				// Which identity is being recovered is established here and only here: the caller picks one of the
+				// components that can identify them, that component resolves the submitted value to an identity,
+				// then its verification takes over to prove control of it.
+				if (!this.#recoverIdentifications(state.component).includes(options.name)) {
+					throw new ComponentNotInChoreographyError(options.name);
+				}
+				const authComponent = this.#options.components[options.name];
 				if (!authComponent) {
-					throw new UnknownComponentError(state.component);
+					throw new UnknownComponentError(options.name);
 				}
-				if (!authComponent.verificationComponent) {
-					throw new ComponentNotVerifiableError(state.component);
-				}
-				const ctx = this.#recoverContext(state, state.component, undefined);
+				const ctx = this.#recoverContext(state, options.name, undefined);
 				const identityId = await authComponent.verifyPrompt(options.value, ctx);
 				if (typeof identityId !== "string") {
-					throw new IdentityNotResolvedError(state.component);
+					throw new IdentityNotResolvedError(options.name);
 				}
+				state.identification = options.name;
 				state.identityId = identityId;
 				const control = await this.#resolveRecoverControl(state, await this.#recoverIdentity(state));
 				return {
@@ -1772,29 +1796,28 @@ export class AuthDanceApi {
 					expireAt,
 				};
 			}
-			// Nothing is reset before control of the recovery component has been proven, which is what
+			// Nothing is reset before control of the picked component has been proven, which is what
 			// sendValidation/submitValidation did with the prompt handed out above.
 			if (!state.verified) {
-				throw new ControlNotProvenError(state.component);
+				throw new ControlNotProvenError(state.identification);
 			}
 			const identity = await this.#recoverIdentity(state);
-			const path = this.#recoverPath(state);
-			const { choreographyComponent, authComponent } = this.#resolveStep(path, options.name);
-			// Each component the reset walks through is collected exactly once.
-			if (state.components.some((c) => c.kind !== "channel" && c.component === choreographyComponent.component)) {
-				throw new ComponentAlreadyCollectedError(choreographyComponent.component);
+			// The replacement is collected exactly once; anything further belongs to its validation round.
+			if (state.components.length > 0) {
+				throw new ComponentAlreadyCollectedError(state.component);
 			}
+			const { authComponent } = this.#resolveRecoverReset(state, identity);
 			state.components.push(
 				...await authComponent.getIdentityComponent(
-					choreographyComponent.component,
+					state.component,
 					options.value,
 					false,
-					this.#recoverContext(state, choreographyComponent.component, identity),
+					this.#recoverContext(state, state.component, identity),
 				),
 			);
-			const identityComponent = this.#collectedIdentityComponent(state.components, choreographyComponent.component);
+			const identityComponent = this.#collectedIdentityComponent(state.components, state.component);
 			if (!identityComponent.confirmed && authComponent.verificationComponent) {
-				const ctx = this.#recoverContext(state, choreographyComponent.component, identity);
+				const ctx = this.#recoverContext(state, state.component, identity);
 				const verificationAuthDanceComponent = await authComponent.verificationComponent(ctx);
 				return { state: await this.#encryptState(state, expireAt), prompt: await verificationAuthDanceComponent.getPrompt(ctx), expireAt };
 			}
@@ -1804,10 +1827,9 @@ export class AuthDanceApi {
 				...advanceOptions,
 				identity,
 				flow: "recover",
-				// The component the recovery proved control of, which is what a listener acts on. Which components
-				// the reset walked through after it is on the identity the event carries.
+				// The component the recovery reset, which is what a listener acts on. Which component the caller
+				// proved control through is not what changed.
 				name: state.component,
-				path: [...path, choreographyComponent.component],
 				persist: true,
 			};
 		} else if (state.kind === "unenroll") {
@@ -1889,14 +1911,15 @@ export class AuthDanceApi {
 	 *
 	 * A sign-up, an enroll, a rotate, a recover and a subscribe all validate a value. A sign-in has no validation
 	 * phase, and a confirmation-only flow has none either. A rotate and a recover use this method in both of
-	 * their phases. Before the flow collects the replacement, the message proves control of the current value.
-	 * Afterwards it validates the replacement.
+	 * their phases. Before the flow collects the replacement, the message proves control of the current value — of
+	 * the component the caller identified through, for a recovery. Afterwards it validates the replacement.
 	 *
 	 * For a subscribe the library picks the first confirmed channel other than the channel the flow subscribes
-	 * to, so `name` does not select it. This method needs no access token and no fresh sign-in.
+	 * to, so `name` does not select it. A recovery names one component in each of its phases, so `name` does not
+	 * select there either. This method needs no access token and no fresh sign-in.
 	 *
-	 * @param options `name` selects which component to validate when the reset or the sign-up step is a choice.
-	 * `locale` picks the language of the message. `state` is the opaque string the previous call returned.
+	 * @param options `name` selects which component to validate when the sign-up step is a choice. `locale` picks
+	 * the language of the message. `state` is the opaque string the previous call returned.
 	 * @throws InvalidStateError when the state does not decrypt, carries no expiry, or no longer matches the schema.
 	 * @throws RateLimitedError when the `send` bucket of the subject is empty.
 	 * @throws InvalidStateForFlowError when the flow has no validation to deliver.
@@ -1933,11 +1956,11 @@ export class AuthDanceApi {
 			authComponent = ac;
 			ctx = c;
 		} else if (state.kind === "recover") {
-			// Serves both phases too: proving control of the component the recovery started from, then validating
-			// a replacement collected during the reset.
+			// Serves both phases too: proving control of the component the caller picked to identify with, then
+			// validating the replacement collected for the recovered component.
 			const identity = await this.#recoverIdentity(state);
 			const { ctx: c, verificationAuthDanceComponent: ac } = state.verified
-				? await this.#resolveRecoverReset(state, identity, options.name)
+				? await this.#resolveRecoverResetVerification(state, identity)
 				: await this.#resolveRecoverControl(state, identity);
 			authComponent = ac;
 			ctx = c;
@@ -2070,38 +2093,28 @@ export class AuthDanceApi {
 				const { ctx, verificationAuthDanceComponent } = await this.#resolveRecoverControl(state, identity);
 				const verified = await verificationAuthDanceComponent.verifyPrompt(options.value, ctx);
 				if (verified !== true) {
-					throw new InvalidValidationValueError(state.component);
+					throw new InvalidValidationValueError(state.identification!);
 				}
 				state.verified = true;
-				// Control established: the reset now walks whatever the choreography still requires after the
-				// recovered component, one component at a time.
-				advanceOptions = {
-					...advanceOptions,
-					identity,
-					flow: "recover",
-					path: this.#recoverPath(state),
-				};
-			} else {
-				const { path, choreographyComponent, identityComponent, ctx, verificationAuthDanceComponent } = await this.#resolveRecoverReset(
-					state,
-					identity,
-					options.name,
-				);
-				const verified = await verificationAuthDanceComponent.verifyPrompt(options.value, ctx);
-				if (verified !== true) {
-					throw new InvalidValidationValueError(choreographyComponent.component);
-				}
-				identityComponent.confirmed = true;
-				this.#applyReplacement(identity, state.components);
-				advanceOptions = {
-					...advanceOptions,
-					identity,
-					flow: "recover",
-					name: state.component,
-					path: [...path, choreographyComponent.component],
-					persist: true,
-				};
+				// Control established, now collect the replacement of the recovered component — the same second
+				// phase a rotation reaches once the current value is proven.
+				const { authComponent, ctx: resetCtx } = this.#resolveRecoverReset(state, identity);
+				return { state: await this.#encryptState(state, expireAt), prompt: await authComponent.getPrompt(resetCtx), expireAt };
 			}
+			const { identityComponent, ctx, verificationAuthDanceComponent } = await this.#resolveRecoverResetVerification(state, identity);
+			const verified = await verificationAuthDanceComponent.verifyPrompt(options.value, ctx);
+			if (verified !== true) {
+				throw new InvalidValidationValueError(state.component);
+			}
+			identityComponent.confirmed = true;
+			this.#applyReplacement(identity, state.components);
+			advanceOptions = {
+				...advanceOptions,
+				identity,
+				flow: "recover",
+				name: state.component,
+				persist: true,
+			};
 		} else if (state.kind === "subscribe") {
 			const { identity } = await this.#sessionIdentity(state.sessionId);
 			const sendChannel = this.#subscribeSendChannel(identity, state.channel.channel);
