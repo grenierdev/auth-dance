@@ -1,11 +1,12 @@
 {
 	"tasks": {
-		"build:css": "deno run -A @tailwindcss/cli -i ./styles.css -o ./main.css",
-		"build:js": "deno bundle --platform browser -o ./main.js ./main.ts",
-		"build": "deno task build:css && deno task build:js",
+		"build:css": "deno run -A @tailwindcss/cli -i ./styles.css -o ./dist/main.css",
+		"build:js": "deno bundle --platform browser -o ./dist/main.js ./main.ts",
+		"build": "deno task build:css && deno task build:js && cp ./index.html ./dist/index.html",
 		"check": "deno check ./main.ts",
 		"serve": "deno run -A jsr:@std/http/file-server --port 8000 .",
-		"dev": "deno task build && deno task serve"
+		"dev": "deno task build && deno task serve",
+		"deploy": "deno run --allow-all npm:wrangler deploy --config ./wrangler.jsonc"
 	},
 	"imports": {
 		"auth-dance": "../src/mod.ts",
@@ -17,7 +18,8 @@
 		"@tailwindcss/cli": "npm:@tailwindcss/cli@^4.3.3",
 		"daisyui": "npm:daisyui@^5.7.10",
 		"tailwindcss": "npm:tailwindcss@^4.3.3",
-		"valibot": "npm:valibot@^1.4.2"
+		"valibot": "npm:valibot@^1.4.2",
+		"wrangler": "npm:wrangler@^4.118.0"
 	},
 	"compilerOptions": {
 		"lib": ["deno.ns", "dom", "dom.iterable", "esnext"]

@@ -1,0 +1,22 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "../node_modules/wrangler/config-schema.json",
+	"name": "auth-dance-demo",
+	"assets": {
+		"directory": "./dist"
+	},
+	"build": {
+		"command": "deno task build",
+		"cwd": "."
+	},
+	"compatibility_date": "2026-05-21",
+	"routes": [
+		{
+			"pattern": "demo.auth.dance",
+			"custom_domain": true
+		}
+	]
+}
