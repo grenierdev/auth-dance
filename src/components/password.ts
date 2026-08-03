@@ -56,28 +56,70 @@ export function pbkdf2PasswordHasher(iterations: number = 600_000): PasswordHash
 const DECOY_PASSWORD = "decoy";
 
 /**
- * The key that `timingSafeEqual` signs with. One key serves the whole process. It is fresh at every start, and
- * it never leaves this module.
+ * What compares two signatures of the same length in a time that says nothing about where they differ. Both
+ * arrays that `timingSafeEqual` hands over measure 32 bytes, so no implementation of this type reads a length.
  */
-let comparisonKey: Promise<CryptoKey> | undefined;
+type ConstantTimeEqual = (left: Uint8Array, right: Uint8Array) => boolean;
+
+/**
+ * The comparison that `timingSafeEqual` runs. One resolution serves the whole process.
+ */
+let constantTimeEqual: Promise<ConstantTimeEqual> | undefined;
+
+/**
+ * Finds the comparison that the runtime holds. Workers keeps one on `crypto.subtle`, Node and Deno keep one in
+ * `node:crypto`, and a runtime with neither gets the loop above.
+ *
+ * Both native comparisons throw where the two arrays differ in length. The signatures never do.
+ */
+async function resolveConstantTimeEqual(): Promise<ConstantTimeEqual> {
+	// Cloudflare Workers. The method is an extension of the Web Crypto API, so the standard type does not carry it.
+	const subtle = crypto.subtle as SubtleCrypto & { timingSafeEqual?: ConstantTimeEqual };
+	if (typeof subtle.timingSafeEqual === "function") {
+		return subtle.timingSafeEqual.bind(subtle);
+	}
+	try {
+		// Node and Deno. The specifier stays in a variable, because a bundler resolves a literal one at build
+		// time: a Workers build with no `nodejs_compat` fails on a module that this line never reaches there.
+		const specifier = "node:crypto";
+		const { timingSafeEqual } = await import(specifier);
+		if (typeof timingSafeEqual === "function") {
+			return timingSafeEqual;
+		}
+	} catch {
+		// The runtime holds no `node:crypto`, and the loop below answers the same thing.
+	}
+	/**
+	 * Compares the two signatures in a loop that reads every byte of both. This is what the module falls back on
+	 * where the runtime holds no comparison of its own.
+	 *
+	 * A JIT is free to compile this loop into something that stops early, and nothing in the language prevents it.
+	 * The native comparisons that `resolveConstantTimeEqual` looks for first hold a guarantee that this loop only
+	 * approaches.
+	 */
+	return function fallbackConstantTimeEqual(left: Uint8Array, right: Uint8Array): boolean {
+		let difference = 0;
+		for (let i = 0; i < left.length; i++) {
+			difference |= left[i] ^ right[i];
+		}
+		return difference === 0;
+	};
+}
 
 /**
  * Compares two hashes in a time that says nothing about where they differ.
  *
- * The function signs each string with an HMAC key that nobody outside this module holds, then compares the two
- * signatures byte by byte. An attacker cannot aim a guess at a signature they cannot predict. Both signatures
- * are 32 bytes whatever the two strings measure, so the loop reads the same bytes for a record of any length.
+ * The function signs each string with an HMAC key that nobody outside this module holds, then hands the two
+ * signatures to the comparison that the runtime holds. An attacker cannot aim a guess at a signature they cannot
+ * predict. Both signatures are 32 bytes whatever the two strings measure, so the comparison reads the same bytes
+ * for a record of any length.
  */
 async function timingSafeEqual(left: string, right: string): Promise<boolean> {
-	const key = await (comparisonKey ??= crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, false, ["sign"]));
+	const equals = await (constantTimeEqual ??= resolveConstantTimeEqual());
 	const encoder = new TextEncoder();
-	const a = new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(left)));
-	const b = new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(right)));
-	let difference = 0;
-	for (let i = 0; i < a.length; i++) {
-		difference |= a[i] ^ b[i];
-	}
-	return difference === 0;
+	const a = new Uint8Array(encoder.encode(left));
+	const b = new Uint8Array(encoder.encode(right));
+	return equals(a, b);
 }
 
 /**
