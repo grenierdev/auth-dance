@@ -86,10 +86,11 @@ export default class EmailAuthDanceComponent implements AuthDanceComponent {
 	/**
 	 * Resolves the identity an address belongs to.
 	 *
-	 * The lookup passes the fixed value `email` as the identification component name, and never `context.name`. The
-	 * identity then has to hold an identification under `context.name` that carries the same address and is
-	 * confirmed. An identification that nobody confirmed gives `false`. The component normalizes nothing, so the
-	 * lookup and the comparison both use the address as the client typed it.
+	 * The lookup passes `context.name` as the identification component name, which is the name the record carries.
+	 * A deployment that declares the component twice — a work address and a personal one, say — therefore resolves
+	 * each name through its own records. The identity then has to hold an identification under that name carrying
+	 * the same address, and confirmed: an identification that nobody confirmed gives `false`. The component
+	 * normalizes nothing, so the lookup and the comparison both use the address as the client typed it.
 	 * @returns The id of the identity that owns the address. `false` in every other case, which includes a value
 	 * that is not a string.
 	 */
@@ -99,7 +100,7 @@ export default class EmailAuthDanceComponent implements AuthDanceComponent {
 			return false;
 		}
 		const identity = await context.storage
-			.getIdentityByIdentification("email", identification)
+			.getIdentityByIdentification(context.name, identification)
 			.catch((_) => null);
 		if (!identity) {
 			return false;

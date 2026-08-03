@@ -136,6 +136,54 @@ describe("Api", () => {
 		assert("tokens" in result3);
 		assertEquals(result3.identity.id, identity.id);
 	});
+	it("should sign-in through either component of the same kind", async () => {
+		// The email component resolves its records under the name it is declared with, so a deployment can declare
+		// it twice — a work address and a personal one — and each name answers for its own identifications only.
+		const api = new AuthDanceApi({
+			...apiOptions,
+			choreography: sequence(choice("email", "email2"), "password"),
+		});
+		const identity = await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await email2.getIdentityComponent(
+				"email2",
+				"john.doe2@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
+		const result1 = await api.signIn();
+		assert(result1.prompt.kind === "choice");
+		const result2 = await api.submitPrompt({
+			name: "email2",
+			value: "john.doe2@example.com",
+			state: result1.state,
+		});
+		assert("state" in result2);
+		const result3 = await api.submitPrompt({
+			name: "password",
+			value: "foo",
+			state: result2.state,
+		});
+		assert("tokens" in result3);
+		assertEquals(result3.identity.id, identity.id);
+		// And each name answers for its own records alone: the address enrolled under "email" is not an "email2".
+		const other1 = await api.signIn();
+		const rejected = await assertRejects(
+			() =>
+				api.submitPrompt({
+					name: "email2",
+					value: "john.doe@example.com",
+					state: other1.state,
+				}),
+			AuthDanceError,
+		);
+		assertEquals(rejected.code, "INVALID_PROMPT_VALUE");
+	});
 	it("should not sign-in with a wrong challenge", async () => {
 		await seedIdentity({ name: "John Doe" }, async (seed) => [
 			...await email.getIdentityComponent(
@@ -938,18 +986,64 @@ describe("Api", () => {
 	});
 	it("should offer every component a recovery can be proven through", async () => {
 		// Two components of this choreography identify and verify on their own, so the owner picks which one of
-		// them to prove. The choice is one between components and not between values, so it discloses nothing
-		// about an identity — this call resolves none, and there is none seeded here.
+		// them to prove — and the recovery runs through the one they picked, not through the first on offer.
 		const api = new AuthDanceApi({
 			...apiOptions,
 			choreography: sequence(choice("email", "email2"), "password"),
 		});
+		const identity1 = await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await email2.getIdentityComponent(
+				"email2",
+				"john.doe2@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+		]);
 		const result1 = await api.recover({ name: "password" });
 		assert(result1.prompt.kind === "choice");
 		assertEquals(
 			result1.prompt.components.map((p) => (p.kind === "input" ? p.name : null)),
 			["email", "email2"],
 		);
+		const result2 = await api.submitPrompt({
+			name: "email2",
+			value: "john.doe2@example.com",
+			state: result1.state,
+		});
+		assert("state" in result2);
+		assert(result2.prompt.kind === "input");
+		assert(result2.prompt.type === "otp");
+		// The code goes to the channel of the component that was picked, and nothing reaches the other one.
+		const sent = await api.sendValidation({ name: "email2", locale: "en", state: result2.state });
+		assert(sent.success);
+		assertEquals(channelEmail.messages.length, 0);
+		assertEquals(channelEmail2.messages.length, 1);
+		const code = channelEmail2.messages[0].content["text/x-code"];
+		assert(code);
+		const result3 = await api.submitValidation({
+			name: "email2",
+			value: code,
+			state: result2.state,
+		});
+		assert("state" in result3);
+		assert(result3.prompt.kind === "input");
+		assert(result3.prompt.type === "password");
+		const result4 = await api.submitPrompt({
+			name: "password",
+			value: "bar",
+			state: result3.state,
+		});
+		assert("success" in result4);
+		assert(result4.success);
+		const identity2 = await storage.getIdentity(identity1.id);
+		const passwordComponent1 = identity1.components.find((c) => c.kind === "challenge" && c.component === "password");
+		const passwordComponent2 = identity2?.components.find((c) => c.kind === "challenge" && c.component === "password");
+		assert(passwordComponent1?.data?.hash !== passwordComponent2?.data?.hash);
 	});
 	it("should not identify a recovery through a component it did not offer", async () => {
 		await johnDoe();

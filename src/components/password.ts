@@ -67,6 +67,23 @@ type ConstantTimeEqual = (left: Uint8Array, right: Uint8Array) => boolean;
 let constantTimeEqual: Promise<ConstantTimeEqual> | undefined;
 
 /**
+ * The HMAC key that signs both sides of a comparison. One random key serves the whole process, and nothing
+ * outside this module ever holds it.
+ */
+let comparisonKey: Promise<CryptoKey> | undefined;
+
+/** Draws the key that signs the two strings `timingSafeEqual` compares. */
+function resolveComparisonKey(): Promise<CryptoKey> {
+	return crypto.subtle.importKey(
+		"raw",
+		crypto.getRandomValues(new Uint8Array(32)),
+		{ name: "HMAC", hash: "SHA-256" },
+		false,
+		["sign"],
+	);
+}
+
+/**
  * Finds the comparison that the runtime holds. Workers keeps one on `crypto.subtle`, Node and Deno keep one in
  * `node:crypto`, and a runtime with neither gets the loop above.
  *
@@ -112,14 +129,21 @@ async function resolveConstantTimeEqual(): Promise<ConstantTimeEqual> {
  * The function signs each string with an HMAC key that nobody outside this module holds, then hands the two
  * signatures to the comparison that the runtime holds. An attacker cannot aim a guess at a signature they cannot
  * predict. Both signatures are 32 bytes whatever the two strings measure, so the comparison reads the same bytes
- * for a record of any length.
+ * for a record of any length — and it never meets the two lengths that make a native comparison throw. A record
+ * that another pepper, another hasher or an older version of this library wrote is therefore rejected here rather
+ * than raised out of `verifyPrompt`, and so is the empty string that stands in for a password nobody enrolled.
  */
 async function timingSafeEqual(left: string, right: string): Promise<boolean> {
-	const equals = await (constantTimeEqual ??= resolveConstantTimeEqual());
+	const [equals, key] = await Promise.all([
+		constantTimeEqual ??= resolveConstantTimeEqual(),
+		comparisonKey ??= resolveComparisonKey(),
+	]);
 	const encoder = new TextEncoder();
-	const a = new Uint8Array(encoder.encode(left));
-	const b = new Uint8Array(encoder.encode(right));
-	return equals(a, b);
+	const [a, b] = await Promise.all([
+		crypto.subtle.sign("HMAC", key, encoder.encode(left)),
+		crypto.subtle.sign("HMAC", key, encoder.encode(right)),
+	]);
+	return equals(new Uint8Array(a), new Uint8Array(b));
 }
 
 /**
