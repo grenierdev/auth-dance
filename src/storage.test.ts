@@ -99,8 +99,12 @@ describe("Storage", () => {
 		await storage.unsetKv("greeting");
 		assertEquals(await storage.listKv("greeting"), []);
 	});
-	it("should keep a KV value readable before its ttl elapses", async () => {
-		await storage.setKv("greeting", "hello", 60_000);
+	it("should keep a KV value readable for the seconds its ttl counts", async () => {
+		// The ttl is a count of seconds, so a value given one of them is still there a fraction of a second on.
+		// A provider that added that count to a millisecond clock dropped it here instead, and with it every
+		// one-time code a caller took longer than a moment to type.
+		await storage.setKv("greeting", "hello", 1);
+		await new Promise((resolve) => setTimeout(resolve, 50));
 		assertEquals(await storage.getKv("greeting"), "hello");
 	});
 

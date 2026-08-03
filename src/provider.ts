@@ -91,10 +91,10 @@ export interface AuthDanceKvProvider {
 	/**
 	 * Write a value under a key, and replace what the key already holds.
 	 *
-	 * @param ttl How long the value stays readable. Every caller in this library passes a count of seconds.
-	 * `AuthDanceStorage.createSession` derives that count from the session expiry, and `OtpAuthDanceComponent`
-	 * passes the lifetime of its code. `MemoryKvProvider` adds the number to a millisecond clock, so the two
-	 * disagree. Without a ttl the value stays until a caller unsets it.
+	 * @param ttl How long the value stays readable, as a count of seconds. `AuthDanceStorage.createSession`
+	 * derives that count from the session expiry, and `OtpAuthDanceComponent` passes the lifetime of its code.
+	 * An adapter over a store that counts in another unit converts it, the way `MemoryKvProvider` does for its
+	 * millisecond clock. Without a ttl the value stays until a caller unsets it.
 	 */
 	set: (key: string, value: string, ttl?: number) => Promise<void>;
 	/**

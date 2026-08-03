@@ -163,7 +163,7 @@ export class AuthDanceStorage {
 	 *
 	 * The session gets a fresh `ses_` ksuid. The same JSON goes to `session/${id}` for a read by id, and to
 	 * `sessions/${identityId}/${id}` as the index of one identity. Both writes carry the same time to live, a
-	 * count of seconds from now to `expireAt`. Read `setKv` about the unit that each adapter expects.
+	 * count of seconds from now to `expireAt`. Read `setKv` about that unit.
 	 *
 	 * @param options.identityId The identity this session signs in.
 	 * @param options.scopes The scopes the session carries.

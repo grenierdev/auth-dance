@@ -1079,6 +1079,35 @@ describe("Api", () => {
 		const rejected = await assertRejects(() => api.signOut(forged), AuthDanceError);
 		assertEquals(rejected.code, "INVALID_ACCESS_TOKEN");
 	});
+	it("should read a state back under the issuer it was minted with", async () => {
+		await johnDoe();
+		// The issuer travels as the `iss` claim of the state, the way it does on the minted tokens, because the
+		// library hands the configured issuer to jose and jose checks the claim. An issuer that only reached the
+		// protected header left that claim unset, and every flow of a deployment that configured one then failed
+		// on its second call with INVALID_STATE.
+		const issuedApi = new AuthDanceApi({ ...apiOptions, tokens: { issuer: "auth-dance-demo" } });
+		const result1 = await issuedApi.signIn();
+		const result2 = await issuedApi.submitPrompt({
+			name: "email",
+			value: "john.doe@example.com",
+			state: result1.state,
+		});
+		assert("state" in result2);
+		assert(result2.prompt.kind === "input");
+		assert(result2.prompt.type === "password");
+		// And the check is a real one: the same state under another issuer does not decrypt.
+		const otherApi = new AuthDanceApi({ ...apiOptions, tokens: { issuer: "somebody-else" } });
+		const rejected = await assertRejects(
+			() =>
+				otherApi.submitPrompt({
+					name: "email",
+					value: "john.doe@example.com",
+					state: result1.state,
+				}),
+			AuthDanceError,
+		);
+		assertEquals(rejected.code, "INVALID_STATE");
+	});
 	it("should reject a forged state without reaching the flow", async () => {
 		const rejected = await assertRejects(
 			() =>

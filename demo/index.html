@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>auth-dance — in-browser demo</title>
+		<link
+			rel="icon"
+			href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Ctext%20y='14'%3E🥔%3C/text%3E%3C/svg%3E"
+		/>
+		<link rel="stylesheet" href="./main.css" />
+	</head>
+	<body class="bg-base-200 text-base-content">
+		<div class="drawer drawer-end">
+			<input id="options-drawer" type="checkbox" class="drawer-toggle" />
+
+			<div class="drawer-content flex min-h-screen flex-col">
+				<header class="navbar sticky top-0 z-10 gap-2 bg-base-100 shadow-sm">
+					<div class="navbar-start gap-2">
+						<span class="text-lg font-semibold">auth-dance</span>
+						<span class="badge badge-sm badge-outline max-sm:hidden">everything runs in this page</span>
+					</div>
+					<div class="navbar-end gap-2">
+						<span id="status" class="badge badge-ghost">Signed out</span>
+						<label for="options-drawer" class="btn btn-sm drawer-button">Options</label>
+					</div>
+				</header>
+
+				<div id="busy" class="invisible">
+					<progress class="progress progress-primary h-1 w-full" aria-label="Working"></progress>
+				</div>
+
+				<main class="mx-auto grid w-full max-w-6xl grow gap-4 p-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+					<section id="stage" class="flex min-w-0 flex-col gap-4"></section>
+
+					<section class="min-w-0">
+						<div class="tabs tabs-box">
+							<input type="radio" name="side-tabs" class="tab" aria-label="Inbox" checked="checked" />
+							<div id="inbox" class="tab-content border-base-300 bg-base-100 p-4"></div>
+
+							<input type="radio" name="side-tabs" class="tab" aria-label="Wire" />
+							<div id="wire" class="tab-content border-base-300 bg-base-100 p-4"></div>
+
+							<input type="radio" name="side-tabs" class="tab" aria-label="Session" />
+							<div id="session" class="tab-content border-base-300 bg-base-100 p-4"></div>
+						</div>
+					</section>
+				</main>
+
+				<footer class="footer footer-center gap-1 p-4 text-xs opacity-70">
+					<p>
+						No server, no network: the page builds an Auth Dance with the memory providers and calls
+						<code>auth.fetch()</code> directly.
+					</p>
+				</footer>
+			</div>
+
+			<div class="drawer-side z-20">
+				<label for="options-drawer" aria-label="Close options" class="drawer-overlay"></label>
+				<aside id="options" class="min-h-full w-full max-w-md bg-base-100 p-4"></aside>
+			</div>
+		</div>
+
+		<script type="module" src="./main.js"></script>
+	</body>
+</html>

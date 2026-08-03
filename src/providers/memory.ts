@@ -159,14 +159,13 @@ export class MemoryKvProvider implements AuthDanceKvProvider, Disposable {
 
 	/**
 	 * Writes a value under a key, and replaces an earlier value for the same key.
-	 * @param ttl Lifetime of the entry. The provider adds this number to the current clock time in
-	 * milliseconds, but the `AuthDanceKvProvider` contract states seconds. The two callers in this library
-	 * pass seconds, so an entry here expires 1000 times sooner than the caller asks. Omit `ttl` to keep
+	 * @param ttl Lifetime of the entry in seconds, as the `AuthDanceKvProvider` contract states. The provider
+	 * keeps a millisecond clock, so it multiplies the count before it stores the deadline. Omit `ttl` to keep
 	 * the entry until `unset` or until dispose.
 	 */
 	set(key: string, value: string, ttl?: number): Promise<void> {
 		const now = new Date().getTime();
-		const expiration = ttl !== undefined ? now + ttl : undefined;
+		const expiration = ttl !== undefined ? now + ttl * 1000 : undefined;
 		const item = { value, expiration };
 		this.#storage.set(key, structuredClone(item));
 		return Promise.resolve();

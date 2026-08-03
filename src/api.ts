@@ -322,9 +322,11 @@ export interface AuthDanceApiOptions {
 	/** How the minted tokens present themselves. */
 	tokens?: {
 		/**
-		 * The `iss` claim of every minted token. The encrypted state carries the same value in its header.
+		 * The `iss` claim of every minted token. The encrypted state carries the same claim, and the library
+		 * checks that claim every time it reads a state back.
 		 *
-		 * The default applies to the minted tokens only. Omit this option and the state header carries no issuer.
+		 * The default applies to the minted tokens only. Omit this option and the state carries no issuer, and
+		 * the library checks none.
 		 * @defaultValue "acme"
 		 */
 		issuer?: string;
@@ -1090,13 +1092,16 @@ export class AuthDanceApi {
 		return { path, choreographyComponent, identityComponent, ctx, verificationAuthDanceComponent };
 	}
 
+	// The issuer travels as the `iss` claim, the way the minted tokens carry it. #decryptState hands the
+	// configured issuer to jose, and jose checks it against the claim: an issuer in the protected header instead
+	// left that claim unset, so every state of a deployment that configured one failed to decrypt.
 	#encryptState(state: AuthDanceState, expireAt: Date): Promise<string> {
+		const issuer = this.#options.tokens?.issuer;
 		const jwt = new EncryptJWT({ state })
-			.setProtectedHeader({ alg: "dir", enc: "A256GCM", issuer: this.#options.tokens?.issuer })
+			.setProtectedHeader({ alg: "dir", enc: "A256GCM" })
 			.setIssuedAt()
-			.setExpirationTime(expireAt)
-			.encrypt(this.#decodedSecret);
-		return jwt;
+			.setExpirationTime(expireAt);
+		return (issuer === undefined ? jwt : jwt.setIssuer(issuer)).encrypt(this.#decodedSecret);
 	}
 
 	// A state that fails to decrypt, carries no expiry, or no longer matches the schema is a stale or forged
