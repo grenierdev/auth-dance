@@ -440,9 +440,9 @@ export class AuthDanceApi {
 	}
 
 	#sendMessage(message: AuthDanceMessage): Promise<void> {
-		const ch = this.#options.channels[message.recipient.channel];
+		const ch = this.#options.channels[message.recipient.component];
 		if (!ch) {
-			throw new UnknownChannelError(message.recipient.channel);
+			throw new UnknownChannelError(message.recipient.component);
 		}
 		return ch.sendMessage(message);
 	}
@@ -471,7 +471,7 @@ export class AuthDanceApi {
 				throw new IdentityNotFoundError(identityId);
 			}
 			const identityChannel = identity.components
-				.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.channel === channel);
+				.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === channel);
 			if (!identityChannel) {
 				throw new ChannelNotSubscribedError(channel);
 			}
@@ -847,7 +847,7 @@ export class AuthDanceApi {
 	// subscribing SMS).
 	#subscribeSendChannel(identity: AuthDanceIdentity, subscribing: string): AuthDanceIdentityChannel {
 		const channel = identity.components
-			.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.confirmed && c.channel !== subscribing);
+			.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.confirmed && c.component !== subscribing);
 		if (!channel) {
 			throw new NoVerificationChannelError(subscribing);
 		}
@@ -857,7 +857,7 @@ export class AuthDanceApi {
 	#subscribeContext(state: AuthDanceStateSubscribe, identity: AuthDanceIdentity): AuthDanceComponentContext {
 		return {
 			storage: this.#options.storage,
-			name: state.channel.channel,
+			name: state.channel.component,
 			stateId: state.id,
 			flow: "subscribe",
 			identity,
@@ -958,7 +958,7 @@ export class AuthDanceApi {
 				return !replaced.has(previous.component);
 			}
 			const replacement = components
-				.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.channel === previous.channel);
+				.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === previous.component);
 			if (!replacement) {
 				return true;
 			}
@@ -1406,7 +1406,7 @@ export class AuthDanceApi {
 		return this.#guard("subscribe", async () => {
 			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
-			if (identity.components.some((c) => c.kind === "channel" && c.channel === options.name)) {
+			if (identity.components.some((c) => c.kind === "channel" && c.component === options.name)) {
 				throw new ChannelAlreadySubscribedError(options.name);
 			}
 			const channel = this.#options.channels[options.name];
@@ -1419,7 +1419,7 @@ export class AuthDanceApi {
 				id: ksuid("st_"),
 				kind: "subscribe",
 				sessionId: session.id,
-				channel: { kind: "channel", channel: options.name, confirmed: false, data: {} },
+				channel: { kind: "channel", component: options.name, confirmed: false, data: {} },
 				validating: false,
 			};
 			const prompt = await channel.getPrompt({
@@ -1455,7 +1455,7 @@ export class AuthDanceApi {
 		return this.#guard("unsubscribe", async () => {
 			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
-			const channel = identity.components.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.channel === options.name);
+			const channel = identity.components.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === options.name);
 			if (!channel) {
 				throw new ChannelNotSubscribedError(options.name);
 			}
@@ -1856,10 +1856,10 @@ export class AuthDanceApi {
 			const { identity } = await this.#sessionIdentity(state.sessionId);
 			// Stash the submitted recipient on the pending channel, keyed by the channel name (mirrors how the
 			// email component stores its address), then move to OTP validation.
-			state.channel.data = { ...(state.channel.data ?? {}), [state.channel.channel]: options.value };
+			state.channel.data = { ...(state.channel.data ?? {}), [state.channel.component]: options.value };
 			state.validating = true;
-			const sendChannel = this.#subscribeSendChannel(identity, state.channel.channel);
-			const prompt = await new OtpAuthDanceComponent(sendChannel.channel).getPrompt(this.#subscribeContext(state, identity));
+			const sendChannel = this.#subscribeSendChannel(identity, state.channel.component);
+			const prompt = await new OtpAuthDanceComponent(sendChannel.component).getPrompt(this.#subscribeContext(state, identity));
 			return { state: await this.#encryptState(state, expireAt), prompt, expireAt };
 		} else if (state.kind === "unsubscribe") {
 			// A single confirmation gate: the authenticated caller must explicitly confirm (value === true)
@@ -1868,7 +1868,7 @@ export class AuthDanceApi {
 				throw new ConfirmationRequiredError(state.channel);
 			}
 			const { identity } = await this.#sessionIdentity(state.sessionId);
-			identity.components = identity.components.filter((c) => !(c.kind === "channel" && c.channel === state.channel));
+			identity.components = identity.components.filter((c) => !(c.kind === "channel" && c.component === state.channel));
 			advanceOptions = {
 				...advanceOptions,
 				identity,
@@ -1966,7 +1966,7 @@ export class AuthDanceApi {
 			ctx = c;
 		} else if (state.kind === "subscribe") {
 			const { identity } = await this.#sessionIdentity(state.sessionId);
-			authComponent = new OtpAuthDanceComponent(this.#subscribeSendChannel(identity, state.channel.channel).channel);
+			authComponent = new OtpAuthDanceComponent(this.#subscribeSendChannel(identity, state.channel.component).component);
 			ctx = this.#subscribeContext(state, identity);
 		} else {
 			throw new InvalidStateForFlowError(state.kind);
@@ -2117,13 +2117,13 @@ export class AuthDanceApi {
 			};
 		} else if (state.kind === "subscribe") {
 			const { identity } = await this.#sessionIdentity(state.sessionId);
-			const sendChannel = this.#subscribeSendChannel(identity, state.channel.channel);
-			const verified = await new OtpAuthDanceComponent(sendChannel.channel).verifyPrompt(
+			const sendChannel = this.#subscribeSendChannel(identity, state.channel.component);
+			const verified = await new OtpAuthDanceComponent(sendChannel.component).verifyPrompt(
 				options.value,
 				this.#subscribeContext(state, identity),
 			);
 			if (verified !== true) {
-				throw new InvalidValidationValueError(state.channel.channel);
+				throw new InvalidValidationValueError(state.channel.component);
 			}
 			state.channel.confirmed = true;
 			identity.components.push(state.channel);
@@ -2131,7 +2131,7 @@ export class AuthDanceApi {
 				...advanceOptions,
 				identity,
 				flow: "subscribe",
-				name: state.channel.channel,
+				name: state.channel.component,
 				persist: true,
 			};
 		} else {

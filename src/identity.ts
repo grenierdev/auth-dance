@@ -143,7 +143,7 @@ export interface AuthDanceIdentityChannelPublic {
 	 * Name of the channel, the same key `api.channels` maps to a delivery adapter. An identity holds one
 	 * record per name, so a channel a component emits again replaces the record of that name.
 	 */
-	channel: string;
+	component: string;
 	/**
 	 * Whether the owner has proven control of the recipient. The subscribe flow sets it to `true` after the
 	 * one-time code verifies. The library delivers that code over an already confirmed channel, never over
@@ -170,7 +170,7 @@ export interface AuthDanceIdentityChannel extends AuthDanceIdentityChannelPublic
 
 const AuthDanceIdentityChannelFields = {
 	kind: v.literal("channel"),
-	channel: v.string(),
+	component: v.string(),
 	confirmed: v.boolean(),
 	linkedTo: v.optional(v.array(v.string())),
 } as const;

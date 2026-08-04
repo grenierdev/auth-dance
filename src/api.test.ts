@@ -333,7 +333,7 @@ describe("Api", () => {
 		assert(result6.success);
 		const identity = await storage.getIdentity(result3.identity.id);
 		assert(
-			identity?.components.some((c) => c.kind === "channel" && c.channel === "sms" && c.confirmed),
+			identity?.components.some((c) => c.kind === "channel" && c.component === "sms" && c.confirmed),
 		);
 	});
 	it("should not subscribe a channel already subscribed to", async () => {
@@ -409,7 +409,7 @@ describe("Api", () => {
 		const identity = await storage.getIdentity(result3.identity.id);
 		assert(identity);
 		assert(
-			!identity.components.find((c) => c.kind === "channel" && c.channel === "sms"),
+			!identity.components.find((c) => c.kind === "channel" && c.component === "sms"),
 		);
 	});
 	it("should not unsubscribe a channel a component still relies on", async () => {

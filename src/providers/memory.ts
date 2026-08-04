@@ -1,5 +1,5 @@
 import type { AuthDanceChannel, AuthDanceChannelContext } from "../channel.ts";
-import { KVKeyNotFoundError } from "../error.ts";
+import { ComponentAlreadyEnrolledError, KVKeyNotFoundError } from "../error.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityChannel, AuthDanceIdentityIdentification } from "../identity.ts";
 import type { AuthDanceMessage } from "../message.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
@@ -84,6 +84,11 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 
 	/** Stores a clone of the identity under its own `id`. The provider replaces an earlier identity with the same id. */
 	set(identity: AuthDanceIdentity): Promise<void> {
+		if (
+			identity.components.some((c, i) => identity.components.findIndex((c2) => c2.kind === c.kind && c2.component === c.component) !== i)
+		) {
+			throw new ComponentAlreadyEnrolledError();
+		}
 		this.#storage.set(identity.id, structuredClone(identity));
 		return Promise.resolve();
 	}
@@ -294,7 +299,7 @@ export class MemoryAuthDanceChannel implements AuthDanceChannel, Disposable {
 	async getIdentityChannel(channel: string, value: unknown, confirmed: boolean = false): Promise<AuthDanceIdentityChannel> {
 		return {
 			kind: "channel",
-			channel,
+			component: channel,
 			confirmed,
 			data: { sms: value },
 		};

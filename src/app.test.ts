@@ -257,7 +257,7 @@ describe("App", () => {
 			},
 			{
 				kind: "channel",
-				channel: "email",
+				component: "email",
 				confirmed: true,
 				linkedTo: ["email"],
 			},
@@ -374,7 +374,7 @@ describe("App", () => {
 		assert(result6.success);
 		const identity = await storage.getIdentity(result3.identity.id);
 		assert(
-			identity?.components.some((c) => c.kind === "channel" && c.channel === "sms" && c.confirmed),
+			identity?.components.some((c) => c.kind === "channel" && c.component === "sms" && c.confirmed),
 		);
 	});
 
@@ -427,7 +427,7 @@ describe("App", () => {
 		const identity = await storage.getIdentity(result3.identity.id);
 		assert(identity);
 		assert(
-			!identity.components.find((c) => c.kind === "channel" && c.channel === "sms"),
+			!identity.components.find((c) => c.kind === "channel" && c.component === "sms"),
 		);
 	});
 

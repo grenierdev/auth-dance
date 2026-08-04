@@ -61,7 +61,7 @@ export default class EmailAuthDanceComponent implements AuthDanceComponent {
 			},
 			{
 				kind: "channel",
-				channel: this.#channel,
+				component: this.#channel,
 				confirmed: true,
 				data: { email },
 				linkedTo: [component],

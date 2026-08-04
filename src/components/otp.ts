@@ -117,7 +117,7 @@ export default class OtpAuthDanceComponent implements AuthDanceComponent {
 	 */
 	async sendPrompt(_locale: string, context: AuthDanceComponentContext): Promise<AuthDanceMessage> {
 		const identityChannel = context.identity?.components
-			.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.channel === this.#channel);
+			.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === this.#channel);
 		if (!identityChannel) {
 			throw new ChannelNotSubscribedError(this.#channel);
 		}
