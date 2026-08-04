@@ -1,31 +1,8 @@
 {
-	"tasks": {
-		"build:css": "deno run -A @tailwindcss/cli -i ./styles.css -o ./dist/main.css",
-		"build:js": "deno bundle --platform browser -o ./dist/main.js ./main.ts",
-		"build": "deno task build:css && deno task build:js && cp ./index.html ./dist/index.html",
-		"check": "deno check ./main.ts",
-		"serve": "deno run -A jsr:@std/http/file-server --port 8000 .",
-		"dev": "deno task build && deno task serve",
-		"deploy": "deno run --allow-all npm:wrangler deploy --config ./wrangler.jsonc"
-	},
-	"imports": {
-		"auth-dance": "../src/mod.ts",
-		"auth-dance/components/email": "../src/components/email.ts",
-		"auth-dance/components/otp": "../src/components/otp.ts",
-		"auth-dance/components/password": "../src/components/password.ts",
-		"auth-dance/providers/memory": "../src/providers/memory.ts",
-		"@std/http": "jsr:@std/http@^1.0.20",
-		"@tailwindcss/cli": "npm:@tailwindcss/cli@^4.3.3",
-		"daisyui": "npm:daisyui@^5.7.10",
-		"tailwindcss": "npm:tailwindcss@^4.3.3",
-		"valibot": "npm:valibot@^1.4.2",
-		"wrangler": "npm:wrangler@^4.118.0"
-	},
-	"compilerOptions": {
-		"lib": ["deno.ns", "dom", "dom.iterable", "esnext"]
-	},
-	"fmt": {
-		"lineWidth": 140,
-		"useTabs": true
-	}
+  "tasks": {
+    "dev:vite": "deno -A npm:vite"
+  },
+  "imports": {
+    "@/": "./src/"
+  }
 }
