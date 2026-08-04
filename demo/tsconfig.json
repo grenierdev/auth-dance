@@ -3,5 +3,13 @@
   "references": [
     { "path": "./tsconfig.app.json" },
     { "path": "./tsconfig.node.json" }
-  ]
+  ],
+  // Nothing compiles from here; the two referenced projects do that. The shadcn CLI reads this file to resolve
+  // the `@/` alias of components.json, so the mapping has to be repeated here.
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  }
 }

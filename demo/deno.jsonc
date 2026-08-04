@@ -1,8 +1,27 @@
 {
-  "tasks": {
-    "dev:vite": "deno -A npm:vite"
-  },
-  "imports": {
-    "@/": "./src/"
-  }
+	"tasks": {
+		"dev": "deno -A npm:vite",
+		"dev:vite": "deno -A npm:vite",
+		"build": "deno -A npm:vite build",
+		"preview": "deno -A npm:vite preview",
+		// The app is built by vite off tsconfig.json, not by deno's own resolver: the sources use extensionless "@/..."
+		// specifiers that only the bundler understands. Check with the same typescript the build uses, and --force so a
+		// stale tsbuildinfo cannot turn the task into a no-op.
+		"check": "deno -A npm:typescript@~6.0.2/tsc -b --force"
+	},
+	"imports": {
+		"@/": "./src/",
+		"auth-dance": "../src/mod.ts",
+		"auth-dance/components/email": "../src/components/email.ts",
+		"auth-dance/components/otp": "../src/components/otp.ts",
+		"auth-dance/components/password": "../src/components/password.ts",
+		"auth-dance/providers/memory": "../src/providers/memory.ts",
+		"@deno/vite-plugin": "npm:@deno/vite-plugin@^2.0.3",
+		"@std/encoding": "jsr:@std/encoding@1.0.6"
+	},
+	"compilerOptions": {
+		"lib": ["deno.ns", "dom", "dom.iterable", "esnext"],
+		"jsx": "react-jsx",
+		"jsxImportSource": "react"
+	}
 }
