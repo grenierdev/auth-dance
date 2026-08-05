@@ -10,10 +10,25 @@ import path from "node:path";
 // the TypeScript of the sibling library, and the `jsr:` specifiers that library imports.
 // https://vite.dev/config/
 export default defineConfig({
-  resolve: {
-    alias: {
-      "@": path.resolve(import.meta.dirname!, "./src"), // Maps @ to the src directory
-    },
-  },
-  plugins: [deno(), devtools(), tailwindcss(), tanstackStart(), react()],
+	resolve: {
+		alias: {
+			"@": path.resolve(import.meta.dirname!, "./src"), // Maps @ to the src directory
+		},
+	},
+	plugins: [
+		deno(),
+		devtools(),
+		tailwindcss(),
+		tanstackStart({
+			prerender: {
+				enabled: true,
+				crawlLinks: true, // Crawls routes automatically
+				onSuccess: () => {
+					console.log("Prerendering complete. Forcing process exit...");
+					process.exit(0); // Kills the hanging Node.js stream timeouts
+				},
+			},
+		}),
+		react(),
+	],
 });

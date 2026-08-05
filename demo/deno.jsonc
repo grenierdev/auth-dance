@@ -7,7 +7,8 @@
 		// The app is built by vite off tsconfig.json, not by deno's own resolver: the sources use extensionless "@/..."
 		// specifiers that only the bundler understands. Check with the same typescript the build uses, and --force so a
 		// stale tsbuildinfo cannot turn the task into a no-op.
-		"check": "deno -A npm:typescript@~6.0.2/tsc -b --force"
+		"check": "deno -A npm:typescript@~6.0.2/tsc -b --force",
+		"deploy": "deno run --allow-all npm:wrangler deploy --config ./wrangler.jsonc"
 	},
 	"imports": {
 		"@/": "./src/",
