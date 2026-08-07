@@ -1,0 +1,16 @@
+{
+	"name": "auth-dance",
+	"description": "A different approach to authentication",
+	"homepage": "https://auth.dance/",
+	"bugs": "https://github.com/grenierdev/auth-dance/issues",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/grenierdev/auth-dance.git",
+		"directory": "src"
+	},
+	"license": "MIT",
+	"engines": {
+		"node": ">=24.4.0",
+		"deno": ">=2.9.5"
+	}
+}

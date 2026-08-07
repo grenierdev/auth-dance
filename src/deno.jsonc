@@ -1,6 +1,6 @@
 {
 	"name": "auth-dance",
-	"version": "0.1.0-rc.1",
+	"version": "0.1.0-rc.2",
 	"exports": {
 		".": "./mod.ts",
 		"./components/email": "./components/email.ts",
