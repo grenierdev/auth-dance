@@ -16,7 +16,7 @@ import { ChannelNotSubscribedError, ComponentNotVerifiableError } from "../error
  * This is the only sendable component of the library. The client asks the library to deliver the code, and then
  * submits it the same way it submits any other prompt value.
  */
-export default class OtpAuthDanceComponent implements AuthDanceComponent {
+export class OtpAuthDanceComponent implements AuthDanceComponent {
 	/** The record the component contributes to an identity. A `challenge` proves a claim against an identity, and never resolves one. */
 	readonly kind: AuthDanceIdentityComponent["kind"] = "challenge";
 	/**

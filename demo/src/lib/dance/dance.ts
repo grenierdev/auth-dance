@@ -29,9 +29,9 @@ import {
 	createAuthDance,
 } from "auth-dance";
 import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "auth-dance/providers/memory";
-import EmailAuthDanceComponent from "auth-dance/components/email";
-import OtpAuthDanceComponent from "auth-dance/components/otp";
-import PasswordAuthDanceComponent, { pbkdf2PasswordHasher } from "auth-dance/components/password";
+import { EmailAuthDanceComponent } from "auth-dance/components/email";
+import { OtpAuthDanceComponent } from "auth-dance/components/otp";
+import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "auth-dance/components/password";
 import type { Durations } from "./config.ts";
 
 /**

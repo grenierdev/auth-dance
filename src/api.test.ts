@@ -11,11 +11,11 @@ import {
 } from "./api.ts";
 import type { AuthDanceResponseTokens } from "./response.ts";
 import { choice, sequence } from "./choreography.ts";
-import EmailAuthDanceComponent from "./components/email.ts";
+import { EmailAuthDanceComponent } from "./components/email.ts";
 import type { AuthDanceComponentContext } from "./component.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
 import { ksuid } from "./id.ts";
-import PasswordAuthDanceComponent, { pbkdf2PasswordHasher } from "./components/password.ts";
+import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "./components/password.ts";
 import { AuthDanceStorage } from "./storage.ts";
 import { AuthDanceError } from "./error.ts";
 import type { AuthDanceKvProvider } from "./provider.ts";

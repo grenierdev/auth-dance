@@ -9,6 +9,7 @@ import type {
 	AuthDanceRateLimiterProvider,
 	AuthDanceRateLimiterResult,
 } from "../provider.ts";
+import { AuthDanceStorage } from "../storage.ts";
 
 /**
  * An `AuthDanceIdentityProvider` that holds every identity in a `Map`.
@@ -304,4 +305,12 @@ export class MemoryAuthDanceChannel implements AuthDanceChannel, Disposable {
 			data: { sms: value },
 		};
 	}
+}
+
+export function createAuthDanceMemoryStorage(): AuthDanceStorage {
+	return new AuthDanceStorage({
+		identity: new MemoryIdentityProvider(),
+		kv: new MemoryKvProvider(),
+		rate_limiter: new MemoryRateLimiterProvider(),
+	});
 }

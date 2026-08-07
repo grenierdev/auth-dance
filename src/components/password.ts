@@ -164,7 +164,7 @@ async function timingSafeEqual(left: string, right: string): Promise<boolean> {
  * Keep the pepper in a secret store. A new pepper invalidates every existing record, and so does a hasher that
  * answers something else for the same input. Only the `rotate` and `recover` flows can rebuild one.
  */
-export default class PasswordAuthDanceComponent implements AuthDanceComponent {
+export class PasswordAuthDanceComponent implements AuthDanceComponent {
 	/** A password only proves a claim against an identity, so it is a `challenge` and never resolves an identity. */
 	readonly kind: AuthDanceIdentityComponent["kind"] = "challenge";
 	/**

@@ -1,6 +1,6 @@
 import { ksuid } from "./id.ts";
 import type { AuthDanceChannel } from "./channel.ts";
-import OtpAuthDanceComponent from "./components/otp.ts";
+import { OtpAuthDanceComponent } from "./components/otp.ts";
 import {
 	type AuthDanceChoreography,
 	type AuthDanceChoreographyChoice,

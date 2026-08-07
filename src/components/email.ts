@@ -1,7 +1,7 @@
 import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent, AuthDanceIdentityIdentification } from "../identity.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
-import OtpAuthDanceComponent from "./otp.ts";
+import { OtpAuthDanceComponent } from "./otp.ts";
 
 /**
  * An email address as the step that resolves the identity, and a code sent to that address as the proof.
@@ -13,7 +13,7 @@ import OtpAuthDanceComponent from "./otp.ts";
  * The verification is an `OtpAuthDanceComponent` over the same channel. The owner must read the code at the
  * address, so a match proves the address belongs to the owner.
  */
-export default class EmailAuthDanceComponent implements AuthDanceComponent {
+export class EmailAuthDanceComponent implements AuthDanceComponent {
 	/** The record the component contributes to an identity. An `identification` resolves an identity on its own. */
 	readonly kind: AuthDanceIdentityComponent["kind"] = "identification";
 	/**
