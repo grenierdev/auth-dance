@@ -6,6 +6,7 @@
 		"./components/email": "./components/email.ts",
 		"./components/otp": "./components/otp.ts",
 		"./components/password": "./components/password.ts",
+		"./providers/cloudflare": "./providers/cloudflare.ts",
 		"./providers/deno": "./providers/deno.ts",
 		"./providers/memory": "./providers/memory.ts"
 	}

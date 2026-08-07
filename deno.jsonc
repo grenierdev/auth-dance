@@ -5,6 +5,7 @@
 	],
 	"nodeModulesDir": "auto",
 	"imports": {
+		"@cloudflare/workers-types": "npm:@cloudflare/workers-types@^5.20260804.1",
 		"@hono/otel": "npm:@hono/otel@^1.1.2",
 		"@hono/standard-validator": "npm:@hono/standard-validator@^0.2.3",
 		"@scalar/hono-api-reference": "npm:@scalar/hono-api-reference@^0.11.8",
@@ -23,5 +24,10 @@
 	"fmt": {
 		"lineWidth": 140,
 		"useTabs": true
+	},
+	"compilerOptions": {
+		"types": [
+			"@cloudflare/workers-types"
+		]
 	}
 }

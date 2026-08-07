@@ -13,6 +13,7 @@
     "jsr:@std/path@^1.1.5": "1.1.5",
     "jsr:@std/testing@^1.0.19": "1.0.19",
     "npm:@base-ui/react@^1.6.0": "1.6.0_@types+react@19.2.18_react@19.2.8_react-dom@19.2.8__react@19.2.8",
+    "npm:@cloudflare/workers-types@^5.20260804.1": "5.20260804.1",
     "npm:@deno/vite-plugin@*": "2.0.3_vite@8.2.0__@types+node@24.13.3",
     "npm:@deno/vite-plugin@^2.0.3": "2.0.3_vite@8.2.0__@types+node@24.13.3",
     "npm:@eslint/js@^10.0.1": "10.0.1_eslint@10.8.0",
@@ -59,8 +60,8 @@
     "npm:valibot@^1.4.2": "1.4.2_typescript@6.0.3",
     "npm:vite@*": "8.2.0_@types+node@24.13.3",
     "npm:vite@^8.2.0": "8.2.0_@types+node@24.13.3",
-    "npm:wrangler@*": "4.118.0",
-    "npm:wrangler@^4.118.0": "4.118.0"
+    "npm:wrangler@*": "4.118.0_@cloudflare+workers-types@5.20260804.1",
+    "npm:wrangler@^4.118.0": "4.118.0_@cloudflare+workers-types@5.20260804.1"
   },
   "jsr": {
     "@std/assert@1.0.11": {
@@ -406,6 +407,9 @@
       "integrity": "sha512-27fAN+vUECW1oYVc1KOcHYpkL8COM2Uxtxql7TL595kxbjoqS5yckw7NLz7bTf2pALFCZWjqXDjZGJ/xbG4ZKQ==",
       "os": ["win32"],
       "cpu": ["x64"]
+    },
+    "@cloudflare/workers-types@5.20260804.1": {
+      "integrity": "sha512-B1dwxpN6e5RZXZkE5zpZj+ooNeNZ1mwavLIyHDYe10ojhlGTwDfe8sAl7R1mMXc1cyIsbr+jKVdvmMEyVcdTdg=="
     },
     "@cspotcode/source-map-support@0.8.1": {
       "integrity": "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==",
@@ -4170,11 +4174,12 @@
       "scripts": true,
       "bin": true
     },
-    "wrangler@4.118.0": {
+    "wrangler@4.118.0_@cloudflare+workers-types@5.20260804.1": {
       "integrity": "sha512-9pkBw/b8zWqGx2S+oLhgHMR1M/4VOE8SynUFABnGWiSFGlcOQ4xiI/B71Xf66RYP2xzngU37IQFPtUruij3lYw==",
       "dependencies": [
         "@cloudflare/kv-asset-handler",
         "@cloudflare/unenv-preset",
+        "@cloudflare/workers-types",
         "blake3-wasm",
         "esbuild",
         "miniflare",
@@ -4184,6 +4189,9 @@
       ],
       "optionalDependencies": [
         "fsevents"
+      ],
+      "optionalPeers": [
+        "@cloudflare/workers-types"
       ],
       "bin": true
     },
@@ -4290,6 +4298,7 @@
       "jsr:@std/assert@1.0.11",
       "jsr:@std/encoding@1.0.6",
       "jsr:@std/testing@^1.0.19",
+      "npm:@cloudflare/workers-types@^5.20260804.1",
       "npm:@hono/otel@^1.1.2",
       "npm:@hono/standard-validator@~0.2.3",
       "npm:@scalar/hono-api-reference@~0.11.8",
