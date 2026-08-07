@@ -10,13 +10,13 @@ export interface AuthDanceIdentityProvider {
 	/**
 	 * Read one page of stored identities, for `AuthDanceStorage.listIdentities`.
 	 *
-	 * @param offset The number of identities to skip. Without it, start at the first identity.
+	 * @param cursor The cursor that points to the first identity of the page. Without it, start at the first identity.
 	 * @param limit The number of identities to return at most. Without it, return every identity.
 	 * `MemoryIdentityProvider` breaks this contract: it passes `limit` to `Array.prototype.slice`, which reads the
 	 * number as an end index.
 	 * @returns The identities of the page, or an empty array when the page matches none.
 	 */
-	list: (offset?: number, limit?: number) => Promise<AuthDanceIdentity[]>;
+	list: (cursor?: string, limit?: number) => Promise<AuthDanceIdentity[]>;
 	/**
 	 * Read one identity by id.
 	 *
@@ -31,12 +31,12 @@ export interface AuthDanceIdentityProvider {
 	 * whose name equals `type` and whose stored value equals `identification`. `EmailAuthDanceComponent` reaches
 	 * this method through `AuthDanceStorage`, with the address the client typed.
 	 *
-	 * @param type The name of the identification component, for example `email`.
+	 * @param component The name of the identification component, for example `email`.
 	 * @param identification The value the identity claims under that component.
 	 * @returns The identity, or `undefined` when no identity claims the value. `EmailAuthDanceComponent` also
 	 * catches a rejection and reads it as a miss.
 	 */
-	getByIdentification: (type: string, identification: string) => Promise<AuthDanceIdentity | undefined>;
+	getByIdentification: (component: string, identification: string) => Promise<AuthDanceIdentity | undefined>;
 	/**
 	 * Write a whole identity under `identity.id`, and replace the record already stored there.
 	 *
@@ -81,13 +81,13 @@ export interface AuthDanceKvProvider {
 	 * `limit` before `offset`, the reverse of `AuthDanceIdentityProvider.list`.
 	 *
 	 * @param prefix The start of the keys to match, for example `sessions/id_2abc/`.
+	 * @param cursor The number of keys to skip. Without it, start at the first key.
 	 * @param limit The number of keys to return at most. Without it, return every key that matches.
 	 * `MemoryKvProvider` breaks this contract: it passes `limit` to `Array.prototype.slice`, which reads the number
 	 * as an end index.
-	 * @param offset The number of keys to skip. Without it, start at the first key.
 	 * @returns The matching keys, or an empty array when the prefix matches none.
 	 */
-	list: (prefix: string, limit?: number, offset?: number) => Promise<string[]>;
+	list: (prefix: string, cursor?: number, limit?: number) => Promise<string[]>;
 	/**
 	 * Write a value under a key, and replace what the key already holds.
 	 *

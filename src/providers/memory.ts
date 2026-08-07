@@ -45,10 +45,14 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 	 * index and not as a count.
 	 * @returns A clone of each identity in the range.
 	 */
-	list(offset?: number, limit?: number): Promise<AuthDanceIdentity[]> {
+	list(cursor?: string, limit?: number): Promise<AuthDanceIdentity[]> {
 		const identities = Array.from(this.#storage.values());
+		const cursorIndex = cursor ? identities.findIndex((i) => i.id === cursor) : 0;
+		if (cursorIndex === -1) {
+			return Promise.resolve([]);
+		}
 		const results = identities
-			.slice(offset, limit)
+			.slice(cursorIndex, limit)
 			.map((r) => structuredClone(r));
 		return Promise.resolve(results);
 	}
@@ -67,14 +71,14 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 	 *
 	 * The provider reads the stored identities one by one until a component matches both `type` and
 	 * `identification`. The match ignores the `confirmed` flag of the component.
-	 * @param type The component name of the identification, for example `email`.
+	 * @param component The component name of the identification, for example `email`.
 	 * @param identification The resolved value, for example the email address itself.
 	 * @returns A clone of the first identity that matches, or `undefined`.
 	 */
-	getByIdentification(type: string, identification: string): Promise<AuthDanceIdentity | undefined> {
+	getByIdentification(component: string, identification: string): Promise<AuthDanceIdentity | undefined> {
 		for (const identity of this.#storage.values()) {
 			const identityComponent = identity.components.find((c): c is AuthDanceIdentityIdentification =>
-				c.kind === "identification" && c.component === type && c.identification === identification
+				c.kind === "identification" && c.component === component && c.identification === identification
 			);
 			if (identityComponent) {
 				return Promise.resolve(structuredClone(identity));
@@ -146,7 +150,7 @@ export class MemoryKvProvider implements AuthDanceKvProvider, Disposable {
 	get(key: string): Promise<string | undefined> {
 		const item = this.#storage.get(key);
 		if (!item || (item.expiration && item.expiration < new Date().getTime())) {
-			return Promise.reject(new KVKeyNotFoundError());
+			return Promise.resolve(undefined);
 		}
 		return Promise.resolve(structuredClone(item.value));
 	}
@@ -157,9 +161,9 @@ export class MemoryKvProvider implements AuthDanceKvProvider, Disposable {
 	 * The provider passes `offset` and `limit` to `Array.prototype.slice`, so `limit` acts as an end index
 	 * and not as a count. The filter ignores the expiration, so an expired key can still appear.
 	 */
-	list(prefix: string, limit?: number, offset?: number): Promise<string[]> {
+	list(prefix: string, cursor?: number, limit?: number): Promise<string[]> {
 		const keys = Array.from(this.#storage.keys()).filter((key) => key.startsWith(prefix));
-		const slicedKeys = keys.slice(offset, limit);
+		const slicedKeys = keys.slice(cursor, limit);
 		return Promise.resolve(slicedKeys);
 	}
 
