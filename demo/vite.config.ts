@@ -20,6 +20,9 @@ export default defineConfig({
 		devtools(),
 		tailwindcss(),
 		tanstackStart({
+			router: {
+				routeTreeFileHeader: [`// deno-lint-ignore-file`],
+			},
 			prerender: {
 				enabled: true,
 				crawlLinks: true, // Crawls routes automatically
