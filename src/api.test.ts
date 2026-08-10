@@ -86,8 +86,8 @@ describe("Api", () => {
 		channelEmail = new MemoryAuthDanceChannel("email");
 		channelEmail2 = new MemoryAuthDanceChannel("email2");
 		channelSms = new MemoryAuthDanceChannel("phone");
-		email = new EmailAuthDanceComponent("email");
-		email2 = new EmailAuthDanceComponent("email2");
+		email = new EmailAuthDanceComponent({ channel: "email" });
+		email2 = new EmailAuthDanceComponent({ channel: "email2" });
 		password = new PasswordAuthDanceComponent("salty", TEST_PASSWORD_HASHER);
 		storage = new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),

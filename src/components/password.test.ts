@@ -4,7 +4,7 @@ import { IdentityNotResolvedError, InvalidPromptValueError } from "../error.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "../identity.ts";
 import { MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "../providers/memory.ts";
 import { AuthDanceStorage } from "../storage.ts";
-import PasswordAuthDanceComponent, { pbkdf2PasswordHasher } from "./password.ts";
+import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "./password.ts";
 
 // One PBKDF2 pass: these cases assert on the shape and the decisions, never on the cost.
 const hasher = pbkdf2PasswordHasher(1);

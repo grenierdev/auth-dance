@@ -1859,7 +1859,7 @@ export class AuthDanceApi {
 			state.channel.data = { ...(state.channel.data ?? {}), [state.channel.component]: options.value };
 			state.validating = true;
 			const sendChannel = this.#subscribeSendChannel(identity, state.channel.component);
-			const prompt = await new OtpAuthDanceComponent(sendChannel.component).getPrompt(this.#subscribeContext(state, identity));
+			const prompt = await new OtpAuthDanceComponent({ channel: sendChannel.component }).getPrompt(this.#subscribeContext(state, identity));
 			return { state: await this.#encryptState(state, expireAt), prompt, expireAt };
 		} else if (state.kind === "unsubscribe") {
 			// A single confirmation gate: the authenticated caller must explicitly confirm (value === true)
@@ -1966,7 +1966,7 @@ export class AuthDanceApi {
 			ctx = c;
 		} else if (state.kind === "subscribe") {
 			const { identity } = await this.#sessionIdentity(state.sessionId);
-			authComponent = new OtpAuthDanceComponent(this.#subscribeSendChannel(identity, state.channel.component).component);
+			authComponent = new OtpAuthDanceComponent({ channel: this.#subscribeSendChannel(identity, state.channel.component).component });
 			ctx = this.#subscribeContext(state, identity);
 		} else {
 			throw new InvalidStateForFlowError(state.kind);
@@ -2118,7 +2118,7 @@ export class AuthDanceApi {
 		} else if (state.kind === "subscribe") {
 			const { identity } = await this.#sessionIdentity(state.sessionId);
 			const sendChannel = this.#subscribeSendChannel(identity, state.channel.component);
-			const verified = await new OtpAuthDanceComponent(sendChannel.component).verifyPrompt(
+			const verified = await new OtpAuthDanceComponent({ channel: sendChannel.component }).verifyPrompt(
 				options.value,
 				this.#subscribeContext(state, identity),
 			);

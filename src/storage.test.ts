@@ -1,7 +1,7 @@
 import { beforeEach, describe, it } from "@std/testing/bdd";
 import { assert, assertEquals } from "@std/assert";
 import { MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "./providers/memory.ts";
-import EmailAuthDanceComponent from "./components/email.ts";
+import { EmailAuthDanceComponent } from "./components/email.ts";
 import { AuthDanceStorage } from "./storage.ts";
 
 describe("Storage", () => {
@@ -9,7 +9,7 @@ describe("Storage", () => {
 	let email: EmailAuthDanceComponent;
 
 	beforeEach(() => {
-		email = new EmailAuthDanceComponent("email");
+		email = new EmailAuthDanceComponent({ channel: "email" });
 		storage = new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),
 			kv: new MemoryKvProvider(),
@@ -58,7 +58,7 @@ describe("Storage", () => {
 		await storage.createIdentity({ name: "A" });
 		const second = await storage.createIdentity({ name: "B" });
 		const third = await storage.createIdentity({ name: "C" });
-		const page = await storage.listIdentities(1);
+		const page = await storage.listIdentities(second.id);
 		assertEquals(page.length, 2);
 		assertEquals(page[0], second);
 		assertEquals(page[1], third);

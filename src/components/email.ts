@@ -1,7 +1,10 @@
 import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent, AuthDanceIdentityIdentification } from "../identity.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
-import { OtpAuthDanceComponent } from "./otp.ts";
+import { OtpAuthDanceComponent, type OtpAuthDanceComponentOptions } from "./otp.ts";
+
+export interface EmailAuthDanceComponentOptions extends OtpAuthDanceComponentOptions {
+}
 
 /**
  * An email address as the step that resolves the identity, and a code sent to that address as the proof.
@@ -21,7 +24,8 @@ export class EmailAuthDanceComponent implements AuthDanceComponent {
 	 * `verificationComponent` returns the component that sends the code.
 	 */
 	readonly verifiable = true;
-	#channel: string;
+
+	#options: EmailAuthDanceComponentOptions;
 
 	/**
 	 * Creates the component over one named channel.
@@ -30,8 +34,8 @@ export class EmailAuthDanceComponent implements AuthDanceComponent {
 	 * of the address travels over the same channel.
 	 * @param channel The name of the channel the component contributes.
 	 */
-	constructor(channel: string) {
-		this.#channel = channel;
+	constructor(options: OtpAuthDanceComponentOptions) {
+		this.#options = options;
 	}
 
 	/**
@@ -61,7 +65,7 @@ export class EmailAuthDanceComponent implements AuthDanceComponent {
 			},
 			{
 				kind: "channel",
-				component: this.#channel,
+				component: this.#options.channel,
 				confirmed: true,
 				data: { email },
 				linkedTo: [component],
@@ -127,6 +131,6 @@ export class EmailAuthDanceComponent implements AuthDanceComponent {
 	 */
 	// deno-lint-ignore require-await
 	async verificationComponent?(_context: AuthDanceComponentContext): Promise<AuthDanceComponent> {
-		return new OtpAuthDanceComponent(this.#channel);
+		return new OtpAuthDanceComponent(this.#options);
 	}
 }

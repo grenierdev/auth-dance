@@ -1,5 +1,5 @@
 import type { AuthDanceChannel, AuthDanceChannelContext } from "../channel.ts";
-import { ComponentAlreadyEnrolledError, KVKeyNotFoundError } from "../error.ts";
+import { ComponentAlreadyEnrolledError } from "../error.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityChannel, AuthDanceIdentityIdentification } from "../identity.ts";
 import type { AuthDanceMessage } from "../message.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";

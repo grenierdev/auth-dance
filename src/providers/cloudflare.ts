@@ -1,4 +1,4 @@
-import { AuthDanceIdentity } from "../identity.ts";
+import { AuthDanceIdentity, type AuthDanceIdentityChannel } from "../identity.ts";
 import type {
 	AuthDanceIdentityProvider,
 	AuthDanceKvProvider,
@@ -8,7 +8,9 @@ import type {
 import { DurableObject } from "cloudflare:workers"; // IDK why vscode keep complaining about this import, but it works fine in the build
 import { parse } from "valibot";
 import { AuthDanceStorage } from "../storage.ts";
-import { DenoKvProvider } from "auth-dance/providers/deno";
+import type { AuthDanceChannel, AuthDanceChannelContext } from "../channel.ts";
+import type { AuthDanceMessage } from "../message.ts";
+import type { AuthDancePromptInput } from "../prompt.ts";
 
 interface KeyMetadata {
 	count: number;
@@ -23,9 +25,8 @@ export class CloudflareD1IdentityProvider implements AuthDanceIdentityProvider {
 	}
 
 	async list(cursor?: string, limit?: number): Promise<AuthDanceIdentity[]> {
-		const query = `SELECT "id", "data", "components" FROM identities ${cursor ? `WHERE id > ?` : ""} ORDER BY id ASC ${
-			limit ? `LIMIT ?` : ""
-		}`;
+		// deno-fmt-ignore
+		const query = `SELECT "id", "data", "components" FROM identity ${cursor ? `WHERE id > ?` : ""} ORDER BY id ASC ${limit ? `LIMIT ?` : ""}`;
 		const params: (string | number)[] = [];
 		if (cursor) {
 			params.push(cursor);
@@ -33,7 +34,8 @@ export class CloudflareD1IdentityProvider implements AuthDanceIdentityProvider {
 		if (limit) {
 			params.push(limit);
 		}
-		const result = await this.#db.prepare(query)
+		const result = await this.#db
+			.prepare(query)
 			.bind(...params)
 			.all<{ id: string; data: string; components: string }>();
 
@@ -48,7 +50,9 @@ export class CloudflareD1IdentityProvider implements AuthDanceIdentityProvider {
 	}
 
 	async get(id: string): Promise<AuthDanceIdentity | undefined> {
-		const result = await this.#db.prepare(`SELECT "id", "data", "components" FROM identities WHERE id = ?`)
+		// deno-fmt-ignore
+		const result = await this.#db
+			.prepare(`SELECT "id", "data", "components" FROM identity WHERE id = ?`)
 			.bind(id)
 			.first<{ id: string; data: string; components: string }>();
 		if (!result) {
@@ -62,10 +66,13 @@ export class CloudflareD1IdentityProvider implements AuthDanceIdentityProvider {
 		return identity;
 	}
 
-	async getByIdentification(component: string, identification: string): Promise<AuthDanceIdentity | undefined> {
-		const result = await this.#db.prepare(
-			`SELECT "id", "data", "components" FROM identities I INNER JOIN mv_identity_identification II ON I.identities.id = II.identity_id WHERE II.component = ? AND II.identification = ?`,
-		)
+	async getByIdentification(
+		component: string,
+		identification: string,
+	): Promise<AuthDanceIdentity | undefined> {
+		// deno-fmt-ignore
+		const result = await this.#db
+			.prepare(`SELECT "id", "data", "components" FROM identity I INNER JOIN mv_identity_identification II ON I.id = II.identity_id WHERE II.component = ? AND II.identification = ?`)
 			.bind(component, identification)
 			.first<{ id: string; data: string; components: string }>();
 		if (!result) {
@@ -82,15 +89,15 @@ export class CloudflareD1IdentityProvider implements AuthDanceIdentityProvider {
 	async set(identity: AuthDanceIdentity): Promise<void> {
 		const data = identity.data ? JSON.stringify(identity.data) : null;
 		const components = JSON.stringify(identity.components);
-		await this.#db.prepare(
-			`INSERT INTO identities (id, data, components) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, components = excluded.components`,
-		)
+		// deno-fmt-ignore
+		await this.#db
+			.prepare(`INSERT INTO identity (id, data, components) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, components = excluded.components`)
 			.bind(identity.id, data, components)
 			.run();
 	}
 
 	async delete(id: string): Promise<void> {
-		await this.#db.prepare(`DELETE FROM identities WHERE id = ?`)
+		await this.#db.prepare(`DELETE FROM identity WHERE id = ?`)
 			.bind(id)
 			.run();
 	}
@@ -108,8 +115,16 @@ export class CloudflareKvKvProvider implements AuthDanceKvProvider {
 		return result ?? undefined;
 	}
 
-	async list(prefix: string, cursor?: number, limit?: number): Promise<string[]> {
-		const result = await this.#kv.list({ prefix, cursor: cursor?.toString(), limit });
+	async list(
+		prefix: string,
+		cursor?: number,
+		limit?: number,
+	): Promise<string[]> {
+		const result = await this.#kv.list({
+			prefix,
+			cursor: cursor?.toString(),
+			limit,
+		});
 		return result.keys.map((key) => key.name);
 	}
 
@@ -125,11 +140,19 @@ export class CloudflareKvKvProvider implements AuthDanceKvProvider {
 export class CloudflareRateLimiterProvider implements AuthDanceRateLimiterProvider {
 	#durableObjectNamespace: DurableObjectNamespace<RateLimiterDurableObject>;
 
-	constructor(durableObjectNamespace: DurableObjectNamespace<RateLimiterDurableObject>) {
+	constructor(
+		durableObjectNamespace: DurableObjectNamespace<
+			RateLimiterDurableObject
+		>,
+	) {
 		this.#durableObjectNamespace = durableObjectNamespace;
 	}
 
-	limit(key: string, limit: number, window: number): Promise<AuthDanceRateLimiterResult> {
+	limit(
+		key: string,
+		limit: number,
+		window: number,
+	): Promise<AuthDanceRateLimiterResult> {
 		const id = this.#durableObjectNamespace.idFromName(key);
 		const stub = this.#durableObjectNamespace.get(id);
 		return stub.limit(limit, window);
@@ -147,6 +170,7 @@ export class CloudflareRateLimiterProvider implements AuthDanceRateLimiterProvid
 export class RateLimiterDurableObject extends DurableObject {
 	#meta: KeyMetadata;
 
+	// deno-lint-ignore no-explicit-any
 	constructor(ctx: DurableObjectState, env: any) {
 		super(ctx, env);
 		this.#meta = { count: 0, expireAt: 0 };
@@ -194,6 +218,61 @@ export class RateLimiterDurableObject extends DurableObject {
 			this.#meta = { count: 0, expireAt: 0 };
 			await this.ctx.storage.deleteAll();
 		}
+	}
+}
+
+export class CloudflareSendMailAuthDanceChannel implements AuthDanceChannel {
+	#sendMail: SendEmail;
+	#options: Pick<EmailReplyMessageBuilder, "from" | "replyTo">;
+
+	constructor(
+		sendMail: SendEmail,
+		options: Pick<EmailReplyMessageBuilder, "from" | "replyTo">,
+	) {
+		this.#sendMail = sendMail;
+		this.#options = options;
+	}
+
+	async sendMessage(message: AuthDanceMessage): Promise<void> {
+		const email = message.recipient.data?.email;
+		if (!email || typeof email !== "string") {
+			throw new Error("Recipient does not have an email address");
+		}
+		const _result = await this.#sendMail.send({
+			from: this.#options.from,
+			to: email,
+			subject: message.subject,
+			replyTo: this.#options.replyTo,
+			html: message.content["text/html"]?.toString() ?? undefined,
+			text: message.content["text/plain"]?.toString() ?? undefined,
+		});
+		return Promise.resolve();
+	}
+
+	// deno-lint-ignore require-await
+	async getPrompt(
+		context: AuthDanceChannelContext,
+	): Promise<AuthDancePromptInput> {
+		return {
+			kind: "input",
+			name: context.name,
+			type: "email",
+			sendable: true,
+		};
+	}
+
+	// deno-lint-ignore require-await
+	async getIdentityChannel(
+		channel: string,
+		value: unknown,
+		confirmed: boolean = false,
+	): Promise<AuthDanceIdentityChannel> {
+		return {
+			kind: "channel",
+			component: channel,
+			confirmed,
+			data: { email: value },
+		};
 	}
 }
 

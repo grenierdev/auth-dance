@@ -5,6 +5,15 @@ import type { AuthDancePromptInput } from "../prompt.ts";
 import { otp } from "../otp.ts";
 import { ChannelNotSubscribedError, ComponentNotVerifiableError } from "../error.ts";
 
+export interface OtpAuthDanceComponentOptions {
+	channel: string;
+	digits?: number;
+	ttl?: number;
+	subject?: Record<string, string | ((code: string, context: AuthDanceComponentContext) => string)>;
+	html?: Record<string, string | ((code: string, context: AuthDanceComponentContext) => string)>;
+	text?: Record<string, string | ((code: string, context: AuthDanceComponentContext) => string)>;
+}
+
 /**
  * A one-time code that the library delivers over a channel. A verifiable component uses it to prove control of
  * its own value, as `EmailAuthDanceComponent` does.
@@ -24,9 +33,8 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 	 * `verificationComponent` throws instead of returning one.
 	 */
 	readonly verifiable = false;
-	#channel: string;
-	#digits: number;
-	#ttl: number;
+
+	#options: OtpAuthDanceComponentOptions;
 
 	/**
 	 * Sets the channel that carries a one-time code, the length of the code, and the time that the code stays valid.
@@ -35,10 +43,8 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 	 * @param ttl How long a code stays valid, in seconds. The key-value store drops the code at the end of this time.
 	 * Defaults to `300` seconds.
 	 */
-	constructor(channel: string, digits: number = 6, ttl: number = 300) {
-		this.#channel = channel;
-		this.#digits = digits;
-		this.#ttl = ttl;
+	constructor(options: OtpAuthDanceComponentOptions) {
+		this.#options = options;
 	}
 
 	/**
@@ -117,19 +123,28 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 	 */
 	async sendPrompt(_locale: string, context: AuthDanceComponentContext): Promise<AuthDanceMessage> {
 		const identityChannel = context.identity?.components
-			.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === this.#channel);
+			.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === this.#options.channel);
 		if (!identityChannel) {
-			throw new ChannelNotSubscribedError(this.#channel);
+			throw new ChannelNotSubscribedError(this.#options.channel);
 		}
-		const code = otp({ digits: this.#digits });
-		await context.storage.setKv(`otp/${context.stateId}/${context.name}`, code, this.#ttl);
+		const code = otp({ digits: this.#options.digits ?? 6 });
+		await context.storage.setKv(`otp/${context.stateId}/${context.name}`, code, this.#options.ttl ?? 300);
+		const subject = this.#options.subject?.["en"] instanceof Function
+			? this.#options.subject?.["en"](code, context)
+			: this.#options.subject?.["en"] ?? "Your one-time code";
+		const text = this.#options.text?.["en"] instanceof Function
+			? this.#options.text?.["en"](code, context)
+			: this.#options.text?.["en"] ?? `Your one-time code is: ${code}`;
+		const html = this.#options.html?.["en"] instanceof Function
+			? this.#options.html?.["en"](code, context)
+			: this.#options.html?.["en"] ?? `<p>Your one-time code is: <strong>${code}</strong></p>`;
 		return {
 			recipient: identityChannel,
-			subject: "todo!",
+			subject,
 			content: {
 				"text/x-code": code,
-				"text/plain": "todo!",
-				"text/html": "todo!",
+				"text/plain": text,
+				"text/html": html,
 			},
 		};
 	}

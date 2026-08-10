@@ -69,10 +69,10 @@ export class AuthDanceStorage {
 	/**
 	 * List identities with the identity adapter. Touches no key space.
 	 *
-	 * The method passes `offset` and `limit` to the adapter untouched, so the adapter decides how it paginates.
+	 * The method passes `cursor` and `limit` to the adapter untouched, so the adapter decides how it paginates.
 	 */
-	listIdentities(offset?: number, limit?: number): Promise<AuthDanceIdentity[]> {
-		return this.#options.identity.list(offset, limit);
+	listIdentities(cursor?: string, limit?: number): Promise<AuthDanceIdentity[]> {
+		return this.#options.identity.list(cursor, limit);
 	}
 
 	/**
