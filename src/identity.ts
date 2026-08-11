@@ -154,6 +154,8 @@ export interface AuthDanceIdentityChannelPublic {
 	/**
 	 * Names of the components that depend on this channel. `EmailAuthDanceComponent` lists itself here on the
 	 * channel it contributes. `unsubscribe` throws `ChannelInUseError` while a listed component is still enrolled.
+	 * `unenroll` reads the same list the other way: it removes this channel together with every component named
+	 * here, so a removal never leaves a component behind with no channel to reach its owner.
 	 */
 	linkedTo?: string[];
 }

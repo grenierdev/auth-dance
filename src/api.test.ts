@@ -678,6 +678,84 @@ describe("Api", () => {
 			!identity.components.find((c) => c.kind !== "channel" && c.component === "password"),
 		);
 	});
+	it("should unenroll the channel the component links to", async () => {
+		// "email2" alone is an alternative to the email + password path, so "email" becomes droppable.
+		const api = new AuthDanceApi({
+			...apiOptions,
+			choreography: choice(sequence("email", "password"), "email2"),
+		});
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			...await email2.getIdentityComponent(
+				"email2",
+				"john.doe2@example.com",
+				true,
+			),
+		]);
+		const result1 = await signInAsJohnDoe(api);
+		const result2 = await api.unenroll({
+			name: "email",
+			access_token: result1.tokens.access_token,
+		});
+		const result3 = await api.submitPrompt({
+			name: "email",
+			value: true,
+			state: result2.state,
+		});
+		assert("success" in result3);
+		assert(result3.success);
+		const identity = await storage.getIdentity(result1.identity.id);
+		assert(identity);
+		// The "email" channel carries linkedTo: ["email"] and nothing else, so it leaves with the component that
+		// contributed it rather than staying behind with nobody to serve.
+		assert(!identity.components.find((c) => c.component === "email"));
+		// Everything the removal does not reach through a link stays enrolled.
+		assert(identity.components.find((c) => c.kind === "challenge" && c.component === "password"));
+		assert(identity.components.find((c) => c.kind === "identification" && c.component === "email2"));
+		assert(identity.components.find((c) => c.kind === "channel" && c.component === "email2"));
+	});
+	it("should not unenroll a component whose collateral the choreography cannot do without", async () => {
+		const api = new AuthDanceApi({
+			...apiOptions,
+			choreography: choice(sequence("email", "password"), "email2"),
+		});
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			// The "email2" channel serves the password as well as the identification that contributed it, the way
+			// a deployment that resets a password over that address would declare it.
+			...(await email2.getIdentityComponent(
+				"email2",
+				"john.doe2@example.com",
+				true,
+			)).map((c) => c.kind === "channel" ? { ...c, linkedTo: [...c.linkedTo ?? [], "password"] } : c),
+		]);
+		const result1 = await signInAsJohnDoe(api);
+		// Dropping "email2" drops the channel it contributed, and the password goes with that channel. Neither
+		// path through the choice survives that: the sequence has lost its password, and the alternative has lost
+		// "email2" itself.
+		const rejected = await assertRejects(
+			() =>
+				api.unenroll({
+					name: "email2",
+					access_token: result1.tokens.access_token,
+				}),
+			AuthDanceError,
+		);
+		assertEquals(rejected.code, "WOULD_LOCK_OUT");
+		const identity = await storage.getIdentity(result1.identity.id);
+		assert(identity?.components.find((c) => c.kind === "challenge" && c.component === "password"));
+		assert(identity?.components.find((c) => c.kind === "identification" && c.component === "email2"));
+	});
 	it("should delete the identity", async () => {
 		await seedIdentity({ name: "John Doe" }, async (seed) => [
 			...await email.getIdentityComponent(

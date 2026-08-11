@@ -1067,14 +1067,45 @@ export class AuthDanceApi {
 		};
 	}
 
+	// What an unenroll takes down, beyond the component the caller named. A channel exists for the components its
+	// linkedTo names — the email component lists itself on the channel it contributes — so removing one of them
+	// orphans the channel, and removing the channel leaves every other component that channel carries with no way
+	// to reach its owner. That second state is exactly the one unsubscribe refuses to create (ChannelInUseError),
+	// so an unenroll must not create it either. The removal therefore follows the links both ways — component to
+	// the channels that name it, channel back to the components it names — until nothing new joins.
+	// The two sets stay apart because the names live in two namespaces: the email component contributes an "email"
+	// channel beside its "email" identification, and those are not the same record.
+	#unenrollCollateral(identity: AuthDanceIdentity, component: string): { components: Set<string>; channels: Set<string> } {
+		const components = new Set([component]);
+		const channels = new Set<string>();
+		// Each pass that changes anything claims at least one more channel, and an identity holds a finite number
+		// of them, so the walk reaches its fixed point.
+		for (let grew = true; grew;) {
+			grew = false;
+			for (const c of identity.components) {
+				if (c.kind !== "channel" || channels.has(c.component) || !(c.linkedTo ?? []).some((name) => components.has(name))) {
+					continue;
+				}
+				channels.add(c.component);
+				for (const name of c.linkedTo ?? []) {
+					components.add(name);
+				}
+				grew = true;
+			}
+		}
+		return { components, channels };
+	}
+
 	// Unenrolling must not lock the identity out of its own account: walk the choreography and keep the
-	// component only if at least one path to an end is still fully covered by the surviving confirmed
+	// removal only if at least one path to an end is still fully covered by the surviving confirmed
 	// components. With choice(sequence("email", "password"), "facebook"), dropping "facebook" is fine
-	// because the email + password path survives; dropping "password" would not be.
-	#isChoreographyCompletableWithout(identity: AuthDanceIdentity, component: string): boolean {
+	// because the email + password path survives; dropping "password" would not be. `removed` is the whole
+	// collateral #unenrollCollateral produced, never the single name the caller gave: a component that falls
+	// with a channel stops covering the paths it used to cover, and the check has to see that.
+	#isChoreographyCompletableWithout(identity: AuthDanceIdentity, removed: ReadonlySet<string>): boolean {
 		const surviving = identity.components
 			.filter((c): c is AuthDanceIdentityIdentification | AuthDanceIdentityChallenge =>
-				c.kind !== "channel" && c.confirmed && c.component !== component
+				c.kind !== "channel" && c.confirmed && !removed.has(c.component)
 			)
 			.map((c) => c.component);
 		for (const { component: nextMove, path } of walk(this.#options.choreography)) {
@@ -1240,8 +1271,14 @@ export class AuthDanceApi {
 	 *
 	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
 	 *
-	 * The library walks the choreography and refuses a removal that leaves no completable path. It answers with
-	 * a confirmation prompt. Submit the boolean `true` to it through `submitPrompt`.
+	 * The removal takes the linked records with it. A channel that names the component in its `linkedTo` goes
+	 * too, and so does every other component that channel names, because a component a channel carries has no
+	 * way to reach its owner once that channel is gone. The library follows those links to their end, and it
+	 * removes the whole set at the confirmation.
+	 *
+	 * The library then walks the choreography and refuses a removal that leaves no completable path. It counts
+	 * that whole set, never the one component the caller named. It answers with a confirmation prompt. Submit
+	 * the boolean `true` to it through `submitPrompt`.
 	 *
 	 * @param options `name` is the component to remove.
 	 * @returns The encrypted state, a confirmation prompt, and the moment the state expires.
@@ -1250,7 +1287,8 @@ export class AuthDanceApi {
 	 * @throws ComponentNotEnrolledError when the identity carries no such component.
 	 * @throws UnknownComponentError when `options.components` declares no component of that name.
 	 * @throws FreshSignInRequiredError when the sign-in is older than the elevated window.
-	 * @throws WouldLockOutError when no path through the choreography stays completable without the component.
+	 * @throws WouldLockOutError when no path through the choreography stays completable without the component
+	 * and the linked records that go with it.
 	 */
 	unenroll(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("unenroll", async () => {
@@ -1263,7 +1301,7 @@ export class AuthDanceApi {
 				throw new UnknownComponentError(options.name);
 			}
 			this.#requireFreshSignIn(authTime);
-			if (!this.#isChoreographyCompletableWithout(identity, options.name)) {
+			if (!this.#isChoreographyCompletableWithout(identity, this.#unenrollCollateral(identity, options.name).components)) {
 				throw new WouldLockOutError(options.name);
 			}
 			const expireAt = this.#expireAt(this.#options.durations?.unenroll);
@@ -1837,10 +1875,16 @@ export class AuthDanceApi {
 				throw new ConfirmationRequiredError(state.component);
 			}
 			const { identity } = await this.#sessionIdentity(state.sessionId);
-			if (!this.#isChoreographyCompletableWithout(identity, state.component)) {
+			// The collateral is resolved again here, against the identity as it stands now: another flow may have
+			// moved a component or a channel while this confirmation was outstanding, and the set that survives the
+			// removal is what the lock-out check has to run against.
+			const collateral = this.#unenrollCollateral(identity, state.component);
+			if (!this.#isChoreographyCompletableWithout(identity, collateral.components)) {
 				throw new WouldLockOutError(state.component);
 			}
-			identity.components = identity.components.filter((c) => c.kind === "channel" || c.component !== state.component);
+			identity.components = identity.components.filter((c) =>
+				c.kind === "channel" ? !collateral.channels.has(c.component) : !collateral.components.has(c.component)
+			);
 			advanceOptions = {
 				...advanceOptions,
 				identity,

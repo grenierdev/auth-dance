@@ -385,7 +385,7 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		describeRoute({
 			summary: "Unenroll a component",
 			description:
-				"Removes a component from the authenticated identity, behind an explicit confirmation. Refused with WOULD_LOCK_OUT when no path through the choreography would still be fully covered by the surviving components.",
+				"Removes a component from the authenticated identity, behind an explicit confirmation. The removal takes the channels that name the component in their linkedTo with it, together with every other component those channels name. Refused with WOULD_LOCK_OUT when no path through the choreography would still be fully covered by the surviving components.",
 			tags: ["Auth"],
 			security: [{ bearerAuth: [] }],
 			responses: {

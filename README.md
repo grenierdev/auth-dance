@@ -312,8 +312,9 @@ leave `info` out and the document carries hono-openapi's placeholder instead —
 
 Sign-in and sign-up are not special. Every management flow uses the same state-plus-prompt loop:
 
-- **`enroll` / `unenroll`** — add or remove a factor. The library refuses a removal with `WOULD_LOCK_OUT` when no completable path through
-  the choreography remains.
+- **`enroll` / `unenroll`** — add or remove a factor. A removal takes the linked records with it: the channels that name the factor in their
+  `linkedTo`, and every other factor those channels name. The library refuses it with `WOULD_LOCK_OUT` when no completable path through the
+  choreography remains for what survives.
 - **`rotate`** — replace a credential. For a _verifiable_ component, the first prompt proves control of the current value. The library then
   collects the new value and validates it, so the flow has two validation rounds. A non-verifiable component such as a password needs one
   `submit-prompt`.

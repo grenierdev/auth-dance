@@ -202,7 +202,8 @@ export class ComponentNotCollectedError extends AuthDanceError {
 }
 /**
  * Without the component, no path through the choreography stays completable for the confirmed components
- * that survive. `unenroll` checks this when it starts, and again when the caller confirms.
+ * that survive. `unenroll` checks this when it starts, and again when the caller confirms. The check counts
+ * every component the linked channels take down with the named one, not the named one alone.
  */
 export class WouldLockOutError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"WOULD_LOCK_OUT"}`. */

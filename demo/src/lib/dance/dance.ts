@@ -168,10 +168,10 @@ export function buildDance(choreography: AuthDanceChoreography, durations: Durat
 		sms: new DemoChannel("sms", "phone", sink),
 	};
 
-	const email = new EmailAuthDanceComponent("email");
-	const email2 = new EmailAuthDanceComponent("email2");
+	const email = new EmailAuthDanceComponent({ channel: "email" });
+	const email2 = new EmailAuthDanceComponent({ channel: "email2" });
 	const password = new PasswordAuthDanceComponent("demo-pepper", pbkdf2PasswordHasher(PASSWORD_ROUNDS));
-	const components: Record<string, AuthDanceComponent> = { email, email2, password, otp: new CodeAuthDanceComponent("email") };
+	const components: Record<string, AuthDanceComponent> = { email, email2, password, otp: new CodeAuthDanceComponent({ channel: "email" }) };
 
 	const storage = new AuthDanceStorage({
 		identity: new MemoryIdentityProvider(),
