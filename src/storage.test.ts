@@ -94,6 +94,18 @@ describe("Storage", () => {
 		const keys = await storage.listKv("user/");
 		assertEquals(keys, ["user/1", "user/2"]);
 	});
+	// `listKv` and `AuthDanceKvProvider.list` take their three arguments in the same order, so a page asked of the
+	// storage is the page the adapter returns.
+	it("should page KV keys with an offset and a limit", async () => {
+		await storage.setKv("user/1", "a");
+		await storage.setKv("user/2", "b");
+		await storage.setKv("user/3", "c");
+		assertEquals(await storage.listKv("user/", 0, 2), ["user/1", "user/2"]);
+		assertEquals(await storage.listKv("user/", 1, 1), ["user/2"]);
+	});
+	it("should return undefined for a KV key that holds nothing", async () => {
+		assertEquals(await storage.getKv("nothing"), undefined);
+	});
 	it("should unset a KV value", async () => {
 		await storage.setKv("greeting", "hello");
 		await storage.unsetKv("greeting");

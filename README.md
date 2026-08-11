@@ -237,7 +237,7 @@ the same minus `data`, and `/list-components` returns those.
 
 ```ts
 interface AuthDanceIdentityProvider {
-	list(offset?: number, limit?: number): Promise<AuthDanceIdentity[]>;
+	list(cursor?: string, limit?: number): Promise<AuthDanceIdentity[]>;
 	get(id: string): Promise<AuthDanceIdentity | undefined>;
 	getByIdentification(type: string, identification: string): Promise<AuthDanceIdentity | undefined>;
 	set(identity: AuthDanceIdentity): Promise<void>;
@@ -246,7 +246,7 @@ interface AuthDanceIdentityProvider {
 
 interface AuthDanceKvProvider {
 	get(key: string): Promise<string | undefined>;
-	list(prefix: string, limit?: number, offset?: number): Promise<string[]>;
+	list(prefix: string, offset?: number, limit?: number): Promise<string[]>;
 	set(key: string, value: string, ttl?: number): Promise<void>;
 	unset(key: string): Promise<void>;
 }
@@ -259,9 +259,9 @@ interface AuthDanceRateLimiterProvider {
 An adapter sees these key spaces: `session/<id>`, `sessions/<identityId>/<id>` and `otp/<stateId>/<name>`. Only `MemoryIdentityProvider`,
 `MemoryKvProvider` and `MemoryRateLimiterProvider` ship today, so you write the persistent adapters yourself.
 
-A missing or expired key is `KVKeyNotFoundError` (`KV_KEY_NOT_FOUND`), exported from the package root like every other error. Note that
-`MemoryKvProvider.get` rejects with it rather than resolving `undefined`, even though the interface allows both, so write your adapter to
-the behaviour rather than to the signature.
+A missing or expired key is `undefined`, never a rejection: `listSession` reads every key of a `sessions/<identityId>/` listing, and a key
+that expired between the listing and the read is normal rather than a fault. `offset` is a count of keys to skip, not an opaque cursor, and
+`limit` is a count of keys to return at most.
 
 ### Sessions and tokens
 

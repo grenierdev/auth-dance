@@ -41,8 +41,9 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 	/**
 	 * Lists the stored identities in insertion order.
 	 *
-	 * The provider passes `offset` and `limit` to `Array.prototype.slice`, so `limit` acts as an end
-	 * index and not as a count.
+	 * @param cursor The id of the first identity of the page. Without it, the page starts at the first
+	 * identity. An id the map does not hold gives an empty page.
+	 * @param limit The number of identities to return at most. Without it, the page runs to the last identity.
 	 * @returns A clone of each identity in the range.
 	 */
 	list(cursor?: string, limit?: number): Promise<AuthDanceIdentity[]> {
@@ -52,7 +53,7 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 			return Promise.resolve([]);
 		}
 		const results = identities
-			.slice(cursorIndex, limit)
+			.slice(cursorIndex, limit === undefined ? undefined : cursorIndex + limit)
 			.map((r) => structuredClone(r));
 		return Promise.resolve(results);
 	}
@@ -105,14 +106,20 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 	}
 }
 
+// One rule for the deadline of an entry: the entry dies at the deadline. `get`, `list` and `clearExpired` all
+// read it through this function, so the three never disagree about one entry.
+function expired(item: { expiration?: number }, now: number): boolean {
+	return item.expiration !== undefined && item.expiration <= now;
+}
+
 /**
  * An `AuthDanceKvProvider` that holds every key in a `Map`.
  *
  * The map lives in the process memory. A process restart erases every entry. Use this provider for tests
  * and local examples, not for production.
  *
- * The provider runs no timer. A read of an expired key rejects, but it leaves the entry in the map. Only
- * `clearExpired`, `unset` and dispose remove an entry.
+ * The provider runs no timer. An expired entry stays in the map until a read of its own key, `clearExpired`,
+ * `unset` or dispose removes it. `get` and `list` both ignore an expired entry, so the map never reports one.
  */
 export class MemoryKvProvider implements AuthDanceKvProvider, Disposable {
 	#storage = new Map<string, { value: string; expiration?: number }>();
@@ -131,40 +138,43 @@ export class MemoryKvProvider implements AuthDanceKvProvider, Disposable {
 	clearExpired(): void {
 		const now = Date.now();
 		for (const [key, data] of this.#storage) {
-			if (data.expiration && data.expiration <= now) {
+			if (expired(data, now)) {
 				this.#storage.delete(key);
 			}
 		}
 	}
 
 	/**
-	 * Reads the value of one key.
-	 *
-	 * The `AuthDanceKvProvider` contract asks an adapter to resolve `undefined` for a key that is not
-	 * there. This provider rejects instead. `AuthDanceStorage.listSession` ignores a key that resolves
-	 * `undefined`, but a rejection fails that whole listing. An expired session index entry therefore
-	 * breaks `listSession` against this provider.
-	 * @returns The stored value.
-	 * @throws KVKeyNotFoundError When the map holds no such key, or when the entry expired.
+	 * Reads the value of one key. A read of an expired key also removes the entry from the map.
+	 * @returns The stored value, or `undefined` when the map holds no such key, or when the entry expired.
 	 */
 	get(key: string): Promise<string | undefined> {
 		const item = this.#storage.get(key);
-		if (!item || (item.expiration && item.expiration < new Date().getTime())) {
+		if (!item) {
+			return Promise.resolve(undefined);
+		}
+		if (expired(item, Date.now())) {
+			this.#storage.delete(key);
 			return Promise.resolve(undefined);
 		}
 		return Promise.resolve(structuredClone(item.value));
 	}
 
 	/**
-	 * Lists the keys that start with `prefix`. The values stay in the map.
+	 * Lists the keys that start with `prefix`, in insertion order. The values stay in the map.
 	 *
-	 * The provider passes `offset` and `limit` to `Array.prototype.slice`, so `limit` acts as an end index
-	 * and not as a count. The filter ignores the expiration, so an expired key can still appear.
+	 * The listing drops an expired key, because `get` resolves `undefined` for one. An entry that expires
+	 * between this call and that read is still normal: the two are two calls.
+	 * @param offset The number of keys to skip. Without it, the page starts at the first key.
+	 * @param limit The number of keys to return at most. Without it, the page runs to the last key.
 	 */
-	list(prefix: string, cursor?: number, limit?: number): Promise<string[]> {
-		const keys = Array.from(this.#storage.keys()).filter((key) => key.startsWith(prefix));
-		const slicedKeys = keys.slice(cursor, limit);
-		return Promise.resolve(slicedKeys);
+	list(prefix: string, offset?: number, limit?: number): Promise<string[]> {
+		const now = Date.now();
+		const keys = Array.from(this.#storage.entries())
+			.filter(([key, item]) => key.startsWith(prefix) && !expired(item, now))
+			.map(([key]) => key);
+		const start = offset ?? 0;
+		return Promise.resolve(keys.slice(start, limit === undefined ? undefined : start + limit));
 	}
 
 	/**

@@ -12,8 +12,6 @@ export interface AuthDanceIdentityProvider {
 	 *
 	 * @param cursor The cursor that points to the first identity of the page. Without it, start at the first identity.
 	 * @param limit The number of identities to return at most. Without it, return every identity.
-	 * `MemoryIdentityProvider` breaks this contract: it passes `limit` to `Array.prototype.slice`, which reads the
-	 * number as an end index.
 	 * @returns The identities of the page, or an empty array when the page matches none.
 	 */
 	list: (cursor?: string, limit?: number) => Promise<AuthDanceIdentity[]>;
@@ -33,8 +31,7 @@ export interface AuthDanceIdentityProvider {
 	 *
 	 * @param component The name of the identification component, for example `email`.
 	 * @param identification The value the identity claims under that component.
-	 * @returns The identity, or `undefined` when no identity claims the value. `EmailAuthDanceComponent` also
-	 * catches a rejection and reads it as a miss.
+	 * @returns The identity, or `undefined` when no identity claims the value.
 	 */
 	getByIdentification: (component: string, identification: string) => Promise<AuthDanceIdentity | undefined>;
 	/**
@@ -66,10 +63,6 @@ export interface AuthDanceKvProvider {
 	 * every key of the `sessions/<identityId>/` prefix, and it skips each key that resolves `undefined`. A rejection
 	 * instead fails that whole listing, so make your adapter resolve `undefined`.
 	 *
-	 * `MemoryKvProvider` rejects a missing or an expired key with `KVKeyNotFoundError`. Its own `list` yields
-	 * expired keys too, so a listing against it can fail. `OtpAuthDanceComponent` catches that rejection on
-	 * `otp/<stateId>/<name>`.
-	 *
 	 * @returns The stored string, or `undefined` for a key that holds nothing or that has expired.
 	 */
 	get: (key: string) => Promise<string | undefined>;
@@ -77,17 +70,15 @@ export interface AuthDanceKvProvider {
 	 * List the keys under a prefix.
 	 *
 	 * The adapter yields keys, not values, so a caller reads each key after this call.
-	 * `AuthDanceStorage.listSession` does exactly that on the `sessions/<identityId>/` prefix. This adapter takes
-	 * `limit` before `offset`, the reverse of `AuthDanceIdentityProvider.list`.
+	 * `AuthDanceStorage.listSession` does exactly that on the `sessions/<identityId>/` prefix. `AuthDanceStorage.listKv`
+	 * forwards its three arguments in this order.
 	 *
 	 * @param prefix The start of the keys to match, for example `sessions/id_2abc/`.
-	 * @param cursor The number of keys to skip. Without it, start at the first key.
+	 * @param offset The number of keys to skip. Without it, start at the first key.
 	 * @param limit The number of keys to return at most. Without it, return every key that matches.
-	 * `MemoryKvProvider` breaks this contract: it passes `limit` to `Array.prototype.slice`, which reads the number
-	 * as an end index.
 	 * @returns The matching keys, or an empty array when the prefix matches none.
 	 */
-	list: (prefix: string, cursor?: number, limit?: number) => Promise<string[]>;
+	list: (prefix: string, offset?: number, limit?: number) => Promise<string[]>;
 	/**
 	 * Write a value under a key, and replace what the key already holds.
 	 *

@@ -117,15 +117,17 @@ export class CloudflareKvKvProvider implements AuthDanceKvProvider {
 
 	async list(
 		prefix: string,
-		cursor?: number,
+		offset?: number,
 		limit?: number,
 	): Promise<string[]> {
+		// KV takes an opaque cursor, never a count of keys to skip, so the page it returns starts at the first
+		// key of the prefix. The skip happens here, and `limit` therefore asks KV for the skipped keys too.
+		const start = offset ?? 0;
 		const result = await this.#kv.list({
 			prefix,
-			cursor: cursor?.toString(),
-			limit,
+			limit: limit === undefined ? undefined : start + limit,
 		});
-		return result.keys.map((key) => key.name);
+		return result.keys.map((key) => key.name).slice(start);
 	}
 
 	async set(key: string, value: string, ttl?: number): Promise<void> {

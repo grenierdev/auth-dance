@@ -661,15 +661,15 @@ describe("App", () => {
 		assert(result5.success);
 		assertEquals(await storage.getIdentity(result3.identity.id), undefined);
 		assertEquals(await storage.listSession(result3.identity.id), []);
-		// No token outlives the identity it was minted for, the other session's included. Only the refusal is
-		// asserted, not its code: MemoryKvProvider rejects on a missing key rather than resolving undefined, so
-		// a destroyed session surfaces as UNKNOWN there rather than as SESSION_NOT_FOUND.
-		const [rejectedStatus] = await post(
+		// No token outlives the identity it was minted for, the other session's included. A key that holds
+		// nothing resolves `undefined`, so the refusal carries the code of a session that is gone.
+		const [rejectedStatus, rejected] = await post(
 			"/list-sessions",
 			undefined,
 			bearer(other.tokens.access_token),
 		);
 		assertEquals(rejectedStatus, 500);
+		assertEquals(rejected.error, "SESSION_NOT_FOUND");
 	});
 
 	it("should not delete the identity without an explicit confirmation", async () => {
@@ -1113,6 +1113,39 @@ describe("App", () => {
 					(await post("/sign-in", undefined, from("203.0.113.7")))[0],
 					200,
 				);
+			});
+
+			// The send bucket is mounted on the two routes, so the router applies it under a prefix as well. A
+			// comparison against the request path missed it here, and a deployment behind a basePath then paid for
+			// every message it was asked to send.
+			it("should bucket the sending routes under a basePath", async () => {
+				const post = client(createAuthDance({
+					api: {
+						...apiOptions,
+						limits: { address: { request: { limit: 100, window: 60 }, send: { limit: 1, window: 60 } } },
+					},
+					app: { basePath: "/auth" },
+				}));
+				const [, result1] = await post("/auth/sign-up", undefined, from("203.0.113.7"));
+				const [, result2] = await post(
+					"/auth/submit-prompt",
+					{ name: "email", value: "john.doe@example.com", state: result1.state },
+					from("203.0.113.7"),
+				);
+				assert(result2.state);
+				const [sentStatus] = await post("/auth/send-validation", {
+					name: "email",
+					state: result2.state,
+				}, from("203.0.113.7"));
+				assertEquals(sentStatus, 200);
+				assertEquals(channelEmail.messages.length, 1);
+				const [status, rejected] = await post("/auth/send-validation", {
+					name: "email",
+					state: result2.state,
+				}, from("203.0.113.7"));
+				assertEquals(status, 429);
+				assertEquals(rejected.error, "RATE_LIMITED");
+				assertEquals(channelEmail.messages.length, 1);
 			});
 		});
 	});

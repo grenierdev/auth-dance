@@ -80,12 +80,11 @@ export class DenoKvProvider implements AuthDanceKvProvider {
 		return entry.value ?? undefined;
 	}
 
-	async list(prefix: string, cursor?: number, limit?: number): Promise<string[]> {
-		const entries = await Array.fromAsync(this.#kv.list<string>({ prefix: ["kv"], start: ["kv", cursor ?? prefix ?? ""] }));
-		if (limit !== undefined) {
-			entries.splice(limit);
-		}
-		return entries.map((entry) => entry.key.at(-1)!.toString());
+	async list(prefix: string, offset?: number, limit?: number): Promise<string[]> {
+		const entries = await Array.fromAsync(this.#kv.list<string>({ prefix: ["kv"], start: ["kv", prefix] }));
+		const keys = entries.map((entry) => entry.key.at(-1)!.toString()).filter((key) => key.startsWith(prefix));
+		const start = offset ?? 0;
+		return keys.slice(start, limit === undefined ? undefined : start + limit);
 	}
 
 	async set(key: string, value: string, ttl?: number): Promise<void> {

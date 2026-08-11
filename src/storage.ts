@@ -121,9 +121,8 @@ export class AuthDanceStorage {
 	/**
 	 * Read one raw value with the key value adapter, in any key space.
 	 *
-	 * The contract allows `undefined` for a key that holds nothing, but an adapter may reject instead.
-	 * `MemoryKvProvider` rejects a missing or expired key with `KVKeyNotFoundError`, so a caller that treats
-	 * absence as normal catches the rejection. `OtpAuthDanceComponent` catches it on `otp/<stateId>/<name>`.
+	 * @returns The stored string, or `undefined` for a key that holds nothing or that has expired. Absence is
+	 * normal here: a one-time code and a session both expire on their own.
 	 */
 	getKv(key: string): Promise<string | undefined> {
 		return this.#options.kv.get(key);
@@ -134,9 +133,13 @@ export class AuthDanceStorage {
 	 *
 	 * The adapter yields keys, not values, so a caller still reads each key. `listSession` does exactly that on
 	 * the `sessions/<identityId>/` prefix.
+	 *
+	 * @param prefix The start of the keys to match, for example `sessions/id_2abc/`.
+	 * @param offset The number of keys to skip. Without it, start at the first key.
+	 * @param limit The number of keys to return at most. Without it, return every key that matches.
 	 */
-	listKv(prefix: string, limit?: number, offset?: number): Promise<string[]> {
-		return this.#options.kv.list(prefix, limit, offset);
+	listKv(prefix: string, offset?: number, limit?: number): Promise<string[]> {
+		return this.#options.kv.list(prefix, offset, limit);
 	}
 
 	/**
@@ -198,8 +201,7 @@ export class AuthDanceStorage {
 	 * The method parses the stored JSON with the `AuthDanceSession` schema. A record that does not match the shape
 	 * makes the call fail. The method never returns a broken session.
 	 *
-	 * @returns The session, or `undefined` when the key holds nothing. An adapter that rejects a missing key, as
-	 * `MemoryKvProvider` does, makes this call reject as well.
+	 * @returns The session, or `undefined` when the key holds nothing.
 	 */
 	async getSession(id: string): Promise<AuthDanceSession | undefined> {
 		const value = await this.getKv(`session/${id}`);
@@ -231,8 +233,7 @@ export class AuthDanceStorage {
 	 *
 	 * `AuthDanceKvProvider.list` yields keys, not values, so the method still reads every entry. The method skips
 	 * a key that the adapter resolves to `undefined`, and it does not fail the whole listing. The index entry and
-	 * the session it names expire on their own schedules, so a gap between the two is normal, not a fault. An
-	 * adapter that rejects a missing key instead, as `MemoryKvProvider` does, turns that gap into an error. This
+	 * the session it names expire on their own schedules, so a gap between the two is normal, not a fault. This
 	 * is the reason the contract of `get` is `string | undefined`.
 	 *
 	 * @returns The sessions of the identity, each one parsed with the `AuthDanceSession` schema.

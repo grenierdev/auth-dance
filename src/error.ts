@@ -51,17 +51,6 @@ export class IdentityNotFoundError extends AuthDanceError {
 	readonly code: "IDENTITY_NOT_FOUND" = "IDENTITY_NOT_FOUND";
 }
 
-// KV
-/**
- * A KV provider holds no value under the key, or the value expired. `MemoryKvProvider.get` rejects with
- * this error instead of resolving `undefined`. `OtpAuthDanceComponent` catches that rejection.
- * `AuthDanceStorage.listSession` does not, so write your own adapter to resolve `undefined` instead.
- */
-export class KVKeyNotFoundError extends AuthDanceError {
-	/** The app layer answers HTTP 500 with `{"error":"KV_KEY_NOT_FOUND"}`. */
-	readonly code: "KV_KEY_NOT_FOUND" = "KV_KEY_NOT_FOUND";
-}
-
 // Choreography state
 /**
  * The state string does not decrypt, carries no expiry, or no longer matches the `AuthDanceState` schema.
@@ -327,7 +316,6 @@ export const Errors = {
 	INVALID_STATE_FOR_FLOW: InvalidStateForFlowError,
 	INVALID_STATE: InvalidStateError,
 	INVALID_VALIDATION_VALUE: InvalidValidationValueError,
-	KV_KEY_NOT_FOUND: KVKeyNotFoundError,
 	NO_VERIFICATION_CHANNEL: NoVerificationChannelError,
 	RATE_LIMITED: RateLimitedError,
 	RECOVERY_NOT_IDENTIFIED: RecoveryNotIdentifiedError,

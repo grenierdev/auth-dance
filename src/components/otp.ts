@@ -90,8 +90,8 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 	/**
 	 * Compares the submitted code with the one in KV, then deletes the key so a code works one time only.
 	 *
-	 * A code that expired, a code the owner already used, and a KV read that fails all give `false`. The library
-	 * treats them as a rejected value, not as a fault of its own.
+	 * A code that expired and a code the owner already used both give `false`. The key holds nothing in either
+	 * case, and the library treats that as a rejected value, not as a fault of its own.
 	 * @returns `true` when the code matches. `false` in every other case, which includes a value that is not a string.
 	 */
 	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]> {
@@ -99,14 +99,14 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 		if (!value) {
 			return false;
 		}
-		const code = await context.storage.getKv(`otp/${context.stateId}/${context.name}`).catch((_) => null);
+		const code = await context.storage.getKv(`otp/${context.stateId}/${context.name}`);
 		if (!code) {
 			return false;
 		}
 		if (code !== value) {
 			return false;
 		}
-		await context.storage.unsetKv(`otp/${context.stateId}/${context.name}`).catch((_) => null);
+		await context.storage.unsetKv(`otp/${context.stateId}/${context.name}`);
 		return true;
 	}
 

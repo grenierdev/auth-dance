@@ -138,10 +138,10 @@ const AddressRateLimits: Required<AuthDanceAddressRateLimits> = {
 };
 
 /**
- * The two routes that put a message on a channel. Each call has a cost, so these routes get a bucket of their own.
+ * The two routes that put a message on a channel. Each hit has a cost, so these routes get a bucket of their own.
  *
- * The middleware compares the whole request path against these two entries. A `basePath` prefixes that path, so the
- * match then fails and the route consumes the `request` bucket only.
+ * `createAuthDanceApp` mounts that bucket as a middleware on each of these two paths. The Hono router matches it, so
+ * an `options.basePath` and a mount inside another app both keep the bucket in force.
  */
 const sendRoutes = ["/send-prompt", "/send-validation"];
 
@@ -186,8 +186,8 @@ export interface AuthDanceAppOptions {
  *
  * A middleware consumes the per-address buckets before anything parses a body, so a flood costs nothing but the counter.
  * `/send-prompt` and `/send-validation` consume a second, tighter bucket on top of that, because they put a message on a
- * channel. That second bucket matches the whole request path, so an `options.basePath` keeps it out of reach. The
- * middleware leaves a request with no caller address unbucketed.
+ * channel. The Hono router matches that second bucket on the route itself, so an `options.basePath` and a mount inside
+ * another app both keep it in force. Both middlewares leave a request with no caller address unbucketed.
  */
 export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp {
 	let app = new Hono<{ Bindings: { api: AuthDanceApi; rate_limit?: AuthDanceAddressRateLimits } }>();
@@ -218,14 +218,24 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 	app.use(async (c, next) => {
 		const { address } = callerOf(c);
 		if (address) {
-			const limits = c.env.rate_limit;
-			await consumeAddressRateLimit(c, `request:${address}`, limits?.request ?? AddressRateLimits.request);
-			if (sendRoutes.includes(c.req.path)) {
-				await consumeAddressRateLimit(c, `send:${address}`, limits?.send ?? AddressRateLimits.send);
-			}
+			await consumeAddressRateLimit(c, `request:${address}`, c.env.rate_limit?.request ?? AddressRateLimits.request);
 		}
 		await next();
 	});
+
+	// The tighter bucket of the two sending routes sits on the routes themselves, so the router decides what it
+	// covers. A comparison against `c.req.path` would miss both routes under an `options.basePath`, and again under
+	// a mount inside another app. These middlewares are registered before the routes, so they still run before the
+	// validator parses a body.
+	for (const route of sendRoutes) {
+		app.use(route, async (c, next) => {
+			const { address } = callerOf(c);
+			if (address) {
+				await consumeAddressRateLimit(c, `send:${address}`, c.env.rate_limit?.send ?? AddressRateLimits.send);
+			}
+			await next();
+		});
+	}
 
 	async function consumeAddressRateLimit(
 		c: Context<{ Bindings: { api: AuthDanceApi } }>,

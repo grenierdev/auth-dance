@@ -17,7 +17,7 @@ import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.t
 import { ksuid } from "./id.ts";
 import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "./components/password.ts";
 import { AuthDanceStorage } from "./storage.ts";
-import { AuthDanceError } from "./error.ts";
+import { AuthDanceError, SessionNotFoundError } from "./error.ts";
 import type { AuthDanceKvProvider } from "./provider.ts";
 import { decode } from "jose/base64url";
 import { decodeJwt } from "jose/jwt/decode";
@@ -807,13 +807,12 @@ describe("Api", () => {
 		assert(result5.success);
 		assertEquals(await storage.getIdentity(result3.identity.id), undefined);
 		// No token outlives the identity it was minted for: both sessions are gone, so neither access token
-		// resolves to anything any more. Which code that surfaces as is the provider's business — MemoryKvProvider
-		// rejects on a missing key instead of resolving undefined, so it comes out UNKNOWN rather than
-		// SESSION_NOT_FOUND — hence only the rejection itself is asserted.
+		// resolves to anything any more. A key that holds nothing resolves `undefined`, so the token names a
+		// session the storage cannot find rather than a provider failure.
 		assertEquals(await storage.listSession(result3.identity.id), []);
 		await assertRejects(
 			() => api.signOut(other3.tokens.access_token),
-			AuthDanceError,
+			SessionNotFoundError,
 		);
 	});
 	it("should not delete the identity without an explicit confirmation", async () => {
