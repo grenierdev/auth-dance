@@ -1,3 +1,4 @@
+import { IdentificationTakenError } from "../error.ts";
 import type { AuthDanceIdentity } from "../identity.ts";
 import type { AuthDanceIdentityProvider, AuthDanceKvProvider } from "../provider.ts";
 import { MemoryRateLimiterProvider } from "./memory.ts";
@@ -34,7 +35,24 @@ export class DenoIdentityProvider implements AuthDanceIdentityProvider {
 	// set: (identity: AuthDanceIdentity) => Promise<void>;
 	async set(identity: AuthDanceIdentity): Promise<void> {
 		const entry = await this.#kv.get<AuthDanceIdentity>(["identity", identity.id]);
+		const keys: Deno.KvKey[] = [];
+		for (const component of [...entry.value?.components ?? [], ...identity.components]) {
+			if (component.kind === "identification") {
+				keys.push(["identification", component.component, component.identification]);
+			}
+		}
+		// `getMany` reads at most 10 keys per call, so an identity with more identifications needs more calls.
+		const indexEntries: Deno.KvEntryMaybe<string>[] = [];
+		for (let i = 0; i < keys.length; i += 10) {
+			indexEntries.push(...await this.#kv.getMany<string[]>(keys.slice(i, i + 10)));
+		}
 		let atomic = this.#kv.atomic();
+		for (const indexEntry of indexEntries) {
+			if (indexEntry.value !== null && indexEntry.value !== identity.id) {
+				throw new IdentificationTakenError();
+			}
+			atomic = atomic.check({ key: indexEntry.key, versionstamp: indexEntry.versionstamp });
+		}
 		if (entry.value) {
 			atomic = atomic.check({ key: ["identity", identity.id], versionstamp: entry.versionstamp });
 			for (const component of entry.value.components) {
@@ -49,7 +67,11 @@ export class DenoIdentityProvider implements AuthDanceIdentityProvider {
 				atomic = atomic.set(["identification", component.component, component.identification], identity.id);
 			}
 		}
-		await atomic.commit();
+		// A failed check means another writer took one of these keys between the read and the commit.
+		const result = await atomic.commit();
+		if (!result.ok) {
+			throw new IdentificationTakenError();
+		}
 	}
 
 	async delete(id: string): Promise<void> {

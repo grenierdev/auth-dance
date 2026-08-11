@@ -213,6 +213,11 @@ export class ChannelInUseError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"CHANNEL_IN_USE"}`. */
 	readonly code: "CHANNEL_IN_USE" = "CHANNEL_IN_USE";
 }
+/** An identification is already in use by another identity. */
+export class IdentificationTakenError extends AuthDanceError {
+	/** The app layer answers HTTP 500 with `{"error":"IDENTIFICATION_TAKEN"}`. */
+	readonly code: "IDENTIFICATION_TAKEN" = "IDENTIFICATION_TAKEN";
+}
 /**
  * The subscribe flow found no other confirmed channel for the code that confirms the new channel. The
  * library confirms a new channel through a channel it already trusts.

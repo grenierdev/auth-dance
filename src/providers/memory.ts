@@ -1,5 +1,5 @@
 import type { AuthDanceChannel, AuthDanceChannelContext } from "../channel.ts";
-import { ComponentAlreadyEnrolledError } from "../error.ts";
+import { ComponentAlreadyEnrolledError, IdentificationTakenError } from "../error.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityChannel, AuthDanceIdentityIdentification } from "../identity.ts";
 import type { AuthDanceMessage } from "../message.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
@@ -22,6 +22,7 @@ import { AuthDanceStorage } from "../storage.ts";
  */
 export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Disposable {
 	#storage: Map<string, AuthDanceIdentity>;
+	#identificationIndex: Map<string, string>;
 
 	/**
 	 * Creates a provider with an empty map, or with the identities that `storage` holds.
@@ -31,6 +32,13 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 	 */
 	constructor(storage?: Iterable<[string, AuthDanceIdentity]>) {
 		this.#storage = new Map(storage);
+		this.#identificationIndex = new Map(
+			this.#storage.values().flatMap((identity) =>
+				identity.components
+					.filter((c) => c.kind === "identification")
+					.map((c) => [`${c.component}:${c.identification}`, identity.id] as const)
+			),
+		);
 	}
 
 	/** Empties the map. A `using` declaration calls this at the end of the block. */
@@ -77,11 +85,10 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 	 * @returns A clone of the first identity that matches, or `undefined`.
 	 */
 	getByIdentification(component: string, identification: string): Promise<AuthDanceIdentity | undefined> {
-		for (const identity of this.#storage.values()) {
-			const identityComponent = identity.components.find((c): c is AuthDanceIdentityIdentification =>
-				c.kind === "identification" && c.component === component && c.identification === identification
-			);
-			if (identityComponent) {
+		const identityId = this.#identificationIndex.get(`${component}:${identification}`);
+		if (identityId) {
+			const identity = this.#storage.get(identityId);
+			if (identity) {
 				return Promise.resolve(structuredClone(identity));
 			}
 		}
@@ -95,12 +102,29 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 		) {
 			throw new ComponentAlreadyEnrolledError();
 		}
+		const identifications = identity.components.filter((c) => c.kind === "identification");
+		for (const identification of identifications) {
+			const identityId = this.#identificationIndex.get(`${identification.component}:${identification.identification}`);
+			if (identityId && identityId !== identity.id) {
+				throw new IdentificationTakenError();
+			}
+		}
 		this.#storage.set(identity.id, structuredClone(identity));
+		for (const identification of identifications) {
+			this.#identificationIndex.set(`${identification.component}:${identification.identification}`, identity.id);
+		}
 		return Promise.resolve();
 	}
 
 	/** Removes the identity with this id. An unknown id is not an error. */
 	delete(id: string): Promise<void> {
+		const identity = this.#storage.get(id);
+		if (identity) {
+			const identifications = identity.components.filter((c): c is AuthDanceIdentityIdentification => c.kind === "identification");
+			for (const identification of identifications) {
+				this.#identificationIndex.delete(`${identification.component}:${identification.identification}`);
+			}
+		}
 		this.#storage.delete(id);
 		return Promise.resolve();
 	}
