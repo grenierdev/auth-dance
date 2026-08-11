@@ -12,11 +12,11 @@ import type { ReactNode } from "react";
 import type { AuthDancePromptInput } from "auth-dance";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
 
-import { Checkbox } from "@/components/ui/checkbox";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp";
-import { useDance, useDanceActions } from "@/lib/dance";
+import { Checkbox } from "@/components/ui/checkbox.tsx";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field.tsx";
+import { Input } from "@/components/ui/input.tsx";
+import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp.tsx";
+import { useDance, useDanceActions } from "@/lib/dance/index.ts";
 
 /** Everything a control is given. Nothing else is in scope for it, which keeps a new type of field a one-liner. */
 export interface PromptControlProps {

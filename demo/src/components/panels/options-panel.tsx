@@ -15,16 +15,16 @@
 import { useMemo, useState } from "react";
 import { TriangleAlertIcon } from "lucide-react";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet, FieldTitle } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
-import { type Config, DEFAULT_DURATIONS, DURATION_FIELDS, PRESETS, useDance, useDanceActions } from "@/lib/dance";
-import { resolvedTree } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.tsx";
+import { Button } from "@/components/ui/button.tsx";
+import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet, FieldTitle } from "@/components/ui/field.tsx";
+import { Input } from "@/components/ui/input.tsx";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select.tsx";
+import { Switch } from "@/components/ui/switch.tsx";
+import { Textarea } from "@/components/ui/textarea.tsx";
+import { type Config, DEFAULT_DURATIONS, DURATION_FIELDS, PRESETS, useDance, useDanceActions } from "@/lib/dance/index.ts";
+import { resolvedTree } from "@/lib/format.ts";
+import { cn } from "@/lib/utils.ts";
 
 /** What `SelectValue` reads the label of the picked preset from, since it never sees the item elements itself. */
 const PRESET_ITEMS = PRESETS.map((preset) => ({ label: preset.label, value: preset.id }));

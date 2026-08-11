@@ -4,12 +4,22 @@
 		"dev:vite": "deno -A npm:vite",
 		"build": "deno -A npm:vite build",
 		"preview": "deno -A npm:vite preview",
-		// The app is built by vite off tsconfig.json, not by deno's own resolver: the sources use extensionless "@/..."
-		// specifiers that only the bundler understands. Check with the same typescript the build uses, and --force so a
-		// stale tsbuildinfo cannot turn the task into a no-op.
-		"check": "deno -A npm:typescript@~6.0.2/tsc -b --force",
+		// Two checkers, because neither one covers the other. `deno check` reads the sources the way the runtime does,
+		// through the import map above. `tsc -b` reads them the way the build does, through tsconfig.json, and it alone
+		// applies the strictness in tsconfig.app.json — noUnusedLocals, erasableSyntaxOnly — and covers vite.config.ts.
+		// --force so a stale tsbuildinfo cannot turn the task into a no-op.
+		"check": "deno check && deno -A npm:typescript@~6.0.2/tsc -b --force",
 		"deploy": "deno run --allow-all npm:wrangler deploy --config ./wrangler.jsonc"
 	},
+	// Generated trees: vite writes dist/ and .tanstack, wrangler writes .wrangler. Without this, `deno check` and
+	// `deno lint` walk the emitted bundles.
+	"exclude": [
+		"dist",
+		".tanstack",
+		".wrangler",
+		".output",
+		".nitro"
+	],
 	"imports": {
 		"@/": "./src/",
 		"auth-dance": "../src/mod.ts",

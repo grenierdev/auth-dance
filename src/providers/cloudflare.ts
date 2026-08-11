@@ -5,7 +5,7 @@ import type {
 	AuthDanceRateLimiterProvider,
 	AuthDanceRateLimiterResult,
 } from "../provider.ts";
-import { DurableObject } from "cloudflare:workers"; // IDK why vscode keep complaining about this import, but it works fine in the build
+import { DurableObject } from "cloudflare:workers";
 import { parse } from "valibot";
 import { AuthDanceStorage } from "../storage.ts";
 import type { AuthDanceChannel, AuthDanceChannelContext } from "../channel.ts";

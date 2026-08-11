@@ -12,12 +12,12 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 
-import { AppSidebar, PanelsProvider } from "@/components/app-sidebar";
-import { AuthStage } from "@/components/auth/auth-stage";
-import { Progress } from "@/components/ui/progress";
-import { Separator } from "@/components/ui/separator";
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { useDance } from "@/lib/dance";
+import { AppSidebar, PanelsProvider } from "@/components/app-sidebar.tsx";
+import { AuthStage } from "@/components/auth/auth-stage.tsx";
+import { Progress } from "@/components/ui/progress.tsx";
+import { Separator } from "@/components/ui/separator.tsx";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar.tsx";
+import { useDance } from "@/lib/dance/index.ts";
 
 /** The one route of the demo, and the only one that will ever exist. */
 export const Route = createFileRoute("/")({ ssr: false, component: DemoPage });

@@ -15,15 +15,15 @@
 import { useState } from "react";
 import { CircleCheckIcon, TriangleAlertIcon } from "lucide-react";
 
-import { useOpenOptions } from "@/components/app-sidebar";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Field, FieldDescription, FieldGroup, FieldSeparator } from "@/components/ui/field";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
-import { FLOW_NAMES, type FlowName, FLOWS, PRESETS, SEEDED, useDance, useDanceActions } from "@/lib/dance";
-import { resolvedTree } from "@/lib/format";
+import { useOpenOptions } from "@/components/app-sidebar.tsx";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.tsx";
+import { Button } from "@/components/ui/button.tsx";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import { Field, FieldDescription, FieldGroup, FieldSeparator } from "@/components/ui/field.tsx";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select.tsx";
+import { Skeleton } from "@/components/ui/skeleton.tsx";
+import { FLOW_NAMES, type FlowName, FLOWS, PRESETS, SEEDED, useDance, useDanceActions } from "@/lib/dance/index.ts";
+import { resolvedTree } from "@/lib/format.ts";
 
 import { PromptForm } from "./prompt-form.tsx";
 

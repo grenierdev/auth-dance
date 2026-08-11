@@ -15,8 +15,9 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-r
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { TanStackDevtools } from "@tanstack/react-devtools";
 
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip.tsx";
 
+// @ts-types="../../types/css-url.d.ts"
 import appCss from "../styles.css?url";
 
 // The favicon the reference page carried, percent-encoded so it survives any transport that would rather not carry

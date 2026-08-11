@@ -21,7 +21,17 @@ export default defineConfig({
 		tailwindcss(),
 		tanstackStart({
 			router: {
-				routeTreeFileHeader: [`// deno-lint-ignore-file`],
+				// `addExtensions` makes the generated route tree import `./routes/__root.tsx` rather than the
+				// extensionless form, which is the one form Deno's resolver reads. The header replaces the
+				// generator's default, so the three lines it ships with are repeated here: without `@ts-nocheck`,
+				// `noUnusedLocals` reports the `createStart` type import the generator writes but never uses.
+				routeTreeFileHeader: [
+					`// deno-lint-ignore-file`,
+					`/* eslint-disable */`,
+					`// @ts-nocheck`,
+					`// noinspection JSUnusedGlobalSymbols`,
+				],
+				addExtensions: true,
 			},
 			prerender: {
 				enabled: true,

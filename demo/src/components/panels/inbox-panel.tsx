@@ -13,13 +13,13 @@
 import { InboxIcon } from "lucide-react";
 
 import { focusPromptField } from "@/components/auth/prompt-fields.tsx";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { Item, ItemContent, ItemDescription, ItemFooter, ItemGroup, ItemHeader } from "@/components/ui/item";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { useDance, useDanceActions } from "@/lib/dance";
-import { clock } from "@/lib/format";
+import { Badge } from "@/components/ui/badge.tsx";
+import { Button } from "@/components/ui/button.tsx";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty.tsx";
+import { Item, ItemContent, ItemDescription, ItemFooter, ItemGroup, ItemHeader } from "@/components/ui/item.tsx";
+import { ScrollArea } from "@/components/ui/scroll-area.tsx";
+import { useDance, useDanceActions } from "@/lib/dance/index.ts";
+import { clock } from "@/lib/format.ts";
 
 /** What the inbox asks of whoever hosts it. */
 export interface InboxPanelProps {

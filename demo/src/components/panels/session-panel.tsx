@@ -14,15 +14,15 @@
 import { useEffect, useState } from "react";
 import { CheckIcon, CopyIcon, KeyRoundIcon } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useDance, useDanceActions } from "@/lib/dance";
-import { stamp } from "@/lib/format";
+import { Badge } from "@/components/ui/badge.tsx";
+import { Button } from "@/components/ui/button.tsx";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty.tsx";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item.tsx";
+import { ScrollArea } from "@/components/ui/scroll-area.tsx";
+import { Separator } from "@/components/ui/separator.tsx";
+import { Skeleton } from "@/components/ui/skeleton.tsx";
+import { useDance, useDanceActions } from "@/lib/dance/index.ts";
+import { stamp } from "@/lib/format.ts";
 
 /** The three tokens, in the order the library mints them and the reference listed them. */
 const TOKEN_NAMES = ["access_token", "id_token", "refresh_token"] as const;

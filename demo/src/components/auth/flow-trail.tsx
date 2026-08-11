@@ -8,8 +8,8 @@
  * prove control of itself already carries its check mark, so this only lays them out.
  */
 
-import type { Step } from "@/lib/dance";
-import { cn } from "@/lib/utils";
+import type { Step } from "@/lib/dance/index.ts";
+import { cn } from "@/lib/utils.ts";
 
 /** One row of small pills, the answered names muted and the pending one accented. Scrolls sideways when the flow is long. */
 export function FlowTrail({ step }: { step: Step }) {

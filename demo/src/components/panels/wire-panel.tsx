@@ -11,13 +11,13 @@
 import type { ComponentProps } from "react";
 import { ChevronRightIcon, EraserIcon, RadioTowerIcon } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { type LogEntry, useDance, useDanceActions } from "@/lib/dance";
-import { clock } from "@/lib/format";
+import { Badge } from "@/components/ui/badge.tsx";
+import { Button } from "@/components/ui/button.tsx";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible.tsx";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty.tsx";
+import { ScrollArea } from "@/components/ui/scroll-area.tsx";
+import { type LogEntry, useDance, useDanceActions } from "@/lib/dance/index.ts";
+import { clock } from "@/lib/format.ts";
 
 /** How many lines the panel renders. The log itself is unbounded; the reference showed the newest forty and so does this. */
 const SHOWN = 40;

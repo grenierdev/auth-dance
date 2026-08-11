@@ -15,8 +15,8 @@
 import * as React from "react";
 import { CableIcon, InboxIcon, KeyRoundIcon, Settings2Icon, ShieldCheckIcon } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Badge } from "@/components/ui/badge.tsx";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet.tsx";
 import {
 	Sidebar,
 	SidebarContent,
@@ -30,15 +30,15 @@ import {
 	SidebarMenuItem,
 	SidebarRail,
 	useSidebar,
-} from "@/components/ui/sidebar";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
-import { useDance } from "@/lib/dance";
+} from "@/components/ui/sidebar.tsx";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip.tsx";
+import { cn } from "@/lib/utils.ts";
+import { useDance } from "@/lib/dance/index.ts";
 
-import { InboxPanel } from "@/components/panels/inbox-panel";
-import { OptionsPanel } from "@/components/panels/options-panel";
-import { SessionPanel } from "@/components/panels/session-panel";
-import { WirePanel } from "@/components/panels/wire-panel";
+import { InboxPanel } from "@/components/panels/inbox-panel.tsx";
+import { OptionsPanel } from "@/components/panels/options-panel.tsx";
+import { SessionPanel } from "@/components/panels/session-panel.tsx";
+import { WirePanel } from "@/components/panels/wire-panel.tsx";
 
 /** The four panels the rail can put on screen. */
 export type PanelName = "options" | "inbox" | "wire" | "session";

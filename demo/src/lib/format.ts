@@ -11,7 +11,7 @@
  * than inside it.
  */
 
-import { type Config, currentChoreography, formatChoreography } from "@/lib/dance";
+import { type Config, currentChoreography, formatChoreography } from "@/lib/dance/index.ts";
 
 /**
  * A moment as a bare wall clock, without a meridiem so the column keeps its width.

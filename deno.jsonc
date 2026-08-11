@@ -4,6 +4,11 @@
 		"./demo"
 	],
 	"nodeModulesDir": "auto",
+	"scopes": {
+		"./src/providers/": {
+			"cloudflare:workers": "./src/types/cloudflare-workers.d.ts"
+		}
+	},
 	"imports": {
 		"@cloudflare/workers-types": "npm:@cloudflare/workers-types@^5.20260804.1",
 		"@hono/otel": "npm:@hono/otel@^1.1.2",

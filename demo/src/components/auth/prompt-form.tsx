@@ -8,12 +8,12 @@
  * is the one thing the wire never says, so it rides on the step and shows up on the badge.
  */
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldGroup, FieldLegend, FieldSet } from "@/components/ui/field";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { activePrompt, isSendable, promptInputs, submitPath, useDance, useDanceActions } from "@/lib/dance";
-import { clock } from "@/lib/format";
+import { Badge } from "@/components/ui/badge.tsx";
+import { Button } from "@/components/ui/button.tsx";
+import { Field, FieldDescription, FieldGroup, FieldLegend, FieldSet } from "@/components/ui/field.tsx";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs.tsx";
+import { activePrompt, isSendable, promptInputs, submitPath, useDance, useDanceActions } from "@/lib/dance/index.ts";
+import { clock } from "@/lib/format.ts";
 
 import { FlowTrail } from "./flow-trail.tsx";
 import { PromptField } from "./prompt-fields.tsx";
