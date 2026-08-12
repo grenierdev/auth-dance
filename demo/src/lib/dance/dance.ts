@@ -304,6 +304,5 @@ export const ERROR_HINTS: Record<string, string> = {
 	INVALID_STATE: "The state is gone or expired. Start the flow again.",
 	INVALID_STATE_FOR_FLOW: "This flow has nothing of that kind to answer or to send at this point.",
 	IDENTITY_NOT_RESOLVED: "No step of this dance has said who is dancing yet.",
-	NO_VERIFICATION_CHANNEL: "Subscribing a channel is confirmed over a channel the identity already trusts.",
 	RATE_LIMITED: "The bucket for this address or identity is empty for now.",
 };

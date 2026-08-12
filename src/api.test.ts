@@ -314,13 +314,13 @@ describe("Api", () => {
 		assert(result5.prompt.type === "otp");
 		assert(result5.prompt.sendable);
 		const sent = await api.sendValidation({
-			name: "email",
+			name: "sms",
 			locale: "en",
 			state: result5.state,
 		});
 		assert(sent.success);
-		assert(channelEmail.messages.length === 1);
-		const code = channelEmail.messages[0].content["text/x-code"];
+		assert(channelSms.messages.length === 1);
+		const code = channelSms.messages[0].content["text/x-code"];
 		assert(code);
 		const result6 = await api.submitValidation({
 			name: "sms",
@@ -1708,8 +1708,8 @@ describe("Api", () => {
 				state: subscribing.state,
 			});
 			assert("state" in collected);
-			await api.sendValidation({ name: "email", locale: "en", state: collected.state });
-			const code = channelEmail.messages[0].content["text/x-code"];
+			await api.sendValidation({ name: "sms", locale: "en", state: collected.state });
+			const code = channelSms.messages[0].content["text/x-code"];
 			assert(code);
 			const done = await api.submitValidation({
 				name: "sms",

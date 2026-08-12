@@ -69,7 +69,6 @@ import {
 	InvalidStateError,
 	InvalidStateForFlowError,
 	InvalidValidationValueError,
-	NoVerificationChannelError,
 	RateLimitedError,
 	RecoveryNotIdentifiedError,
 	SessionNotFoundError,
@@ -854,25 +853,16 @@ export class AuthDanceApi {
 		return { ...await this.#sessionIdentity(sub), authTime };
 	}
 
-	// Confirming a new channel is authorised through an already-trusted channel: pick the first
-	// confirmed channel that is not the one being subscribed to (e.g. send the OTP to email while
-	// subscribing SMS).
-	#subscribeSendChannel(identity: AuthDanceIdentity, subscribing: string): AuthDanceIdentityChannel {
-		const channel = identity.components
-			.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.confirmed && c.component !== subscribing);
-		if (!channel) {
-			throw new NoVerificationChannelError(subscribing);
-		}
-		return channel;
-	}
-
+	// Like #enrollContext, the pending channel comes before the identity's own components, so the code that
+	// confirms the subscription goes to the recipient being subscribed (e.g. the new phone number) and the
+	// validation proves control of that recipient, not of a channel the identity already trusts.
 	#subscribeContext(state: AuthDanceStateSubscribe, identity: AuthDanceIdentity): AuthDanceComponentContext {
 		return {
 			storage: this.#options.storage,
 			name: state.channel.component,
 			stateId: state.id,
 			flow: "subscribe",
-			identity,
+			identity: { ...identity, components: [state.channel, ...identity.components] },
 		};
 	}
 
@@ -1441,8 +1431,8 @@ export class AuthDanceApi {
 	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
 	 *
 	 * The prompt collects the recipient, a phone number for example. The library then confirms the new channel
-	 * with a one-time code. It delivers that code over a channel the identity has already confirmed. An identity
-	 * with no other confirmed channel therefore meets `NoVerificationChannelError` on the next step, not here.
+	 * with a one-time code. It delivers that code over the channel being subscribed, to the recipient it just
+	 * collected, so the validation proves control of that recipient.
 	 *
 	 * @param options `name` is the channel to subscribe, as `options.channels` declares it.
 	 * @returns The encrypted state, the prompt of the channel, and the moment the state expires.
@@ -1657,7 +1647,6 @@ export class AuthDanceApi {
 	 * @throws ComponentNotVerifiableError when the component a recovery identifies through offers no verification.
 	 * @throws ConfirmationRequiredError when an unenroll, an unsubscribe or a delete gets a value other than `true`.
 	 * @throws WouldLockOutError when the unenroll leaves no completable path through the choreography.
-	 * @throws NoVerificationChannelError when a subscribe has no other confirmed channel to deliver the code over.
 	 * @throws SessionNotFoundError or IdentityNotFoundError when the session or the identity the state names is gone.
 	 */
 	submitPrompt(
@@ -1914,8 +1903,7 @@ export class AuthDanceApi {
 			// email component stores its address), then move to OTP validation.
 			state.channel.data = { ...(state.channel.data ?? {}), [state.channel.component]: options.value };
 			state.validating = true;
-			const sendChannel = this.#subscribeSendChannel(identity, state.channel.component);
-			const prompt = await new OtpAuthDanceComponent({ channel: sendChannel.component }).getPrompt(this.#subscribeContext(state, identity));
+			const prompt = await new OtpAuthDanceComponent({ channel: state.channel.component }).getPrompt(this.#subscribeContext(state, identity));
 			return { state: await this.#encryptState(state, expireAt), prompt, expireAt };
 		} else if (state.kind === "unsubscribe") {
 			// A single confirmation gate: the authenticated caller must explicitly confirm (value === true)
@@ -1970,8 +1958,8 @@ export class AuthDanceApi {
 	 * their phases. Before the flow collects the replacement, the message proves control of the current value — of
 	 * the component the caller identified through, for a recovery. Afterwards it validates the replacement.
 	 *
-	 * For a subscribe the library picks the first confirmed channel other than the channel the flow subscribes
-	 * to, so `name` does not select it. A recovery names one component in each of its phases, so `name` does not
+	 * For a subscribe the code goes over the channel being subscribed, to the recipient the flow collected, so
+	 * `name` does not select it. A recovery names one component in each of its phases, so `name` does not
 	 * select there either. This method needs no access token and no fresh sign-in.
 	 *
 	 * @param options `name` selects which component to validate when the sign-up step is a choice. `locale` picks
@@ -1983,7 +1971,6 @@ export class AuthDanceApi {
 	 * @throws ComponentNotVerifiableError when the component offers no verification.
 	 * @throws ComponentNotCollectedError when the flow has collected no value to validate yet.
 	 * @throws ComponentNotSendableError when the verification delivers nothing over a channel.
-	 * @throws NoVerificationChannelError when a subscribe has no other confirmed channel to deliver the code over.
 	 * @throws RecoveryNotIdentifiedError when a recovery has not resolved its identity yet.
 	 * @throws SessionNotFoundError or IdentityNotFoundError when the session or the identity the state names is gone.
 	 * @throws UnknownChannelError when `options.channels` declares no channel the message names.
@@ -2021,8 +2008,12 @@ export class AuthDanceApi {
 			authComponent = ac;
 			ctx = c;
 		} else if (state.kind === "subscribe") {
+			// The code goes to the recipient this flow collects, so before the recipient there is nothing to deliver to.
+			if (!state.validating) {
+				throw new ComponentNotCollectedError(state.channel.component);
+			}
 			const { identity } = await this.#sessionIdentity(state.sessionId);
-			authComponent = new OtpAuthDanceComponent({ channel: this.#subscribeSendChannel(identity, state.channel.component).component });
+			authComponent = new OtpAuthDanceComponent({ channel: state.channel.component });
 			ctx = this.#subscribeContext(state, identity);
 		} else {
 			throw new InvalidStateForFlowError(state.kind);
@@ -2064,7 +2055,6 @@ export class AuthDanceApi {
 	 * @throws ComponentNotInChoreographyError or UnknownComponentError when `name` is not the step the flow expects.
 	 * @throws ComponentNotVerifiableError when the component offers no verification.
 	 * @throws ComponentNotCollectedError when the flow has collected no value to validate yet.
-	 * @throws NoVerificationChannelError when a subscribe has no other confirmed channel to check the code against.
 	 * @throws RecoveryNotIdentifiedError when a recovery has not resolved its identity yet.
 	 * @throws SessionNotFoundError or IdentityNotFoundError when the session or the identity the state names is gone.
 	 */
@@ -2172,9 +2162,12 @@ export class AuthDanceApi {
 				persist: true,
 			};
 		} else if (state.kind === "subscribe") {
+			// Same gate as #sendValidation: with no recipient collected, no code was ever deliverable.
+			if (!state.validating) {
+				throw new ComponentNotCollectedError(state.channel.component);
+			}
 			const { identity } = await this.#sessionIdentity(state.sessionId);
-			const sendChannel = this.#subscribeSendChannel(identity, state.channel.component);
-			const verified = await new OtpAuthDanceComponent({ channel: sendChannel.component }).verifyPrompt(
+			const verified = await new OtpAuthDanceComponent({ channel: state.channel.component }).verifyPrompt(
 				options.value,
 				this.#subscribeContext(state, identity),
 			);

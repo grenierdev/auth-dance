@@ -218,14 +218,6 @@ export class IdentificationTakenError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"IDENTIFICATION_TAKEN"}`. */
 	readonly code: "IDENTIFICATION_TAKEN" = "IDENTIFICATION_TAKEN";
 }
-/**
- * The subscribe flow found no other confirmed channel for the code that confirms the new channel. The
- * library confirms a new channel through a channel it already trusts.
- */
-export class NoVerificationChannelError extends AuthDanceError {
-	/** The app layer answers HTTP 500 with `{"error":"NO_VERIFICATION_CHANNEL"}`. */
-	readonly code: "NO_VERIFICATION_CHANNEL" = "NO_VERIFICATION_CHANNEL";
-}
 /** `unenroll`, `unsubscribe` and `delete` each end with one explicit confirmation. The caller submitted a value other than `true`. */
 export class ConfirmationRequiredError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"CONFIRMATION_REQUIRED"}`. */
@@ -321,7 +313,6 @@ export const Errors = {
 	INVALID_STATE_FOR_FLOW: InvalidStateForFlowError,
 	INVALID_STATE: InvalidStateError,
 	INVALID_VALIDATION_VALUE: InvalidValidationValueError,
-	NO_VERIFICATION_CHANNEL: NoVerificationChannelError,
 	RATE_LIMITED: RateLimitedError,
 	RECOVERY_NOT_IDENTIFIED: RecoveryNotIdentifiedError,
 	SESSION_NOT_FOUND: SessionNotFoundError,

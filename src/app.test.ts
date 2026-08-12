@@ -357,13 +357,13 @@ describe("App", () => {
 		assertEquals(result5.prompt.type, "otp");
 		assert(result5.prompt.sendable);
 		const [, sent] = await post("/send-validation", {
-			name: "email",
+			name: "sms",
 			locale: "en",
 			state: result5.state,
 		});
 		assert(sent.success);
-		assertEquals(channelEmail.messages.length, 1);
-		const code = channelEmail.messages[0].content["text/x-code"];
+		assertEquals(channelSms.messages.length, 1);
+		const code = channelSms.messages[0].content["text/x-code"];
 		assert(code);
 		const [status, result6] = await post("/submit-validation", {
 			name: "sms",

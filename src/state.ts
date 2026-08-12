@@ -287,9 +287,9 @@ export const AuthDanceStateRecover: v.GenericSchema<AuthDanceStateRecover> = v.p
 /**
  * The in-progress dance of an authenticated caller who adds a channel to the identity.
  *
- * A subscription is asymmetric. The library delivers the confirming code over a channel the identity already
- * confirmed, because the new channel proves nothing yet. Without such a channel it answers
- * `NO_VERIFICATION_CHANNEL`.
+ * The library delivers the confirming code over the new channel itself, to the recipient this dance collects.
+ * The code that comes back proves control of that recipient, the same proof an enrollment asks of the value it
+ * enrolls.
  */
 export interface AuthDanceStateSubscribe {
 	/** The id of this dance, a ksuid with an `st_` prefix. */

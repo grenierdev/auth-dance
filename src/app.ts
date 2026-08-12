@@ -454,7 +454,7 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		describeRoute({
 			summary: "Subscribe a channel",
 			description:
-				"Attaches a channel to the authenticated identity. The recipient is collected first, then confirmed through a channel the identity already trusts — subscribing SMS is confirmed by mail, for instance — so an identity with no other confirmed channel is refused with NO_VERIFICATION_CHANNEL.",
+				"Attaches a channel to the authenticated identity. The recipient is collected first, then confirmed with a one-time code delivered over the new channel itself — subscribing SMS sends the code to the submitted phone number — so control of the recipient is what gets proven.",
 			tags: ["Auth"],
 			security: [{ bearerAuth: [] }],
 			responses: {
