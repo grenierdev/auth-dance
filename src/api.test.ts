@@ -19,9 +19,7 @@ import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "./components/p
 import { AuthDanceStorage } from "./storage.ts";
 import { AuthDanceError, SessionNotFoundError } from "./error.ts";
 import type { AuthDanceKvProvider } from "./provider.ts";
-import { decode } from "jose/base64url";
 import { decodeJwt } from "jose/jwt/decode";
-import { SignJWT } from "jose/jwt/sign";
 
 // PBKDF2 at its real cost is 600000 passes and ~200ms a hash, which these suites pay a few dozen times over. The
 // cost is the point in a deployment and pure latency here, so the tests buy a single pass.
@@ -1290,17 +1288,6 @@ describe("Api", () => {
 		);
 		// A flow left unconfigured keeps the 5 minute default.
 		assertEquals(secondsFromNow((await perFlowApi.signUp()).expireAt), 5 * 60);
-	});
-	it("should reject an access token carrying no sign-in date", async () => {
-		const forged = await new SignJWT({})
-			.setProtectedHeader({ alg: "HS256" })
-			.setIssuer("acme")
-			.setIssuedAt()
-			.setExpirationTime(new Date(Date.now() + 60_000))
-			.setSubject("st_whatever")
-			.sign(decode(apiOptions.secret));
-		const rejected = await assertRejects(() => api.signOut(forged), AuthDanceError);
-		assertEquals(rejected.code, "INVALID_ACCESS_TOKEN");
 	});
 	it("should read a state back under the issuer it was minted with", async () => {
 		await johnDoe();

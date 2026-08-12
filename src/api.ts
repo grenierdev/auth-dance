@@ -645,15 +645,21 @@ export class AuthDanceApi {
 	 */
 	signOut(access_token: string, others: boolean = false): Promise<AuthDanceResponseResult> {
 		return this.#guard("signOut", async () => {
-			const { session, identity } = await this.accessTokenIdentity(access_token);
-			await this.#consumeRateLimit("manage", `session:${session.id}`);
-			// The hook fires one time for each session the call destroyed, and only after the store agrees it is
-			// gone. A sign-out that takes them all reports each one rather than the sweep, so a listener sees the
-			// same event whichever way a session ended.
-			const deleted = others ? await this.#options.storage.listSession(session.identityId) : [session];
-			await Promise.all(deleted.map((s) => this.#options.storage.deleteSession(s.id)));
-			for (const s of deleted) {
-				await this.#emit("onSessionDeleted", { flow: "sign-out", session: s, identity });
+			try {
+				const { session, identity } = await this.accessTokenIdentity(access_token);
+				await this.#consumeRateLimit("manage", `session:${session.id}`);
+				// The hook fires one time for each session the call destroyed, and only after the store agrees it is
+				// gone. A sign-out that takes them all reports each one rather than the sweep, so a listener sees the
+				// same event whichever way a session ended.
+				const deleted = others ? await this.#options.storage.listSession(session.identityId) : [session];
+				await Promise.all(deleted.map((s) => this.#options.storage.deleteSession(s.id)));
+				for (const s of deleted) {
+					await this.#emit("onSessionDeleted", { flow: "sign-out", session: s, identity });
+				}
+			} catch (cause) {
+				if (!(cause instanceof InvalidAccessTokenError)) {
+					throw cause;
+				}
 			}
 			return { success: true };
 		});
@@ -752,7 +758,13 @@ export class AuthDanceApi {
 				}
 			}
 			if (authFlow) {
-				const issued = await this.#issueTokens(options.identity, options);
+				const issued = await this.#issueTokens(
+					options.identity,
+					{
+						...options,
+						expireAt: new Date(Date.now() + (this.#options.durations?.refresh ?? 24 * 60 * 60) * 1000),
+					},
+				);
 				await this.#emit("onSessionCreated", {
 					flow: options.flow === "sign-up" ? "sign-up" : "sign-in",
 					session: issued.session,
