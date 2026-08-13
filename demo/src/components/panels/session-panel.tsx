@@ -168,8 +168,8 @@ export function SessionPanel() {
 												{entry.kind === "identification" && (
 													<ItemDescription className="text-xs break-all">{entry.identification}</ItemDescription>
 												)}
-												{entry.kind === "channel" && entry.linkedTo && entry.linkedTo.length > 0 && (
-													<ItemDescription className="text-xs">carries {entry.linkedTo.join(", ")}</ItemDescription>
+												{entry.linkedTo && entry.linkedTo.length > 0 && (
+													<ItemDescription className="text-xs">linked to {entry.linkedTo.join(", ")}</ItemDescription>
 												)}
 											</ItemContent>
 											<ItemActions>

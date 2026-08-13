@@ -126,6 +126,18 @@ export class UnknownChannelError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"UNKNOWN_CHANNEL"}`. */
 	readonly code: "UNKNOWN_CHANNEL" = "UNKNOWN_CHANNEL";
 }
+/**
+ * `AuthDanceApiOptions.components` and `AuthDanceApiOptions.channels` declare the same name. One name names one
+ * record on an identity, because `linkedTo` names a record by that name alone. A policy that gives a component
+ * and a channel the same name makes such a link ambiguous, so the constructor of `AuthDanceApi` refuses it.
+ *
+ * The `Errors` registry holds no entry for this class. The constructor raises it before the HTTP layer exists,
+ * so no response can carry the code.
+ */
+export class DuplicateComponentNameError extends AuthDanceError {
+	/** No route answers this code. A deployment reads it from the failure the constructor raises. */
+	readonly code: "DUPLICATE_COMPONENT_NAME" = "DUPLICATE_COMPONENT_NAME";
+}
 /** The caller named a component that the current step of the choreography does not offer. */
 export class ComponentNotInChoreographyError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"COMPONENT_NOT_IN_CHOREOGRAPHY"}`. */
@@ -208,10 +220,13 @@ export class ChannelNotSubscribedError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"CHANNEL_NOT_SUBSCRIBED"}`. */
 	readonly code: "CHANNEL_NOT_SUBSCRIBED" = "CHANNEL_NOT_SUBSCRIBED";
 }
-/** `unsubscribe` would detach a channel that still names an enrolled component in its `linkedTo` list. */
-export class ChannelInUseError extends AuthDanceError {
-	/** The app layer answers HTTP 500 with `{"error":"CHANNEL_IN_USE"}`. */
-	readonly code: "CHANNEL_IN_USE" = "CHANNEL_IN_USE";
+/**
+ * The record still has an enrolled record that depends on it. `unenroll` and `unsubscribe` both raise it, for a
+ * record whose `linkedTo` names something the identity still holds. Remove what depends on it first.
+ */
+export class ComponentInUseError extends AuthDanceError {
+	/** The app layer answers HTTP 500 with `{"error":"COMPONENT_IN_USE"}`. */
+	readonly code: "COMPONENT_IN_USE" = "COMPONENT_IN_USE";
 }
 /** An identification is already in use by another identity. */
 export class IdentificationTakenError extends AuthDanceError {
@@ -290,11 +305,11 @@ export class AuthDanceUnknownError extends AuthDanceError {
  */
 export const Errors = {
 	CHANNEL_ALREADY_SUBSCRIBED: ChannelAlreadySubscribedError,
-	CHANNEL_IN_USE: ChannelInUseError,
 	CHANNEL_NOT_SUBSCRIBED: ChannelNotSubscribedError,
 	CHOREOGRAPHY_EMPTY: ChoreographyEmptyError,
 	COMPONENT_ALREADY_COLLECTED: ComponentAlreadyCollectedError,
 	COMPONENT_ALREADY_ENROLLED: ComponentAlreadyEnrolledError,
+	COMPONENT_IN_USE: ComponentInUseError,
 	COMPONENT_NOT_COLLECTED: ComponentNotCollectedError,
 	COMPONENT_NOT_ENROLLED: ComponentNotEnrolledError,
 	COMPONENT_NOT_IN_CHOREOGRAPHY: ComponentNotInChoreographyError,

@@ -9,9 +9,11 @@ export interface EmailAuthDanceComponentOptions extends OtpAuthDanceComponentOpt
 /**
  * An email address as the step that resolves the identity, and a code sent to that address as the proof.
  *
- * The component contributes two records. The identification holds the address and answers who the owner is. The
- * channel record gives the library somewhere to deliver a message, and its `linkedTo` names the identification.
- * `unsubscribe` therefore refuses to detach the channel while that identification stays enrolled.
+ * The component contributes two records under two names. The identification holds the address and answers who the
+ * owner is. The channel record gives the library somewhere to deliver a message, and its `linkedTo` names the
+ * identification. `unsubscribe` therefore refuses to detach the channel while that identification stays enrolled,
+ * and an `unenroll` of the identification takes the channel with it. The two names must differ, because
+ * `AuthDanceApi` refuses a policy that declares the same name as a component and as a channel.
  *
  * The verification is an `OtpAuthDanceComponent` over the same channel. The owner must read the code at the
  * address, so a match proves the address belongs to the owner.
@@ -32,7 +34,8 @@ export class EmailAuthDanceComponent implements AuthDanceComponent {
 	 *
 	 * The component keeps the name and puts it on the channel record it builds. The one-time code that proves control
 	 * of the address travels over the same channel.
-	 * @param channel The name of the channel the component contributes.
+	 * @param options `channel` is the name of the channel the component contributes. It must differ from the name
+	 * the component itself is declared under.
 	 */
 	constructor(options: OtpAuthDanceComponentOptions) {
 		this.#options = options;

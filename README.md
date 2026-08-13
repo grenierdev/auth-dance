@@ -55,16 +55,18 @@ import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, Memor
 
 const auth = createAuthDance({
 	api: {
-		// Where messages go.
+		// Where messages go. A channel never shares the name of a component:
+		// one name names one record, and the constructor refuses a policy
+		// that breaks that rule.
 		channels: {
-			email: new MemoryAuthDanceChannel("email"),
+			inbox: new MemoryAuthDanceChannel("email"),
 		},
 		// The dance itself.
 		choreography: sequence("email", "password"),
 		// What each step does. Keys are the names used everywhere else:
 		// in the choreography, in prompts, and in `/enroll { name }`.
 		components: {
-			email: new EmailAuthDanceComponent("email"), // delivers over the "email" channel
+			email: new EmailAuthDanceComponent("inbox"), // delivers over the "inbox" channel
 			// A pepper, not a salt: it belongs in a secret store, never in source.
 			password: new PasswordAuthDanceComponent(Deno.env.get("PASSWORD_PEPPER")!),
 		},
@@ -186,11 +188,11 @@ value alone cannot show.
 
 Three components ship with the library:
 
-| Component                                               | Kind           | Verifiable | Notes                                                                                               |
-| ------------------------------------------------------- | -------------- | ---------- | --------------------------------------------------------------------------------------------------- |
-| `EmailAuthDanceComponent(channel)`                      | identification | yes        | Resolves the identity by address, and verifies it with an OTP. Also contributes a linked `channel`. |
-| `PasswordAuthDanceComponent(pepper, hasher?)`           | challenge      | no         | PBKDF2 by default, salted with the pepper and the identity id. Pass a `hasher` of your own.         |
-| `OtpAuthDanceComponent(channel, digits = 6, ttl = 300)` | challenge      | no         | The only sendable component. Stores the code in KV under `otp/<stateId>/<name>`.                    |
+| Component                                               | Kind           | Verifiable | Notes                                                                                                                              |
+| ------------------------------------------------------- | -------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `EmailAuthDanceComponent(channel)`                      | identification | yes        | Resolves the identity by address, and verifies it with an OTP. Also contributes a `channel` linked to it, under a name of its own. |
+| `PasswordAuthDanceComponent(pepper, hasher?)`           | challenge      | no         | PBKDF2 by default, salted with the pepper and the identity id. Pass a `hasher` of your own.                                        |
+| `OtpAuthDanceComponent(channel, digits = 6, ttl = 300)` | challenge      | no         | The only sendable component. Stores the code in KV under `otp/<stateId>/<name>`.                                                   |
 
 The password component hashes through a function that you can replace, so you choose the KDF.
 
@@ -231,6 +233,12 @@ interface AuthDanceIdentity {
 Each component is an `identification` (something you claim), a `challenge` (something you prove), or a `channel` (somewhere the library can
 reach you). Each one also has a `confirmed` flag and a private `data` bag: the password hash, or the pending OTP. The `…Public` variants are
 the same minus `data`, and `/list-components` returns those.
+
+All three kinds also carry an optional `linkedTo`, the names of the records that depend on this one. `EmailAuthDanceComponent` names its
+identification on the channel it contributes. A record does not leave while a record of its `linkedTo` is still enrolled — `unenroll` and
+`unsubscribe` both answer `COMPONENT_IN_USE` — and past that check a removal takes the whole linked group with it, in either direction. An
+entry names a record by its name alone, so `api.components` and `api.channels` must not declare the same name. The `AuthDanceApi`
+constructor refuses a policy that does.
 
 ### Storage
 
@@ -313,8 +321,9 @@ If you omit `info`, the document carries the hono-openapi placeholder instead: `
 
 Sign-in and sign-up are not special. Every management flow uses the same state-plus-prompt loop:
 
-- **`enroll` / `unenroll`** — add or remove a factor. A removal includes the linked records: the channels that name the factor in their
-  `linkedTo`, and every other factor those channels name. The library refuses it with `WOULD_LOCK_OUT` when no completable path through the
+- **`enroll` / `unenroll`** — add or remove a factor. The library refuses a removal with `COMPONENT_IN_USE` while a record the factor names
+  in its `linkedTo` is still enrolled. Past that check the removal includes the linked records: every record that names the factor in its
+  `linkedTo`, and every record those records name. The library refuses it with `WOULD_LOCK_OUT` when no completable path through the
   choreography remains for what survives.
 - **`rotate`** — replace a credential. For a _verifiable_ component, the first prompt proves control of the current value. The library then
   collects the new value and validates it, so the flow has two validation rounds. A non-verifiable component such as a password needs one
@@ -326,7 +335,9 @@ Sign-in and sign-up are not special. Every management flow uses the same state-p
   choreography carrying that name, the library answers `COMPONENT_NOT_RECOVERABLE`. The flow completes with `{ success: true }`, not with
   tokens.
 - **`subscribe` / `unsubscribe`** — manage channels. Note the asymmetry of a subscription. The library delivers the confirming code over an
-  _already-confirmed_ channel, so `send-validation` names that existing channel while `submit-validation` names the new one.
+  _already-confirmed_ channel, so `send-validation` names that existing channel while `submit-validation` names the new one. An
+  `unsubscribe` answers to the same two checks an `unenroll` does, for the same reason: a channel takes the records that depend on it with
+  it, so it can lock an identity out just as a factor can.
 - **`delete`** — wipes the identity.
 
 `unenroll`, `unsubscribe` and `delete` answer with a `confirmation` prompt. Submit the boolean `true` for it. Any other value is a

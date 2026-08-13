@@ -92,6 +92,8 @@ export interface AuthDance {
  *
  * @throws The error `jose` raises when `options.api.secret` is not valid base64url. The `AuthDanceApi` constructor
  * decodes that secret one time, so a bad key fails this call and not the first request.
+ * @throws DuplicateComponentNameError when `options.api.components` and `options.api.channels` declare the same
+ * name. The constructor checks it, so a miswired policy fails this call and not the first request.
  *
  * @example
  * ```ts

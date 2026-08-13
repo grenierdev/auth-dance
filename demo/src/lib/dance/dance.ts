@@ -158,20 +158,22 @@ export class DemoChannel extends MemoryAuthDanceChannel {
  * Builds one instance from a choreography, a set of durations and a sink.
  *
  * The four components are fixed and the choreography picks among them by name. `email` and `email2` are two addresses,
- * each with a channel of its own. `password` is a challenge. `otp` is a code over the `email` channel, which lets a
- * choreography name it as a step of its own rather than as a verification.
+ * each with a channel of its own — `inbox` and `inbox2`. `password` is a challenge. `otp` is a code over the `inbox`
+ * channel, which lets a choreography name it as a step of its own rather than as a verification.
  */
 export function buildDance(choreography: AuthDanceChoreography, durations: Durations, sink: DanceSink): Dance {
+	// A name names one record, so a channel never shares the name of a component. The constructor of the library
+	// refuses a policy that gives both the same one, because a `linkedTo` entry names a record by its name alone.
 	const channels = {
-		email: new DemoChannel("email", "email", sink),
-		email2: new DemoChannel("email2", "email", sink),
+		inbox: new DemoChannel("inbox", "email", sink),
+		inbox2: new DemoChannel("inbox2", "email", sink),
 		sms: new DemoChannel("sms", "phone", sink),
 	};
 
-	const email = new EmailAuthDanceComponent({ channel: "email" });
-	const email2 = new EmailAuthDanceComponent({ channel: "email2" });
+	const email = new EmailAuthDanceComponent({ channel: "inbox" });
+	const email2 = new EmailAuthDanceComponent({ channel: "inbox2" });
 	const password = new PasswordAuthDanceComponent("demo-pepper", pbkdf2PasswordHasher(PASSWORD_ROUNDS));
-	const components: Record<string, AuthDanceComponent> = { email, email2, password, otp: new CodeAuthDanceComponent({ channel: "email" }) };
+	const components: Record<string, AuthDanceComponent> = { email, email2, password, otp: new CodeAuthDanceComponent({ channel: "inbox" }) };
 
 	const storage = new AuthDanceStorage({
 		identity: new MemoryIdentityProvider(),
@@ -294,7 +296,7 @@ export const ERROR_HINTS: Record<string, string> = {
 	INVALID_VALIDATION_VALUE: "The one-time code did not match. Send a fresh one and try again.",
 	CONFIRMATION_REQUIRED: "This flow ends on a confirmation, and only the boolean true goes through.",
 	WOULD_LOCK_OUT: "Dropping this component would leave no complete path through the choreography.",
-	CHANNEL_IN_USE: "A component still links to this channel, so it cannot be detached.",
+	COMPONENT_IN_USE: "A record this one names in its linkedTo is still enrolled, so it cannot leave on its own.",
 	COMPONENT_ALREADY_ENROLLED: "The identity already holds this component. Rotate it instead.",
 	CHANNEL_ALREADY_SUBSCRIBED: "The identity already holds this channel.",
 	COMPONENT_NOT_RECOVERABLE:

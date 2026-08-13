@@ -29,6 +29,16 @@ export interface AuthDanceIdentityIdentificationPublic {
 	 * check counts only confirmed components.
 	 */
 	confirmed: boolean;
+	/**
+	 * Names of the records that depend on this identification. A name on an identity belongs to one record alone,
+	 * because `AuthDanceApi` refuses a policy that declares the same name as a component and as a channel.
+	 *
+	 * A record an enrolled record depends on stays where it is: `unenroll` throws `ComponentInUseError` while a name
+	 * in this list is still enrolled. Past that check the removal takes the whole linked group — every record the
+	 * links reach from this one, in either direction — so a removal never leaves a record behind with nothing to
+	 * depend on.
+	 */
+	linkedTo?: string[];
 }
 
 /** An identification as the identity store holds it: the disclosed shape plus the private `data` bag. */
@@ -46,6 +56,7 @@ const AuthDanceIdentityIdentificationFields = {
 	component: v.string(),
 	identification: v.string(),
 	confirmed: v.boolean(),
+	linkedTo: v.optional(v.array(v.string())),
 } as const;
 
 /**
@@ -56,7 +67,7 @@ export const AuthDanceIdentityIdentification: v.GenericSchema<AuthDanceIdentityI
 	v.object({ ...AuthDanceIdentityIdentificationFields, ...AuthDanceIdentityDataField }),
 	v.title("IdentityIdentification"),
 	v.description(
-		"An identity identification object that contains an identity id, component, identification, confirmation status, and associated data.",
+		"An identity identification object that contains an identity id, component, identification, confirmation status, associated data, and the names of the records that depend on it.",
 	),
 );
 
@@ -67,7 +78,9 @@ export const AuthDanceIdentityIdentification: v.GenericSchema<AuthDanceIdentityI
 export const AuthDanceIdentityIdentificationPublic: v.GenericSchema<AuthDanceIdentityIdentificationPublic> = v.pipe(
 	v.object(AuthDanceIdentityIdentificationFields),
 	v.title("IdentityIdentificationPublic"),
-	v.description("An identity identification as disclosed to a client: its component, identification and confirmation status."),
+	v.description(
+		"An identity identification as disclosed to a client: its component, identification, confirmation status, and the records that depend on it.",
+	),
 );
 
 /**
@@ -88,6 +101,16 @@ export interface AuthDanceIdentityChallengePublic {
 	 * it. The sign-up path and the lock-out check count only confirmed components.
 	 */
 	confirmed: boolean;
+	/**
+	 * Names of the records that depend on this challenge. A name on an identity belongs to one record alone,
+	 * because `AuthDanceApi` refuses a policy that declares the same name as a component and as a channel.
+	 *
+	 * A record an enrolled record depends on stays where it is: `unenroll` throws `ComponentInUseError` while a name
+	 * in this list is still enrolled. Past that check the removal takes the whole linked group — every record the
+	 * links reach from this one, in either direction — so a removal never leaves a record behind with nothing to
+	 * depend on.
+	 */
+	linkedTo?: string[];
 }
 
 /** A challenge as the identity store holds it: the disclosed shape plus the private `data` bag. */
@@ -105,6 +128,7 @@ const AuthDanceIdentityChallengeFields = {
 	kind: v.literal("challenge"),
 	component: v.string(),
 	confirmed: v.boolean(),
+	linkedTo: v.optional(v.array(v.string())),
 } as const;
 
 /**
@@ -115,7 +139,7 @@ export const AuthDanceIdentityChallenge: v.GenericSchema<AuthDanceIdentityChalle
 	v.object({ ...AuthDanceIdentityChallengeFields, ...AuthDanceIdentityDataField }),
 	v.title("IdentityChallenge"),
 	v.description(
-		"An identity challenge object that contains an identity id, component, confirmation status, and associated data.",
+		"An identity challenge object that contains an identity id, component, confirmation status, associated data, and the names of the records that depend on it.",
 	),
 );
 
@@ -126,7 +150,9 @@ export const AuthDanceIdentityChallenge: v.GenericSchema<AuthDanceIdentityChalle
 export const AuthDanceIdentityChallengePublic: v.GenericSchema<AuthDanceIdentityChallengePublic> = v.pipe(
 	v.object(AuthDanceIdentityChallengeFields),
 	v.title("IdentityChallengePublic"),
-	v.description("An identity challenge as disclosed to a client: its component and confirmation status, never the secret it verifies."),
+	v.description(
+		"An identity challenge as disclosed to a client: its component, confirmation status, and the records that depend on it — never the secret it verifies.",
+	),
 );
 
 /**
@@ -152,10 +178,14 @@ export interface AuthDanceIdentityChannelPublic {
 	 */
 	confirmed: boolean;
 	/**
-	 * Names of the components that depend on this channel. `EmailAuthDanceComponent` lists itself here on the
-	 * channel it contributes. `unsubscribe` throws `ChannelInUseError` while a listed component is still enrolled.
-	 * `unenroll` reads the same list the other way: it removes this channel together with every component named
-	 * here, so a removal never leaves a component behind with no channel to reach its owner.
+	 * Names of the records that depend on this channel. `EmailAuthDanceComponent` names its identification here, on
+	 * the channel it contributes. A name on an identity belongs to one record alone, because `AuthDanceApi` refuses
+	 * a policy that declares the same name as a component and as a channel.
+	 *
+	 * A record an enrolled record depends on stays where it is: `unsubscribe` throws `ComponentInUseError` while a
+	 * name in this list is still enrolled. Past that check the removal takes the whole linked group — every record
+	 * the links reach from this one, in either direction — so a removal never leaves a record behind with nothing to
+	 * depend on.
 	 */
 	linkedTo?: string[];
 }
@@ -186,7 +216,7 @@ export const AuthDanceIdentityChannel: v.GenericSchema<AuthDanceIdentityChannel>
 	v.object({ ...AuthDanceIdentityChannelFields, ...AuthDanceIdentityDataField }),
 	v.title("IdentityChannel"),
 	v.description(
-		"An identity channel object that contains an identity id, channel, confirmation status, associated data, and the names of the components that depend on it.",
+		"An identity channel object that contains an identity id, channel, confirmation status, associated data, and the names of the records that depend on it.",
 	),
 );
 
@@ -198,7 +228,7 @@ export const AuthDanceIdentityChannelPublic: v.GenericSchema<AuthDanceIdentityCh
 	v.object(AuthDanceIdentityChannelFields),
 	v.title("IdentityChannelPublic"),
 	v.description(
-		"An identity channel as disclosed to a client: its channel, confirmation status, and the components that depend on it — never the recipient itself.",
+		"An identity channel as disclosed to a client: its channel, confirmation status, and the records that depend on it — never the recipient itself.",
 	),
 );
 

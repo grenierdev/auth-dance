@@ -141,8 +141,10 @@ export const AuthDanceStateEnroll: v.GenericSchema<AuthDanceStateEnroll> = v.pip
 /**
  * The in-progress dance of an authenticated caller who removes one component from the identity.
  *
- * The library refuses the removal with `WOULD_LOCK_OUT` when no path through the choreography stays completable.
- * The caller answers one confirmation prompt, so this state holds no collected value.
+ * The library refuses the removal with `COMPONENT_IN_USE` while a record the component names in its `linkedTo` is
+ * still enrolled, and with `WOULD_LOCK_OUT` when no path through the choreography stays completable for the
+ * component and the linked records that go with it. The caller answers one confirmation prompt, so this state
+ * holds no collected value.
  */
 export interface AuthDanceStateUnenroll {
 	/** The id of this dance, a ksuid with an `st_` prefix. */
@@ -332,8 +334,10 @@ export const AuthDanceStateSubscribe: v.GenericSchema<AuthDanceStateSubscribe> =
 /**
  * The in-progress dance of an authenticated caller who removes a channel from the identity.
  *
- * The library refuses the removal with `CHANNEL_IN_USE` while a component still links to the channel. The caller
- * answers one confirmation prompt, so this state carries no collected value.
+ * The library refuses the removal with `COMPONENT_IN_USE` while a record the channel names in its `linkedTo` is
+ * still enrolled, and with `WOULD_LOCK_OUT` when no path through the choreography stays completable for the
+ * channel and the linked records that go with it. The caller answers one confirmation prompt, so this state
+ * carries no collected value.
  */
 export interface AuthDanceStateUnsubscribe {
 	/** The id of this dance, a ksuid with an `st_` prefix. */

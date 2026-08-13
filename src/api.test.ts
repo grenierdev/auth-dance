@@ -1,5 +1,5 @@
 import { beforeEach, describe, it } from "@std/testing/bdd";
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "./providers/memory.ts";
 import {
 	AuthDanceApi,
@@ -17,7 +17,7 @@ import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.t
 import { ksuid } from "./id.ts";
 import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "./components/password.ts";
 import { AuthDanceStorage } from "./storage.ts";
-import { AuthDanceError, SessionNotFoundError } from "./error.ts";
+import { AuthDanceError, DuplicateComponentNameError, SessionNotFoundError } from "./error.ts";
 import type { AuthDanceKvProvider } from "./provider.ts";
 import { decodeJwt } from "jose/jwt/decode";
 
@@ -84,8 +84,10 @@ describe("Api", () => {
 		channelEmail = new MemoryAuthDanceChannel("email");
 		channelEmail2 = new MemoryAuthDanceChannel("email2");
 		channelSms = new MemoryAuthDanceChannel("phone");
-		email = new EmailAuthDanceComponent({ channel: "email" });
-		email2 = new EmailAuthDanceComponent({ channel: "email2" });
+		// A name names one record, so the channel an email component contributes never shares the name of the
+		// component itself. The constructor of AuthDanceApi refuses a policy that gives both the same one.
+		email = new EmailAuthDanceComponent({ channel: "inbox" });
+		email2 = new EmailAuthDanceComponent({ channel: "inbox2" });
 		password = new PasswordAuthDanceComponent("salty", TEST_PASSWORD_HASHER);
 		storage = new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),
@@ -94,8 +96,8 @@ describe("Api", () => {
 		});
 		apiOptions = {
 			channels: {
-				email: channelEmail,
-				email2: channelEmail2,
+				inbox: channelEmail,
+				inbox2: channelEmail2,
 				sms: channelSms,
 			},
 			choreography: sequence("email", "password"),
@@ -106,6 +108,15 @@ describe("Api", () => {
 		api = new AuthDanceApi(apiOptions);
 	});
 
+	it("should refuse a policy that names a component and a channel alike", () => {
+		// A linkedTo entry names a record by its name alone, so a name that stands for both a component and a
+		// channel would make every link through it ambiguous. The constructor refuses the policy rather than
+		// leaving a removal to guess which of the two records a link meant.
+		assertThrows(
+			() => new AuthDanceApi({ ...apiOptions, channels: { ...apiOptions.channels, password: channelSms } }),
+			DuplicateComponentNameError,
+		);
+	});
 	it("should sign-in", async () => {
 		const identity = await seedIdentity({ name: "John Doe" }, async (seed) => [
 			...await email.getIdentityComponent(
@@ -356,11 +367,11 @@ describe("Api", () => {
 			state: result2.state,
 		});
 		assert("tokens" in result3);
-		// The email component emits its own "email" channel, so the identity is already subscribed to it.
+		// The email component emits its own "inbox" channel, so the identity is already subscribed to it.
 		const rejected = await assertRejects(
 			() =>
 				api.subscribe({
-					name: "email",
+					name: "inbox",
 					access_token: result3.tokens.access_token,
 				}),
 			AuthDanceError,
@@ -410,7 +421,7 @@ describe("Api", () => {
 			!identity.components.find((c) => c.kind === "channel" && c.component === "sms"),
 		);
 	});
-	it("should not unsubscribe a channel a component still relies on", async () => {
+	it("should not unsubscribe a channel a component still depends on", async () => {
 		await seedIdentity({ name: "John Doe" }, async (seed) => [
 			...await email.getIdentityComponent(
 				"email",
@@ -432,17 +443,88 @@ describe("Api", () => {
 			state: result2.state,
 		});
 		assert("tokens" in result3);
-		// The "email" channel carries linkedTo: ["email"], and that component is still enrolled — dropping the
+		// The "inbox" channel carries linkedTo: ["email"], and that component is still enrolled — dropping the
 		// channel would leave it with no way to verify itself.
 		const rejected = await assertRejects(
 			() =>
 				api.unsubscribe({
-					name: "email",
+					name: "inbox",
 					access_token: result3.tokens.access_token,
 				}),
 			AuthDanceError,
 		);
-		assertEquals(rejected.code, "CHANNEL_IN_USE");
+		assertEquals(rejected.code, "COMPONENT_IN_USE");
+	});
+	it("should unsubscribe the components that depend on the channel", async () => {
+		// "email2" alone is an alternative to the email + password path, so the password becomes droppable.
+		const api = new AuthDanceApi({
+			...apiOptions,
+			choreography: choice(sequence("email", "password"), "email2"),
+		});
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			// The identity holds the "sms" channel for the password, the way a deployment that resets a password
+			// over that number would declare it. The two records therefore leave together.
+			...(await password.getIdentityComponent("password", "foo", true, seed("password")))
+				.map((c) => ({ ...c, linkedTo: ["sms"] })),
+			...await email2.getIdentityComponent(
+				"email2",
+				"john.doe2@example.com",
+				true,
+			),
+			await channelSms.getIdentityChannel("sms", "5551234567", true),
+		]);
+		const result1 = await signInAsJohnDoe(api);
+		const result2 = await api.unsubscribe({
+			name: "sms",
+			access_token: result1.tokens.access_token,
+		});
+		const result3 = await api.submitPrompt({
+			name: "sms",
+			value: true,
+			state: result2.state,
+		});
+		assert("success" in result3);
+		assert(result3.success);
+		const identity = await storage.getIdentity(result1.identity.id);
+		assert(identity);
+		assert(!identity.components.find((c) => c.component === "sms"));
+		assert(!identity.components.find((c) => c.component === "password"));
+		// Everything the links do not reach stays enrolled and subscribed.
+		assert(identity.components.find((c) => c.kind === "identification" && c.component === "email"));
+		assert(identity.components.find((c) => c.kind === "channel" && c.component === "inbox"));
+		assert(identity.components.find((c) => c.kind === "identification" && c.component === "email2"));
+	});
+	it("should not unsubscribe a channel whose collateral the choreography cannot do without", async () => {
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...(await password.getIdentityComponent("password", "foo", true, seed("password")))
+				.map((c) => ({ ...c, linkedTo: ["sms"] })),
+			await channelSms.getIdentityChannel("sms", "5551234567", true),
+		]);
+		const result1 = await signInAsJohnDoe(api);
+		// The password goes with the channel it is linked to, and sequence("email", "password") reaches no end
+		// without it. An unsubscribe answers the same lock-out check an unenroll does.
+		const rejected = await assertRejects(
+			() =>
+				api.unsubscribe({
+					name: "sms",
+					access_token: result1.tokens.access_token,
+				}),
+			AuthDanceError,
+		);
+		assertEquals(rejected.code, "WOULD_LOCK_OUT");
+		const identity = await storage.getIdentity(result1.identity.id);
+		assert(identity?.components.find((c) => c.kind === "challenge" && c.component === "password"));
+		assert(identity?.components.find((c) => c.kind === "channel" && c.component === "sms"));
 	});
 	it("should enroll", async () => {
 		await seedIdentity({ name: "John Doe" }, async (seed) => [
@@ -709,13 +791,14 @@ describe("Api", () => {
 		assert(result3.success);
 		const identity = await storage.getIdentity(result1.identity.id);
 		assert(identity);
-		// The "email" channel carries linkedTo: ["email"] and nothing else, so it leaves with the component that
+		// The "inbox" channel carries linkedTo: ["email"] and nothing else, so it leaves with the component that
 		// contributed it rather than staying behind with nobody to serve.
 		assert(!identity.components.find((c) => c.component === "email"));
+		assert(!identity.components.find((c) => c.component === "inbox"));
 		// Everything the removal does not reach through a link stays enrolled.
 		assert(identity.components.find((c) => c.kind === "challenge" && c.component === "password"));
 		assert(identity.components.find((c) => c.kind === "identification" && c.component === "email2"));
-		assert(identity.components.find((c) => c.kind === "channel" && c.component === "email2"));
+		assert(identity.components.find((c) => c.kind === "channel" && c.component === "inbox2"));
 	});
 	it("should not unenroll a component whose collateral the choreography cannot do without", async () => {
 		const api = new AuthDanceApi({
@@ -729,7 +812,7 @@ describe("Api", () => {
 				true,
 			),
 			...await password.getIdentityComponent("password", "foo", true, seed("password")),
-			// The "email2" channel serves the password as well as the identification that contributed it, the way
+			// The "inbox2" channel serves the password as well as the identification that contributed it, the way
 			// a deployment that resets a password over that address would declare it.
 			...(await email2.getIdentityComponent(
 				"email2",
@@ -753,6 +836,43 @@ describe("Api", () => {
 		const identity = await storage.getIdentity(result1.identity.id);
 		assert(identity?.components.find((c) => c.kind === "challenge" && c.component === "password"));
 		assert(identity?.components.find((c) => c.kind === "identification" && c.component === "email2"));
+	});
+	it("should not unenroll a component another record still depends on", async () => {
+		// "email2" alone is an alternative to the email + password path, so nothing but the link stops this one.
+		const api = new AuthDanceApi({
+			...apiOptions,
+			choreography: choice(sequence("email", "password"), "email2"),
+		});
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...(await password.getIdentityComponent("password", "foo", true, seed("password")))
+				.map((c) => ({ ...c, linkedTo: ["sms"] })),
+			...await email2.getIdentityComponent(
+				"email2",
+				"john.doe2@example.com",
+				true,
+			),
+			await channelSms.getIdentityChannel("sms", "5551234567", true),
+		]);
+		const result1 = await signInAsJohnDoe(api);
+		// The "sms" channel is on the identity for the password alone, and it is still subscribed. The caller
+		// detaches the channel first, which is the call that takes both records down.
+		const rejected = await assertRejects(
+			() =>
+				api.unenroll({
+					name: "password",
+					access_token: result1.tokens.access_token,
+				}),
+			AuthDanceError,
+		);
+		assertEquals(rejected.code, "COMPONENT_IN_USE");
+		const identity = await storage.getIdentity(result1.identity.id);
+		assert(identity?.components.find((c) => c.kind === "challenge" && c.component === "password"));
+		assert(identity?.components.find((c) => c.kind === "channel" && c.component === "sms"));
 	});
 	it("should delete the identity", async () => {
 		await seedIdentity({ name: "John Doe" }, async (seed) => [

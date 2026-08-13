@@ -55,8 +55,10 @@ describe("App", () => {
 		channelEmail = new MemoryAuthDanceChannel("email");
 		channelEmail2 = new MemoryAuthDanceChannel("email2");
 		channelSms = new MemoryAuthDanceChannel("phone");
-		email = new EmailAuthDanceComponent({ channel: "email" });
-		email2 = new EmailAuthDanceComponent({ channel: "email2" });
+		// A name names one record, so the channel an email component contributes never shares the name of the
+		// component itself. The constructor of AuthDanceApi refuses a policy that gives both the same one.
+		email = new EmailAuthDanceComponent({ channel: "inbox" });
+		email2 = new EmailAuthDanceComponent({ channel: "inbox2" });
 		password = new PasswordAuthDanceComponent("salty", TEST_PASSWORD_HASHER);
 		storage = new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),
@@ -65,8 +67,8 @@ describe("App", () => {
 		});
 		apiOptions = {
 			channels: {
-				email: channelEmail,
-				email2: channelEmail2,
+				inbox: channelEmail,
+				inbox2: channelEmail2,
 				sms: channelSms,
 			},
 			choreography: sequence("email", "password"),
@@ -257,7 +259,7 @@ describe("App", () => {
 			},
 			{
 				kind: "channel",
-				component: "email",
+				component: "inbox",
 				confirmed: true,
 				linkedTo: ["email"],
 			},
@@ -388,10 +390,10 @@ describe("App", () => {
 			...await password.getIdentityComponent("password", "foo", true, seed("password")),
 		]);
 		const result3 = await signIn();
-		// The email component emits its own "email" channel, so the identity is already subscribed to it.
+		// The email component emits its own "inbox" channel, so the identity is already subscribed to it.
 		const [status, rejected] = await post(
 			"/subscribe",
-			{ name: "email" },
+			{ name: "inbox" },
 			bearer(result3.tokens.access_token),
 		);
 		assertEquals(status, 500);
@@ -431,7 +433,7 @@ describe("App", () => {
 		);
 	});
 
-	it("should not unsubscribe a channel a component still relies on", async () => {
+	it("should not unsubscribe a channel a component still depends on", async () => {
 		await seedIdentity({ name: "John Doe" }, async (seed) => [
 			...await email.getIdentityComponent(
 				"email",
@@ -441,15 +443,15 @@ describe("App", () => {
 			...await password.getIdentityComponent("password", "foo", true, seed("password")),
 		]);
 		const result3 = await signIn();
-		// The "email" channel carries linkedTo: ["email"], and that component is still enrolled — dropping the
+		// The "inbox" channel carries linkedTo: ["email"], and that component is still enrolled — dropping the
 		// channel would leave it with no way to verify itself.
 		const [status, rejected] = await post(
 			"/unsubscribe",
-			{ name: "email" },
+			{ name: "inbox" },
 			bearer(result3.tokens.access_token),
 		);
 		assertEquals(status, 500);
-		assertEquals(rejected.error, "CHANNEL_IN_USE");
+		assertEquals(rejected.error, "COMPONENT_IN_USE");
 	});
 
 	it("should enroll", async () => {
