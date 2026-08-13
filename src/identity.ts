@@ -29,6 +29,15 @@ export interface AuthDanceIdentityIdentificationPublic {
 	 * check counts only confirmed components.
 	 */
 	confirmed: boolean;
+	/**
+	 * Names of the components that depend on this identification. Every name is an identification or a challenge,
+	 * never a channel: a channel serves the components that name it and depends on none of them.
+	 *
+	 * `unenroll` and `unsubscribe` read the list both ways. Removing this record removes every component named
+	 * here, and removing any of them removes this record, so a removal never leaves half of what one component
+	 * contributed behind.
+	 */
+	linkedTo?: string[];
 }
 
 /** An identification as the identity store holds it: the disclosed shape plus the private `data` bag. */
@@ -46,6 +55,7 @@ const AuthDanceIdentityIdentificationFields = {
 	component: v.string(),
 	identification: v.string(),
 	confirmed: v.boolean(),
+	linkedTo: v.optional(v.array(v.string())),
 } as const;
 
 /**
@@ -56,7 +66,7 @@ export const AuthDanceIdentityIdentification: v.GenericSchema<AuthDanceIdentityI
 	v.object({ ...AuthDanceIdentityIdentificationFields, ...AuthDanceIdentityDataField }),
 	v.title("IdentityIdentification"),
 	v.description(
-		"An identity identification object that contains an identity id, component, identification, confirmation status, and associated data.",
+		"An identity identification object that contains an identity id, component, identification, confirmation status, associated data, and the names of the components that depend on it.",
 	),
 );
 
@@ -67,7 +77,9 @@ export const AuthDanceIdentityIdentification: v.GenericSchema<AuthDanceIdentityI
 export const AuthDanceIdentityIdentificationPublic: v.GenericSchema<AuthDanceIdentityIdentificationPublic> = v.pipe(
 	v.object(AuthDanceIdentityIdentificationFields),
 	v.title("IdentityIdentificationPublic"),
-	v.description("An identity identification as disclosed to a client: its component, identification and confirmation status."),
+	v.description(
+		"An identity identification as disclosed to a client: its component, identification, confirmation status, and the components that depend on it.",
+	),
 );
 
 /**
@@ -88,6 +100,15 @@ export interface AuthDanceIdentityChallengePublic {
 	 * it. The sign-up path and the lock-out check count only confirmed components.
 	 */
 	confirmed: boolean;
+	/**
+	 * Names of the components that depend on this challenge. Every name is an identification or a challenge,
+	 * never a channel: a challenge reaches its owner through a channel, and the channel names the challenge
+	 * rather than the other way round.
+	 *
+	 * `EmailAuthDanceComponent` names its own identification here, on the one-time code challenge it contributes.
+	 * `unenroll` and `unsubscribe` read the list both ways, the way they read the list a channel carries.
+	 */
+	linkedTo?: string[];
 }
 
 /** A challenge as the identity store holds it: the disclosed shape plus the private `data` bag. */
@@ -105,6 +126,7 @@ const AuthDanceIdentityChallengeFields = {
 	kind: v.literal("challenge"),
 	component: v.string(),
 	confirmed: v.boolean(),
+	linkedTo: v.optional(v.array(v.string())),
 } as const;
 
 /**
@@ -115,7 +137,7 @@ export const AuthDanceIdentityChallenge: v.GenericSchema<AuthDanceIdentityChalle
 	v.object({ ...AuthDanceIdentityChallengeFields, ...AuthDanceIdentityDataField }),
 	v.title("IdentityChallenge"),
 	v.description(
-		"An identity challenge object that contains an identity id, component, confirmation status, and associated data.",
+		"An identity challenge object that contains an identity id, component, confirmation status, associated data, and the names of the components that depend on it.",
 	),
 );
 
@@ -126,7 +148,9 @@ export const AuthDanceIdentityChallenge: v.GenericSchema<AuthDanceIdentityChalle
 export const AuthDanceIdentityChallengePublic: v.GenericSchema<AuthDanceIdentityChallengePublic> = v.pipe(
 	v.object(AuthDanceIdentityChallengeFields),
 	v.title("IdentityChallengePublic"),
-	v.description("An identity challenge as disclosed to a client: its component and confirmation status, never the secret it verifies."),
+	v.description(
+		"An identity challenge as disclosed to a client: its component, confirmation status, and the components that depend on it — never the secret it verifies.",
+	),
 );
 
 /**
@@ -152,10 +176,12 @@ export interface AuthDanceIdentityChannelPublic {
 	 */
 	confirmed: boolean;
 	/**
-	 * Names of the components that depend on this channel. `EmailAuthDanceComponent` lists itself here on the
-	 * channel it contributes. `unsubscribe` throws `ChannelInUseError` while a listed component is still enrolled.
-	 * `unenroll` reads the same list the other way: it removes this channel together with every component named
-	 * here, so a removal never leaves a component behind with no channel to reach its owner.
+	 * Names of the components that depend on this channel. Every name is an identification or a challenge, never
+	 * a channel. `EmailAuthDanceComponent` names its identification here on the channel it contributes.
+	 *
+	 * `unenroll` and `unsubscribe` read the list both ways: removing this channel removes every component named
+	 * here, because a component a channel carries has no way to reach its owner once the channel is gone, and
+	 * removing one of those components removes the channel it left behind.
 	 */
 	linkedTo?: string[];
 }
@@ -205,7 +231,8 @@ export const AuthDanceIdentityChannelPublic: v.GenericSchema<AuthDanceIdentityCh
 /**
  * One step recorded on an identity: an identification, a challenge, or a channel. The `kind` field picks the
  * member. `getIdentityComponent` returns an array of these records, so one step may record more than one.
- * `EmailAuthDanceComponent` returns an identification, plus the channel that reaches the same address.
+ * `EmailAuthDanceComponent` returns three: an identification, the channel that reaches the same address, and the
+ * one-time code challenge that the library delivers over that channel.
  */
 export type AuthDanceIdentityComponent = AuthDanceIdentityIdentification | AuthDanceIdentityChallenge | AuthDanceIdentityChannel;
 

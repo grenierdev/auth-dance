@@ -332,8 +332,9 @@ export const AuthDanceStateSubscribe: v.GenericSchema<AuthDanceStateSubscribe> =
 /**
  * The in-progress dance of an authenticated caller who removes a channel from the identity.
  *
- * The library refuses the removal with `CHANNEL_IN_USE` while a component still links to the channel. The caller
- * answers one confirmation prompt, so this state carries no collected value.
+ * The removal takes every component the channel links to with it, and the library refuses it with
+ * `WOULD_LOCK_OUT` when no path through the choreography survives that set. The caller answers one confirmation
+ * prompt, so this state carries no collected value.
  */
 export interface AuthDanceStateUnsubscribe {
 	/** The id of this dance, a ksuid with an `st_` prefix. */

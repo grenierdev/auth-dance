@@ -46,7 +46,6 @@ import {
 	AuthDanceError,
 	AuthDanceUnknownError,
 	ChannelAlreadySubscribedError,
-	ChannelInUseError,
 	ChannelNotSubscribedError,
 	ChoreographyEmptyError,
 	ComponentAlreadyCollectedError,
@@ -1069,40 +1068,55 @@ export class AuthDanceApi {
 		};
 	}
 
-	// What an unenroll takes down, beyond the component the caller named. A channel exists for the components its
-	// linkedTo names — the email component lists itself on the channel it contributes — so removing one of them
-	// orphans the channel, and removing the channel leaves every other component that channel carries with no way
-	// to reach its owner. That second state is exactly the one unsubscribe refuses to create (ChannelInUseError),
-	// so an unenroll must not create it either. The removal therefore follows the links both ways — component to
-	// the channels that name it, channel back to the components it names — until nothing new joins.
+	// What a removal takes down, beyond the record the caller named. A record exists for the components its
+	// linkedTo names — the email component names its identification on both the channel and the one-time code
+	// challenge it contributes — so removing one of them orphans the record that names it, and removing that
+	// record leaves every other component it names with no way to work: no channel to reach its owner, or no
+	// address the code it proves belongs to. The removal therefore follows the links both ways — component to the
+	// records that name it, record back to the components it names — until nothing new joins. `unenroll` and
+	// `unsubscribe` both read it, so a channel and a component come down as one set whichever end the caller
+	// pulled from.
 	// The two sets stay apart because the names live in two namespaces: the email component contributes an "email"
-	// channel beside its "email" identification, and those are not the same record.
-	#unenrollCollateral(identity: AuthDanceIdentity, component: string): { components: Set<string>; channels: Set<string> } {
-		const components = new Set([component]);
-		const channels = new Set<string>();
-		// Each pass that changes anything claims at least one more channel, and an identity holds a finite number
+	// channel beside its "email" identification, and those are not the same record. A linkedTo entry always names
+	// the component namespace, because no record ever links to a channel.
+	#removalCollateral(
+		identity: AuthDanceIdentity,
+		name: string,
+		namespace: "component" | "channel",
+	): { components: Set<string>; channels: Set<string> } {
+		const components = new Set<string>(namespace === "channel" ? [] : [name]);
+		const channels = new Set<string>(namespace === "channel" ? [name] : []);
+		// Each pass that changes anything claims at least one more record, and an identity holds a finite number
 		// of them, so the walk reaches its fixed point.
 		for (let grew = true; grew;) {
 			grew = false;
 			for (const c of identity.components) {
-				if (c.kind !== "channel" || channels.has(c.component) || !(c.linkedTo ?? []).some((name) => components.has(name))) {
-					continue;
+				const claimed = c.kind === "channel" ? channels : components;
+				// A record joins when something it serves is going, and once it is in, everything it serves goes
+				// with it. The seed channel of an unsubscribe enters through the second half alone.
+				if (!claimed.has(c.component)) {
+					if (!(c.linkedTo ?? []).some((linked) => components.has(linked))) {
+						continue;
+					}
+					claimed.add(c.component);
+					grew = true;
 				}
-				channels.add(c.component);
-				for (const name of c.linkedTo ?? []) {
-					components.add(name);
+				for (const linked of c.linkedTo ?? []) {
+					if (!components.has(linked)) {
+						components.add(linked);
+						grew = true;
+					}
 				}
-				grew = true;
 			}
 		}
 		return { components, channels };
 	}
 
-	// Unenrolling must not lock the identity out of its own account: walk the choreography and keep the
-	// removal only if at least one path to an end is still fully covered by the surviving confirmed
+	// Removing a component or a channel must not lock the identity out of its own account: walk the choreography
+	// and keep the removal only if at least one path to an end is still fully covered by the surviving confirmed
 	// components. With choice(sequence("email", "password"), "facebook"), dropping "facebook" is fine
 	// because the email + password path survives; dropping "password" would not be. `removed` is the whole
-	// collateral #unenrollCollateral produced, never the single name the caller gave: a component that falls
+	// collateral #removalCollateral produced, never the single name the caller gave: a component that falls
 	// with a channel stops covering the paths it used to cover, and the check has to see that.
 	#isChoreographyCompletableWithout(identity: AuthDanceIdentity, removed: ReadonlySet<string>): boolean {
 		const surviving = identity.components
@@ -1303,7 +1317,7 @@ export class AuthDanceApi {
 				throw new UnknownComponentError(options.name);
 			}
 			this.#requireFreshSignIn(authTime);
-			if (!this.#isChoreographyCompletableWithout(identity, this.#unenrollCollateral(identity, options.name).components)) {
+			if (!this.#isChoreographyCompletableWithout(identity, this.#removalCollateral(identity, options.name, "component").components)) {
 				throw new WouldLockOutError(options.name);
 			}
 			const expireAt = this.#expireAt(this.#options.durations?.unenroll);
@@ -1478,9 +1492,13 @@ export class AuthDanceApi {
 	 *
 	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
 	 *
-	 * A channel another enrolled component links to stays in place. That component needs the channel to reach the
-	 * identity. The library answers with a confirmation prompt. Submit the boolean `true` to it through
-	 * `submitPrompt`.
+	 * The removal takes the linked records with it, the way an unenroll does. Every component the channel names in
+	 * its `linkedTo` goes too, because a component a channel carries has no way to reach its owner once that
+	 * channel is gone, and so does every record linked to those. The library follows those links to their end.
+	 *
+	 * The library then walks the choreography and refuses a removal that leaves no completable path. It counts
+	 * that whole set, never the one channel the caller named. It answers with a confirmation prompt. Submit the
+	 * boolean `true` to it through `submitPrompt`.
 	 *
 	 * @param options `name` is the channel to remove.
 	 * @returns The encrypted state, a confirmation prompt, and the moment the state expires.
@@ -1489,23 +1507,22 @@ export class AuthDanceApi {
 	 * @throws ChannelNotSubscribedError when the identity carries no such channel.
 	 * @throws UnknownChannelError when `options.channels` declares no channel of that name.
 	 * @throws FreshSignInRequiredError when the sign-in is older than the elevated window.
-	 * @throws ChannelInUseError when an enrolled component still links to the channel.
+	 * @throws WouldLockOutError when no path through the choreography stays completable without the channel and
+	 * the linked records that go with it.
 	 */
 	unsubscribe(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("unsubscribe", async () => {
 			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
-			const channel = identity.components.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === options.name);
-			if (!channel) {
+			if (!identity.components.some((c) => c.kind === "channel" && c.component === options.name)) {
 				throw new ChannelNotSubscribedError(options.name);
 			}
 			if (!this.#options.channels[options.name]) {
 				throw new UnknownChannelError(options.name);
 			}
 			this.#requireFreshSignIn(authTime);
-			const linkedTo = channel.linkedTo ?? [];
-			if (identity.components.some((c) => c.kind !== "channel" && linkedTo.includes(c.component))) {
-				throw new ChannelInUseError(options.name);
+			if (!this.#isChoreographyCompletableWithout(identity, this.#removalCollateral(identity, options.name, "channel").components)) {
+				throw new WouldLockOutError(options.name);
 			}
 			const expireAt = this.#expireAt(this.#options.durations?.unsubscribe);
 			const state: AuthDanceStateUnsubscribe = {
@@ -1646,7 +1663,7 @@ export class AuthDanceApi {
 	 * @throws ControlNotProvenError when a rotate or a recover has not yet proven control of the current value.
 	 * @throws ComponentNotVerifiableError when the component a recovery identifies through offers no verification.
 	 * @throws ConfirmationRequiredError when an unenroll, an unsubscribe or a delete gets a value other than `true`.
-	 * @throws WouldLockOutError when the unenroll leaves no completable path through the choreography.
+	 * @throws WouldLockOutError when the unenroll or the unsubscribe leaves no completable path through the choreography.
 	 * @throws SessionNotFoundError or IdentityNotFoundError when the session or the identity the state names is gone.
 	 */
 	submitPrompt(
@@ -1879,7 +1896,7 @@ export class AuthDanceApi {
 			// The collateral is resolved again here, against the identity as it stands now: another flow may have
 			// moved a component or a channel while this confirmation was outstanding, and the set that survives the
 			// removal is what the lock-out check has to run against.
-			const collateral = this.#unenrollCollateral(identity, state.component);
+			const collateral = this.#removalCollateral(identity, state.component, "component");
 			if (!this.#isChoreographyCompletableWithout(identity, collateral.components)) {
 				throw new WouldLockOutError(state.component);
 			}
@@ -1912,7 +1929,17 @@ export class AuthDanceApi {
 				throw new ConfirmationRequiredError(state.channel);
 			}
 			const { identity } = await this.#sessionIdentity(state.sessionId);
-			identity.components = identity.components.filter((c) => !(c.kind === "channel" && c.component === state.channel));
+			// Resolved again here, against the identity as it stands now, for the same reason the unenroll branch
+			// above resolves it again: another flow may have moved a component or a channel while this
+			// confirmation was outstanding, and the set that survives the removal is what the lock-out check has
+			// to run against.
+			const collateral = this.#removalCollateral(identity, state.channel, "channel");
+			if (!this.#isChoreographyCompletableWithout(identity, collateral.components)) {
+				throw new WouldLockOutError(state.channel);
+			}
+			identity.components = identity.components.filter((c) =>
+				c.kind === "channel" ? !collateral.channels.has(c.component) : !collateral.components.has(c.component)
+			);
 			advanceOptions = {
 				...advanceOptions,
 				identity,

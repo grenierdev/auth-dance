@@ -20,6 +20,7 @@ import { AuthDanceStorage } from "./storage.ts";
 import { AuthDanceError, SessionNotFoundError } from "./error.ts";
 import type { AuthDanceKvProvider } from "./provider.ts";
 import { decodeJwt } from "jose/jwt/decode";
+import { OtpAuthDanceComponent } from "./components/otp.ts";
 
 // PBKDF2 at its real cost is 600000 passes and ~200ms a hash, which these suites pay a few dozen times over. The
 // cost is the point in a deployment and pure latency here, so the tests buy a single pass.
@@ -33,7 +34,9 @@ describe("Api", () => {
 	let channelEmail2: MemoryAuthDanceChannel;
 	let channelSms: MemoryAuthDanceChannel;
 	let email: EmailAuthDanceComponent;
+	let otp: OtpAuthDanceComponent;
 	let email2: EmailAuthDanceComponent;
+	let otp2: OtpAuthDanceComponent;
 	let password: PasswordAuthDanceComponent;
 
 	// Seeding an identity outside a flow. The password record is salted with the id of the identity, so the id
@@ -84,8 +87,10 @@ describe("Api", () => {
 		channelEmail = new MemoryAuthDanceChannel("email");
 		channelEmail2 = new MemoryAuthDanceChannel("email2");
 		channelSms = new MemoryAuthDanceChannel("phone");
-		email = new EmailAuthDanceComponent({ channel: "email" });
-		email2 = new EmailAuthDanceComponent({ channel: "email2" });
+		email = new EmailAuthDanceComponent({ channel: "email", challenge: "otp" });
+		otp = new OtpAuthDanceComponent({ channel: "email" });
+		email2 = new EmailAuthDanceComponent({ channel: "email2", challenge: "otp2" });
+		otp2 = new OtpAuthDanceComponent({ channel: "email2" });
 		password = new PasswordAuthDanceComponent("salty", TEST_PASSWORD_HASHER);
 		storage = new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),
@@ -99,7 +104,7 @@ describe("Api", () => {
 				sms: channelSms,
 			},
 			choreography: sequence("email", "password"),
-			components: { email, password, email2 },
+			components: { email, password, email2, otp, otp2 },
 			secret: "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs", // openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
 			storage,
 		};
@@ -410,7 +415,7 @@ describe("Api", () => {
 			!identity.components.find((c) => c.kind === "channel" && c.component === "sms"),
 		);
 	});
-	it("should not unsubscribe a channel a component still relies on", async () => {
+	it("should not unsubscribe a channel whose collateral the choreography cannot do without", async () => {
 		await seedIdentity({ name: "John Doe" }, async (seed) => [
 			...await email.getIdentityComponent(
 				"email",
@@ -432,8 +437,9 @@ describe("Api", () => {
 			state: result2.state,
 		});
 		assert("tokens" in result3);
-		// The "email" channel carries linkedTo: ["email"], and that component is still enrolled — dropping the
-		// channel would leave it with no way to verify itself.
+		// The "email" channel carries linkedTo: ["email"], so dropping it drops that identification and the code
+		// challenge linked to it. sequence("email", "password") is the only path, and it has just lost its first
+		// step.
 		const rejected = await assertRejects(
 			() =>
 				api.unsubscribe({
@@ -442,7 +448,47 @@ describe("Api", () => {
 				}),
 			AuthDanceError,
 		);
-		assertEquals(rejected.code, "CHANNEL_IN_USE");
+		assertEquals(rejected.code, "WOULD_LOCK_OUT");
+	});
+	it("should unsubscribe a channel together with the components linked to it", async () => {
+		const api = new AuthDanceApi({
+			...apiOptions,
+			choreography: choice(sequence("email", "password"), "email2"),
+		});
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...await email.getIdentityComponent(
+				"email",
+				"john.doe@example.com",
+				true,
+			),
+			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			...await email2.getIdentityComponent(
+				"email2",
+				"john.doe2@example.com",
+				true,
+			),
+		]);
+		const result1 = await signInAsJohnDoe(api);
+		const result2 = await api.unsubscribe({
+			name: "email2",
+			access_token: result1.tokens.access_token,
+		});
+		const result3 = await api.submitPrompt({
+			name: "email2",
+			value: true,
+			state: result2.state,
+		});
+		assert("success" in result3);
+		assert(result3.success);
+		const identity = await storage.getIdentity(result1.identity.id);
+		assert(identity);
+		// The channel names "email2" in its linkedTo, and the code challenge names it too, so the three records
+		// the component contributed leave as one set rather than half of them staying behind.
+		assert(!identity.components.find((c) => c.component === "email2"));
+		assert(!identity.components.find((c) => c.component === "otp2"));
+		// The path the removal does not touch stays enrolled, which is why the lock-out check let it through.
+		assert(identity.components.find((c) => c.kind === "identification" && c.component === "email"));
+		assert(identity.components.find((c) => c.kind === "challenge" && c.component === "password"));
 	});
 	it("should enroll", async () => {
 		await seedIdentity({ name: "John Doe" }, async (seed) => [

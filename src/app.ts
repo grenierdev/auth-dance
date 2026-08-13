@@ -395,7 +395,7 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		describeRoute({
 			summary: "Unenroll a component",
 			description:
-				"Removes a component from the authenticated identity, behind an explicit confirmation. The removal takes the channels that name the component in their linkedTo with it, together with every other component those channels name. Refused with WOULD_LOCK_OUT when no path through the choreography would still be fully covered by the surviving components.",
+				"Removes a component from the authenticated identity, behind an explicit confirmation. The removal takes the records that name the component in their linkedTo with it, together with every other component those records name. Refused with WOULD_LOCK_OUT when no path through the choreography would still be fully covered by the surviving components.",
 			tags: ["Auth"],
 			security: [{ bearerAuth: [] }],
 			responses: {
@@ -474,7 +474,7 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		describeRoute({
 			summary: "Unsubscribe a channel",
 			description:
-				"Detaches a channel from the authenticated identity, behind an explicit confirmation. Refused with CHANNEL_IN_USE while an enrolled component still links to it.",
+				"Detaches a channel from the authenticated identity, behind an explicit confirmation. The removal takes the components the channel names in its linkedTo with it, together with every record linked to those. Refused with WOULD_LOCK_OUT when no path through the choreography would still be fully covered by the surviving components.",
 			tags: ["Auth"],
 			security: [{ bearerAuth: [] }],
 			responses: {

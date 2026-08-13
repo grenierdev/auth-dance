@@ -168,10 +168,12 @@ export function buildDance(choreography: AuthDanceChoreography, durations: Durat
 		sms: new DemoChannel("sms", "phone", sink),
 	};
 
-	const email = new EmailAuthDanceComponent({ channel: "email" });
-	const email2 = new EmailAuthDanceComponent({ channel: "email2" });
+	const email = new EmailAuthDanceComponent({ channel: "email", challenge: "otp" });
+	const otp = new OtpAuthDanceComponent({ channel: "email" });
+	const email2 = new EmailAuthDanceComponent({ channel: "email2", challenge: "otp2" });
+	const otp2 = new OtpAuthDanceComponent({ channel: "email2" });
 	const password = new PasswordAuthDanceComponent("demo-pepper", pbkdf2PasswordHasher(PASSWORD_ROUNDS));
-	const components: Record<string, AuthDanceComponent> = { email, email2, password, otp: new CodeAuthDanceComponent({ channel: "email" }) };
+	const components: Record<string, AuthDanceComponent> = { email, email2, password, otp, otp2 };
 
 	const storage = new AuthDanceStorage({
 		identity: new MemoryIdentityProvider(),
@@ -293,8 +295,8 @@ export const ERROR_HINTS: Record<string, string> = {
 		"The value did not verify. A wrong password and an unknown address answer the same way, so nobody can probe for accounts.",
 	INVALID_VALIDATION_VALUE: "The one-time code did not match. Send a fresh one and try again.",
 	CONFIRMATION_REQUIRED: "This flow ends on a confirmation, and only the boolean true goes through.",
-	WOULD_LOCK_OUT: "Dropping this component would leave no complete path through the choreography.",
-	CHANNEL_IN_USE: "A component still links to this channel, so it cannot be detached.",
+	WOULD_LOCK_OUT: "Dropping this component, and everything linked to it, would leave no complete path through the choreography.",
+	COMPONENT_IN_USE: "Another component still links to this one, and the removal cannot take that link with it.",
 	COMPONENT_ALREADY_ENROLLED: "The identity already holds this component. Rotate it instead.",
 	CHANNEL_ALREADY_SUBSCRIBED: "The identity already holds this channel.",
 	COMPONENT_NOT_RECOVERABLE:

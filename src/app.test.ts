@@ -8,6 +8,7 @@ import type { AuthDanceComponentContext } from "./component.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
 import { ksuid } from "./id.ts";
 import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "./components/password.ts";
+import { OtpAuthDanceComponent } from "./components/otp.ts";
 import { AuthDanceStorage } from "./storage.ts";
 import type { AuthDanceKvProvider } from "./provider.ts";
 import { type AuthDance, createAuthDance } from "./mod.ts";
@@ -35,7 +36,9 @@ describe("App", () => {
 	let channelEmail2: MemoryAuthDanceChannel;
 	let channelSms: MemoryAuthDanceChannel;
 	let email: EmailAuthDanceComponent;
+	let otp: OtpAuthDanceComponent;
 	let email2: EmailAuthDanceComponent;
+	let otp2: OtpAuthDanceComponent;
 	let password: PasswordAuthDanceComponent;
 
 	// Seeding an identity outside a flow. The password record is salted with the id of the identity, so the id
@@ -55,8 +58,10 @@ describe("App", () => {
 		channelEmail = new MemoryAuthDanceChannel("email");
 		channelEmail2 = new MemoryAuthDanceChannel("email2");
 		channelSms = new MemoryAuthDanceChannel("phone");
-		email = new EmailAuthDanceComponent({ channel: "email" });
-		email2 = new EmailAuthDanceComponent({ channel: "email2" });
+		email = new EmailAuthDanceComponent({ channel: "email", challenge: "otp" });
+		otp = new OtpAuthDanceComponent({ channel: "email" });
+		email2 = new EmailAuthDanceComponent({ channel: "email2", challenge: "otp2" });
+		otp2 = new OtpAuthDanceComponent({ channel: "email2" });
 		password = new PasswordAuthDanceComponent("salty", TEST_PASSWORD_HASHER);
 		storage = new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),
@@ -70,7 +75,7 @@ describe("App", () => {
 				sms: channelSms,
 			},
 			choreography: sequence("email", "password"),
-			components: { email, password, email2 },
+			components: { email, password, email2, otp, otp2 },
 			secret: "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs", // openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
 			storage,
 		};
@@ -246,8 +251,9 @@ describe("App", () => {
 			bearer(session.tokens.access_token),
 		);
 		assertEquals(status, 200);
-		// EmailAuthDanceComponent contributes both the identification and the channel it is delivered over, so the
-		// list is what the identity actually holds rather than one entry per configured component.
+		// EmailAuthDanceComponent contributes the identification, the channel it is delivered over and the
+		// one-time code that proves the address, so the list is what the identity actually holds rather than one
+		// entry per configured component.
 		assertEquals(listed.components, [
 			{
 				kind: "identification",
@@ -258,6 +264,12 @@ describe("App", () => {
 			{
 				kind: "channel",
 				component: "email",
+				confirmed: true,
+				linkedTo: ["email"],
+			},
+			{
+				kind: "challenge",
+				component: "otp",
 				confirmed: true,
 				linkedTo: ["email"],
 			},
@@ -431,7 +443,7 @@ describe("App", () => {
 		);
 	});
 
-	it("should not unsubscribe a channel a component still relies on", async () => {
+	it("should not unsubscribe a channel whose collateral the choreography cannot do without", async () => {
 		await seedIdentity({ name: "John Doe" }, async (seed) => [
 			...await email.getIdentityComponent(
 				"email",
@@ -441,15 +453,16 @@ describe("App", () => {
 			...await password.getIdentityComponent("password", "foo", true, seed("password")),
 		]);
 		const result3 = await signIn();
-		// The "email" channel carries linkedTo: ["email"], and that component is still enrolled — dropping the
-		// channel would leave it with no way to verify itself.
+		// The "email" channel carries linkedTo: ["email"], so dropping it drops that identification and the code
+		// challenge linked to it. sequence("email", "password") is the only path, and it has just lost its first
+		// step.
 		const [status, rejected] = await post(
 			"/unsubscribe",
 			{ name: "email" },
 			bearer(result3.tokens.access_token),
 		);
 		assertEquals(status, 500);
-		assertEquals(rejected.error, "CHANNEL_IN_USE");
+		assertEquals(rejected.error, "WOULD_LOCK_OUT");
 	});
 
 	it("should enroll", async () => {

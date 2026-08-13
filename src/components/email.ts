@@ -4,14 +4,25 @@ import type { AuthDancePromptInput } from "../prompt.ts";
 import { OtpAuthDanceComponent, type OtpAuthDanceComponentOptions } from "./otp.ts";
 
 export interface EmailAuthDanceComponentOptions extends OtpAuthDanceComponentOptions {
+	/**
+	 * The name the one-time code component is registered under in `AuthDanceApiOptions.components`. The challenge
+	 * record the component contributes carries this name, so the identity holds the code factor under the same
+	 * name a choreography step would name it by.
+	 *
+	 * Give it a name of its own. A name that also sits after this component in the same dance is collected twice
+	 * in one sign-up, which the library refuses with `ComponentAlreadyCollectedError`.
+	 */
+	challenge: string;
 }
 
 /**
  * An email address as the step that resolves the identity, and a code sent to that address as the proof.
  *
- * The component contributes two records. The identification holds the address and answers who the owner is. The
- * channel record gives the library somewhere to deliver a message, and its `linkedTo` names the identification.
- * `unsubscribe` therefore refuses to detach the channel while that identification stays enrolled.
+ * The component contributes three records, and `linkedTo` binds them into one set. The identification holds the
+ * address and answers who the owner is. The channel record gives the library somewhere to deliver a message. The
+ * challenge record is the one-time code the library delivers over that channel, under the name
+ * `options.challenge`. The channel and the challenge each name the identification in their `linkedTo`, so
+ * `unenroll` and `unsubscribe` take all three down together rather than leaving a part behind.
  *
  * The verification is an `OtpAuthDanceComponent` over the same channel. The owner must read the code at the
  * address, so a match proves the address belongs to the owner.
@@ -28,34 +39,43 @@ export class EmailAuthDanceComponent implements AuthDanceComponent {
 	#options: EmailAuthDanceComponentOptions;
 
 	/**
-	 * Creates the component over one named channel.
+	 * Creates the component over one named channel, and under one name for the code that proves the address.
 	 *
-	 * The component keeps the name and puts it on the channel record it builds. The one-time code that proves control
-	 * of the address travels over the same channel.
-	 * @param channel The name of the channel the component contributes.
+	 * The component keeps both names and puts them on the records it builds. The one-time code that proves control
+	 * of the address travels over the channel, and the challenge record it contributes carries `options.challenge`.
+	 * @param options `channel` names the channel the component contributes, `challenge` names the one-time code
+	 * component. Every other key configures that code, exactly as `OtpAuthDanceComponent` reads it.
 	 */
-	constructor(options: OtpAuthDanceComponentOptions) {
+	constructor(options: EmailAuthDanceComponentOptions) {
 		this.#options = options;
 	}
 
 	/**
-	 * Builds the two records an address contributes: the identification, and the channel that reaches it.
+	 * Builds the three records an address contributes: the identification, the channel that reaches it, and the
+	 * one-time code challenge the library delivers over that channel.
 	 *
-	 * The channel record keeps the address in `data.email` and carries `confirmed: true`, and its `linkedTo` names
-	 * the identification. A value that is not a string becomes an empty address.
+	 * The channel record keeps the address in `data.email` and carries `confirmed: true`, because the
+	 * identification beside it holds the same address. The challenge record comes from `OtpAuthDanceComponent`
+	 * itself, so the code factor is recorded the same way whether this component contributes it or a choreography
+	 * step collects it. Both name the identification in their `linkedTo`. A value that is not a string becomes an
+	 * empty address.
+	 *
+	 * `confirmed` reaches the identification and the challenge, never the channel. The library confirms the record
+	 * that carries the name of the step it ran, so a flow that collects this component leaves the challenge
+	 * unconfirmed until something confirms it under its own name.
 	 * @param component The name the identification carries, which is the name of the step in the choreography.
-	 * @param value What the owner submitted. Both records hold this address.
-	 * @param confirmed Whether the owner already proved control of the address. It applies to the identification
-	 * only. Defaults to `false`.
-	 * @returns The identification record first, then the channel record.
+	 * @param value What the owner submitted. All three records hold this address.
+	 * @param confirmed Whether the owner already proved control of the address. Defaults to `false`.
+	 * @returns The identification record first, then the channel record, then the challenge record.
 	 */
-	// deno-lint-ignore require-await
 	async getIdentityComponent(
 		component: string,
 		value: unknown,
 		confirmed: boolean = false,
 	): Promise<AuthDanceIdentityComponent[]> {
 		const email = typeof value === "string" ? value : "";
+		const challenges = await new OtpAuthDanceComponent(this.#options)
+			.getIdentityComponent(this.#options.challenge, email, confirmed);
 		return [
 			{
 				kind: "identification",
@@ -70,6 +90,7 @@ export class EmailAuthDanceComponent implements AuthDanceComponent {
 				data: { email },
 				linkedTo: [component],
 			},
+			...challenges.map((challenge) => ({ ...challenge, linkedTo: [component] })),
 		];
 	}
 

@@ -49,8 +49,9 @@ the Hono `app` behind it, a `fetch` handler (the HTTP surface), and an OpenAPI s
 
 ```ts
 import { AuthDanceStorage, createAuthDance, sequence } from "auth-dance";
-import EmailAuthDanceComponent from "auth-dance/components/email";
-import PasswordAuthDanceComponent from "auth-dance/components/password";
+import { EmailAuthDanceComponent } from "auth-dance/components/email";
+import { PasswordAuthDanceComponent } from "auth-dance/components/password";
+import { OtpAuthDanceComponent } from "auth-dance/components/otp";
 import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "auth-dance/providers/memory";
 
 const auth = createAuthDance({
@@ -64,9 +65,12 @@ const auth = createAuthDance({
 		// What each step does. Keys are the names used everywhere else:
 		// in the choreography, in prompts, and in `/enroll { name }`.
 		components: {
-			email: new EmailAuthDanceComponent("email"), // delivers over the "email" channel
+			// Identify with email
+			email: new EmailAuthDanceComponent({ channel: "email", challenge: "otp" }),
 			// A pepper, not a salt: it belongs in a secret store, never in source.
 			password: new PasswordAuthDanceComponent(Deno.env.get("PASSWORD_PEPPER")!),
+			// Challenge over the "email" channel, and records its one-time code as "otp".
+			otp: new OtpAuthDanceComponent({ channel: "email" }),
 		},
 		// openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
 		secret: "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs",
@@ -186,11 +190,11 @@ value alone cannot show.
 
 Three components ship with the library:
 
-| Component                                               | Kind           | Verifiable | Notes                                                                                               |
-| ------------------------------------------------------- | -------------- | ---------- | --------------------------------------------------------------------------------------------------- |
-| `EmailAuthDanceComponent(channel)`                      | identification | yes        | Resolves the identity by address, and verifies it with an OTP. Also contributes a linked `channel`. |
-| `PasswordAuthDanceComponent(pepper, hasher?)`           | challenge      | no         | PBKDF2 by default, salted with the pepper and the identity id. Pass a `hasher` of your own.         |
-| `OtpAuthDanceComponent(channel, digits = 6, ttl = 300)` | challenge      | no         | The only sendable component. Stores the code in KV under `otp/<stateId>/<name>`.                    |
+| Component                                                   | Kind           | Verifiable | Notes                                                                                                                                                       |
+| ----------------------------------------------------------- | -------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EmailAuthDanceComponent({ channel, challenge })`           | identification | yes        | Resolves the identity by address, and verifies it with an OTP. Also contributes a linked `channel` and a linked OTP `challenge` under the `challenge` name. |
+| `PasswordAuthDanceComponent(pepper, hasher?)`               | challenge      | no         | PBKDF2 by default, salted with the pepper and the identity id. Pass a `hasher` of your own.                                                                 |
+| `OtpAuthDanceComponent({ channel, digits = 6, ttl = 300 })` | challenge      | no         | The only sendable component. Stores the code in KV under `otp/<stateId>/<name>`.                                                                            |
 
 The password component hashes through a function that you can replace, so you choose the KDF.
 
@@ -313,9 +317,10 @@ If you omit `info`, the document carries the hono-openapi placeholder instead: `
 
 Sign-in and sign-up are not special. Every management flow uses the same state-plus-prompt loop:
 
-- **`enroll` / `unenroll`** — add or remove a factor. A removal includes the linked records: the channels that name the factor in their
-  `linkedTo`, and every other factor those channels name. The library refuses it with `WOULD_LOCK_OUT` when no completable path through the
-  choreography remains for what survives.
+- **`enroll` / `unenroll`** — add or remove a factor. A removal includes the linked records: the records that name the factor in their
+  `linkedTo`, and every other factor those records name. The library refuses it with `WOULD_LOCK_OUT` when no completable path through the
+  choreography remains for what survives. `subscribe` / `unsubscribe` follow the same rule from the channel end: detaching a channel takes
+  down the factors it carries, and the same lock-out check gates it.
 - **`rotate`** — replace a credential. For a _verifiable_ component, the first prompt proves control of the current value. The library then
   collects the new value and validates it, so the flow has two validation rounds. A non-verifiable component such as a password needs one
   `submit-prompt`.

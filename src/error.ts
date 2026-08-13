@@ -208,10 +208,15 @@ export class ChannelNotSubscribedError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"CHANNEL_NOT_SUBSCRIBED"}`. */
 	readonly code: "CHANNEL_NOT_SUBSCRIBED" = "CHANNEL_NOT_SUBSCRIBED";
 }
-/** `unsubscribe` would detach a channel that still names an enrolled component in its `linkedTo` list. */
-export class ChannelInUseError extends AuthDanceError {
-	/** The app layer answers HTTP 500 with `{"error":"CHANNEL_IN_USE"}`. */
-	readonly code: "CHANNEL_IN_USE" = "CHANNEL_IN_USE";
+/**
+ * A removal would leave an enrolled record naming a component that is gone, and the library cannot take that
+ * record down with it. `unenroll` and `unsubscribe` both follow `linkedTo` in either direction and remove the
+ * whole linked set, so neither of them raises this on a link it can resolve. It stays the code for a link a
+ * removal cannot cascade away.
+ */
+export class ComponentInUseError extends AuthDanceError {
+	/** The app layer answers HTTP 500 with `{"error":"COMPONENT_IN_USE"}`. */
+	readonly code: "COMPONENT_IN_USE" = "COMPONENT_IN_USE";
 }
 /** An identification is already in use by another identity. */
 export class IdentificationTakenError extends AuthDanceError {
@@ -290,11 +295,11 @@ export class AuthDanceUnknownError extends AuthDanceError {
  */
 export const Errors = {
 	CHANNEL_ALREADY_SUBSCRIBED: ChannelAlreadySubscribedError,
-	CHANNEL_IN_USE: ChannelInUseError,
 	CHANNEL_NOT_SUBSCRIBED: ChannelNotSubscribedError,
 	CHOREOGRAPHY_EMPTY: ChoreographyEmptyError,
 	COMPONENT_ALREADY_COLLECTED: ComponentAlreadyCollectedError,
 	COMPONENT_ALREADY_ENROLLED: ComponentAlreadyEnrolledError,
+	COMPONENT_IN_USE: ComponentInUseError,
 	COMPONENT_NOT_COLLECTED: ComponentNotCollectedError,
 	COMPONENT_NOT_ENROLLED: ComponentNotEnrolledError,
 	COMPONENT_NOT_IN_CHOREOGRAPHY: ComponentNotInChoreographyError,
