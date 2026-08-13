@@ -69,9 +69,7 @@ export function WirePanel() {
 function WireLine({ entry }: { entry: LogEntry }) {
 	return (
 		<Collapsible className="min-w-0 rounded-xl border bg-card">
-			<CollapsibleTrigger
-				className="group/line flex w-full min-w-0 items-center gap-2 rounded-xl px-3 py-2 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/30"
-			>
+			<CollapsibleTrigger className="group/line flex w-full min-w-0 items-center gap-2 rounded-xl px-3 py-2 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/30">
 				<ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[panel-open]/line:rotate-90" />
 				<Badge variant={tone(entry)} className="shrink-0 font-mono">{status(entry)}</Badge>
 				<span className="min-w-0 flex-1 truncate font-mono text-xs">{entry.label}</span>

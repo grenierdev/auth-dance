@@ -33,8 +33,10 @@ function DemoPage() {
 			<SidebarProvider defaultOpen={false} className="min-h-0 flex-1">
 				<AppSidebar />
 				<SidebarInset className="overflow-hidden bg-muted">
-					{/* An indeterminate bar rather than a spinner: an action here answers in a millisecond, and the only
-					    honest thing to report is that one is in flight. */}
+					{
+						/* An indeterminate bar rather than a spinner: an action here answers in a millisecond, and the only
+					    honest thing to report is that one is in flight. */
+					}
 					{busy && (
 						<Progress
 							value={null}
@@ -49,8 +51,10 @@ function DemoPage() {
 						<span className="truncate text-xs text-muted-foreground">everything runs in this page</span>
 					</header>
 
-					{/* Centred while the card is short, scrolled once a prompt makes it taller than the screen. The stage
-					    carries its own width, so nothing here sets one. */}
+					{
+						/* Centred while the card is short, scrolled once a prompt makes it taller than the screen. The stage
+					    carries its own width, so nothing here sets one. */
+					}
 					<div className="min-h-0 flex-1 overflow-y-auto">
 						<div className="flex min-h-full items-center justify-center px-4 pb-14">
 							<AuthStage />

@@ -172,9 +172,7 @@ export function AppSidebar() {
 			<Sidebar collapsible="icon" variant="inset">
 				<SidebarHeader>
 					<div className="flex h-8 items-center gap-2">
-						<span
-							className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-xl bg-sidebar-primary text-sidebar-primary-foreground"
-						>
+						<span className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-xl bg-sidebar-primary text-sidebar-primary-foreground">
 							<ShieldCheckIcon className="size-4" />
 						</span>
 						<span className="grid min-w-0 flex-1 leading-tight group-data-[collapsible=icon]:hidden">

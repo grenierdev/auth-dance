@@ -136,7 +136,8 @@ export function AuthStage() {
 									{config.seed
 										? (
 											<>
-												An identity is already seeded: <span className="font-mono text-foreground">{SEEDED.email}</span> with the password{" "}
+												An identity is already seeded: <span className="font-mono text-foreground">{SEEDED.email}</span> with the password
+												{" "}
 												<span className="font-mono text-foreground">{SEEDED.password}</span>. Sign up to make another one.
 											</>
 										)

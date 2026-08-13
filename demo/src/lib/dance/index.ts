@@ -65,8 +65,8 @@ export {
 
 export {
 	type DanceActions,
-	DanceStore,
 	type DanceState,
+	DanceStore,
 	getDanceStore,
 	type LogEntry,
 	type Message,

@@ -144,8 +144,7 @@ export function OptionsPanel({ onApplied }: OptionsPanelProps) {
 									onChange={(event) => setDraft((current) => ({ ...current, custom: event.target.value }))}
 								/>
 								<FieldDescription>
-									A component node names a component of the instance. A choice node forks, a sequence node runs its children in
-									order.
+									A component node names a component of the instance. A choice node forks, a sequence node runs its children in order.
 								</FieldDescription>
 							</Field>
 						)}

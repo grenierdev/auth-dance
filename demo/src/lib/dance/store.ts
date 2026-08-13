@@ -41,17 +41,7 @@ import {
 	type TokensBody,
 } from "./dance.ts";
 import { type Config, currentChoreography, defaultConfig, loadConfig, saveConfig } from "./config.ts";
-import {
-	activePrompt,
-	type FlowName,
-	FLOWS,
-	initialCall,
-	nextCall,
-	promptInputs,
-	sendPath,
-	type Step,
-	submitPath,
-} from "./flows.ts";
+import { activePrompt, type FlowName, FLOWS, initialCall, nextCall, promptInputs, sendPath, type Step, submitPath } from "./flows.ts";
 
 /** One message a channel took, as the inbox lists it. */
 export interface Message extends DeliveredMessage {
@@ -238,7 +228,7 @@ export class DanceStore implements DanceActions {
 	};
 
 	/** Registers a listener, and returns the call that drops it again. */
-	readonly subscribe = (listener: () => void): (() => void) => {
+	readonly subscribe = (listener: () => void): () => void => {
 		this.#listeners.add(listener);
 		return () => {
 			this.#listeners.delete(listener);

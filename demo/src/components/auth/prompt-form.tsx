@@ -75,10 +75,12 @@ export function PromptForm() {
 						<span className="text-xs text-muted-foreground">Expires {clock(step.expireAt)}</span>
 						<div className="flex flex-wrap gap-2">
 							<Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void cancel()}>Abandon</Button>
-							{/*
+							{
+								/*
 								`sendable` is advisory metadata the library never reads, so it alone is not the rule. A prompt worth a
 								send button is one whose recipient the library already knows, which is a code it is about to mail.
-							*/}
+							*/
+							}
 							{isSendable(step) && (
 								<Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void sendCurrent()}>
 									Send it to me
