@@ -1,11 +1,8 @@
 /**
  * @module
  *
- * How one type of prompt is collected, one entry per type.
- *
- * The flow driver never looks at a `type` itself. It asks this table to render, and the table hands back a controlled
- * control wired to the value the store already holds under the name of the prompt. That is the whole seam: a component
- * of your own can declare any other type, and adding a row here is the only change the page needs.
+ * How one type of prompt is collected, one entry per type. The flow driver never reads a `type` itself. To support a new
+ * type, add a row to {@link PROMPT_FIELDS}.
  */
 
 import type { ReactNode } from "react";
@@ -18,17 +15,17 @@ import { Input } from "@/components/ui/input.tsx";
 import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp.tsx";
 import { useDance, useDanceActions } from "@/lib/dance/index.ts";
 
-/** Everything a control is given. Nothing else is in scope for it, which keeps a new type of field a one-liner. */
+/** Everything a control is given. */
 export interface PromptControlProps {
-	/** The prompt being collected. A type of your own reads whatever it published under `options` from here. */
+	/** The prompt being collected. A type of your own reads its `options` from here. */
 	prompt: AuthDancePromptInput;
-	/** The id the visible label points at, and the id the inbox moves focus to when it fills a code. */
+	/** The id the visible label points at, and the id the inbox moves focus to. */
 	id: string;
-	/** What the store holds under the name of the prompt. Every control casts it at the edge, because the store is untyped here. */
+	/** What the store holds under the name of the prompt. */
 	value: unknown;
 	/** Writes the store. A confirmation writes a boolean, everything else writes a string. */
 	onValueChange: (next: unknown) => void;
-	/** Whether an action is running, in which case nothing takes input. */
+	/** Whether an action is running. No control takes input then. */
 	disabled: boolean;
 }
 
@@ -36,17 +33,11 @@ export interface PromptControlProps {
 export interface PromptFieldDefinition {
 	/** What the visible label says. */
 	label: string;
-	/** The control, which is always controlled: it reads `value` and writes through `onValueChange`. */
+	/** The control. It reads `value` and writes through `onValueChange`. */
 	control: (props: PromptControlProps) => ReactNode;
 }
 
-/**
- * Every type this page knows how to collect.
- *
- * The library ships `email`, `password` and `otp`, and builds `confirmation` itself. A channel contributes whatever
- * type it declares, `phone` here. A component of your own can declare any other type: add an entry and the flow driver
- * needs no change, because it only ever asks this table to render.
- */
+/** Every type this page knows how to collect. The library ships `email`, `password` and `otp`, and builds `confirmation`. */
 export const PROMPT_FIELDS: Record<string, PromptFieldDefinition> = {
 	text: {
 		label: "Value",
@@ -131,8 +122,7 @@ export const PROMPT_FIELDS: Record<string, PromptFieldDefinition> = {
 	},
 	confirmation: {
 		label: "Confirmation",
-		// The library takes the boolean true and nothing else, so an unchecked box submits false on purpose: the
-		// refusal it earns is part of what this demo shows. Nothing here pre-checks it and nothing blocks the submit.
+		// The library takes the boolean true and nothing else. An unchecked box submits false, and the library refuses it.
 		control: ({ id, value, disabled, onValueChange }) => (
 			<Field orientation="horizontal">
 				<Checkbox id={id} checked={value === true} disabled={disabled} onCheckedChange={(checked) => onValueChange(checked)} />
@@ -142,26 +132,17 @@ export const PROMPT_FIELDS: Record<string, PromptFieldDefinition> = {
 	},
 };
 
-/** The row for a type, falling through to a plain text input for a type this page has never met. */
+/** The row for a type. An unknown type gets a plain text input. */
 export function fieldFor(type: string): PromptFieldDefinition {
 	return PROMPT_FIELDS[type] ?? PROMPT_FIELDS.text;
 }
 
-/** Where a field of the current prompt lives in the document, which is how the inbox moves focus onto a code. */
+/** Where a field of the current prompt lives in the document. */
 export function promptFieldId(name: string): string {
 	return `prompt-${name}`;
 }
 
-/**
- * Moves the caret to a field of the current prompt.
- *
- * It lives here because this module is the one that decides where a field lands in the document, and a caller that
- * had to know the id would have to be changed with it.
- *
- * The click that fills a field is also the click that closes the slideout it was clicked in, and the dialog pulls
- * focus back to its trigger while it goes. Asking for the field on the next frame lands after that, which is the whole
- * reason this is not a plain `focus()`.
- */
+/** Moves the caret to a field on the next frame, after a dialog that closes on the same click restores its focus. */
 export function focusPromptField(name: string): void {
 	requestAnimationFrame(() => {
 		document.getElementById(promptFieldId(name))?.focus();

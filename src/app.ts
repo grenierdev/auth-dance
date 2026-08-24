@@ -7,12 +7,8 @@ import type { AuthDanceIdentityComponent, AuthDanceIdentityComponentPublic } fro
 import { AuthDancePromptInput } from "./prompt.ts";
 import { AuthDanceResponseComponents, AuthDanceResponseResult, AuthDanceResponseSessions, AuthDanceResponseTokens } from "./response.ts";
 
-// `AuthDanceComponent.getPrompt` and `AuthDanceChannel.getPrompt` both return an `AuthDancePromptInput`, and a
-// `choice()` node accepts components only. A choice prompt therefore holds input prompts and nothing else, so the
-// recursion in the `AuthDancePromptChoice` of `prompt.ts` is unreachable. This schema states that one level
-// explicitly. It does not reuse the recursive schema, which keeps the generated document self-contained. `v.lazy`
-// becomes a `$defs` entry. hono-openapi rewrites that entry into a `#/components/schemas/…` reference, and it
-// never registers the target, so the document keeps a dangling `$ref`.
+// This schema states one level of a choice prompt. Do not replace it with the recursive schema of `prompt.ts`. The
+// `v.lazy` of that schema makes a dangling `$ref` in the generated document.
 const PromptChoiceResponse = v.pipe(
 	v.object({
 		kind: v.literal("choice"),
@@ -28,10 +24,7 @@ const PromptResponse = v.pipe(
 	v.description("A prompt, which can be a component or a choice"),
 );
 
-// The schemas below describe what goes over the wire. They never validate anything. They exist because
-// `AuthDanceResponseState.expireAt` is a `Date`. The domain works with that type, but the client never sees it,
-// because `c.json` serializes the date to an ISO string. `v.date()` also has no JSON Schema representation, so
-// this module cannot pass the domain schema to `resolver()` as it is.
+// The schemas below describe what goes over the wire. They never validate anything.
 const StateResponse = v.pipe(
 	v.object({
 		state: v.string(),
@@ -42,8 +35,6 @@ const StateResponse = v.pipe(
 	v.description("The prompt to answer next, with the opaque state to echo back and the moment it stops being valid"),
 );
 
-// These four carry no dates, because `AuthDanceSession.expireAt` is already the ISO string the client sees. This
-// module therefore reuses the domain schemas as they are.
 const TokensResponse = AuthDanceResponseTokens;
 const ResultResponse = AuthDanceResponseResult;
 const SessionsResponse = AuthDanceResponseSessions;
@@ -55,8 +46,6 @@ const AnyResponse = v.pipe(
 	v.description("The next prompt, the tokens minted by a completed authentication, or a bare success for a completed management flow"),
 );
 
-// This schema reads the documented codes from the `Errors` registry instead of a list of its own. A new
-// `AuthDanceError` subclass therefore appears in the generated document as soon as the registry names it.
 const ErrorResponse = v.pipe(
 	v.object({ error: v.picklist(Object.keys(Errors) as (keyof typeof Errors)[]) }),
 	v.title("AuthDanceErrorResponse"),
@@ -86,17 +75,12 @@ function withErrorResponses() {
 	};
 }
 
-// Every validation failure answers in the same `{ error }` shape as an `AuthDanceError`. The surface therefore
-// carries one error format only, and it never leaks the issue list of @hono/standard-validator.
 function badRequest(result: { success: boolean }, c: Context) {
 	if (!result.success) {
 		return c.json({ error: "BAD_REQUEST" } as const, 400);
 	}
 }
 
-// This function reports a missing header and a malformed header with the code a rejected token produces. From
-// the side of the caller both mean "this request carried no usable access token". A more exact answer would only
-// help someone who probes the surface.
 function bearer(c: Context): string {
 	const token = c.req.header("authorization")?.match(/^Bearer +(\S+)$/i)?.[1];
 	if (!token) {
@@ -105,14 +89,7 @@ function bearer(c: Context): string {
 	return token;
 }
 
-// `data` is the private store of the component. `PasswordAuthDanceComponent` keeps the password hash under
-// `data.hash`, and `EmailAuthDanceComponent` keeps the address under `data.email`. No component declares which of
-// its keys are safe to disclose, so this function drops the whole field rather than some of its keys. A client
-// needs two facts from this list: which components exist, and whether each one is confirmed. It never needs the
-// value a component holds.
-//
-// The return type is the `…Public` half of the pair that identity.ts declares. The documented response schema
-// comes from that same type, so the two cannot describe different shapes.
+// `data` holds the private value of a component, for example a password hash. This function drops the whole field.
 function withoutComponentData(component: AuthDanceIdentityComponent): AuthDanceIdentityComponentPublic {
 	const { data: _data, ...rest } = component;
 	return rest;
@@ -122,8 +99,7 @@ function localeOf(c: Context, fromBody?: string): string {
 	return fromBody ?? c.req.header("accept-language")?.split(",")[0]?.split(";")[0]?.trim() ?? "en";
 }
 
-// The address and the user agent describe the caller, not the request. This function therefore reads both from
-// the headers, never from the body. A client must not choose what the library records against its own session.
+// The address and the user agent always come from the headers, never from the body.
 function callerOf(c: Context): { address?: string; userAgent?: string } {
 	return {
 		address: c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim(),
@@ -131,7 +107,7 @@ function callerOf(c: Context): { address?: string; userAgent?: string } {
 	};
 }
 
-/** Generous on purpose: a whole NATed network shares one address, so these limits fit a crowd. */
+/** The default per-address rate limit buckets. */
 const AddressRateLimits: Required<AuthDanceAddressRateLimits> = {
 	request: { limit: 300, window: 60 },
 	send: { limit: 60, window: 60 },
@@ -140,9 +116,7 @@ const AddressRateLimits: Required<AuthDanceAddressRateLimits> = {
 /**
  * The Hono app that serves the AuthDance routes, with the bindings every handler needs.
  *
- * A handler never holds an `AuthDanceApi` of its own. The caller passes one as `api` on each `fetch` call, together with
- * the optional per-address buckets as `rate_limit`. When you do not want the ready-made `fetch` handler, mount this app
- * inside an app of your own.
+ * A handler reads the `api` binding on each `fetch` call, and the optional per-address buckets as `rate_limit`.
  */
 export type AuthDanceApp = Hono<{ Bindings: { api: AuthDanceApi; rate_limit?: AuthDanceAddressRateLimits } }>;
 
@@ -155,31 +129,19 @@ export interface AuthDanceAppOptions {
 /**
  * Builds the Hono app that serves AuthDance over HTTP.
  *
- * Every route is a POST. The app mounts `/sign-in`, `/sign-up`, `/sign-out`, `/list-sessions`, `/list-components` and
- * `/refresh-token`. It then mounts `/enroll`, `/unenroll`, `/rotate`, `/recover`, `/subscribe`, `/unsubscribe` and
- * `/delete`. It ends with `/send-prompt` and `/submit-prompt`, the two routes that carry every step of every flow.
- * `options.basePath` prefixes all 15 of them. Each handler calls the matching `AuthDanceApi` method on `c.env.api` and
- * answers with its JSON.
+ * Every route is a POST, and `options.basePath` prefixes all 15 of them. Each handler calls the matching
+ * `AuthDanceApi` method on `c.env.api`. The nine routes that act on an already authenticated identity take the access
+ * token from the `Authorization: Bearer` header.
  *
- * `/list-sessions` and `/list-components` have no such method. Both resolve the identity with `accessTokenIdentity`, then
- * read the list themselves. `/list-sessions` sorts by session id. `/list-components` drops the private data each
- * component holds. The nine routes that act on an already authenticated identity take the access token from the
- * `Authorization: Bearer` header. Each route carries its own OpenAPI description, which hono-openapi reads.
- *
- * The app maps a failure to a status code in three places. A body that does not match the route schema answers 400 with
- * `{ error: "BAD_REQUEST" }`, the same one-key shape as every other failure. A `RateLimitedError` answers 429, and adds
- * `Retry-After` in seconds when the rate limiter adapter reports the delay. Every other `AuthDanceError` answers 500 with
- * its own code, and anything else answers 500 with `UNKNOWN`.
+ * A body that does not match the route schema answers 400 with `{ error: "BAD_REQUEST" }`. A `RateLimitedError`
+ * answers 429, and adds `Retry-After` in seconds when the rate limiter adapter reports the delay. Every other
+ * `AuthDanceError` answers 500 with its own code. Anything else answers 500 with `UNKNOWN`.
  *
  * The app reads the caller address from `cf-connecting-ip`, or from the first entry of `x-forwarded-for`. It reads the
- * locale from the `locale` field of the body first, then from the first entry of `accept-language`. It uses `en` when
- * neither is present. The address and the user agent always come from the headers, never from the body. A client must
- * not choose what the library records against its own session.
+ * locale from the `locale` field of the body first, then from the first entry of `accept-language`, then uses `en`.
  *
- * A middleware consumes the per-address buckets before anything parses a body, so a flood costs nothing but the counter.
- * `/send-prompt` consumes a second, tighter bucket on top of that, because it puts a message on a channel. The Hono
- * router matches that second bucket on the route itself, so an `options.basePath` and a mount inside another app both
- * keep it in force. Both middlewares leave a request with no caller address unbucketed.
+ * A middleware consumes the per-address buckets before anything parses a body. `/send-prompt` consumes a second,
+ * tighter bucket. Both middlewares leave a request with no caller address unbucketed.
  */
 export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp {
 	let app = new Hono<{ Bindings: { api: AuthDanceApi; rate_limit?: AuthDanceAddressRateLimits } }>();
@@ -188,11 +150,6 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		app = app.basePath(options.basePath);
 	}
 
-	// `AuthDanceApi` wraps everything that is not an `AuthDanceError` in an `AuthDanceUnknownError`, and `"UNKNOWN"`
-	// is the code that wrapper carries. Every failure from the state machine therefore lands in one of the two
-	// branches below. The `"UNKNOWN"` fallback also covers a failure that the HTTP layer itself throws. A rate limit
-	// is the one failure that is neither the fault of the caller nor the fault of the server, so it is the only one
-	// worth an answer other than a 500.
 	app.onError((err, c) => {
 		if (err instanceof RateLimitedError) {
 			return c.json({ error: err.code }, 429, err.retryAfter === undefined ? {} : { "retry-after": `${err.retryAfter}` });
@@ -200,13 +157,8 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		return c.json({ error: err instanceof AuthDanceError ? err.code : "UNKNOWN" }, 500);
 	});
 
-	// This middleware is the per-address counterpart to the per-identity buckets `AuthDanceApi` consumes. Those
-	// buckets stop a flood against one identity. These ones stop one caller address from repeating the same abuse across
-	// many identities. An example is a probe for valid addresses through sign-in, or an endless stream of sign-ups. The
-	// middleware runs before the app parses a body, so a flood costs nothing but the counter.
-	//
-	// The middleware leaves a request with no caller address unbucketed. It does not group such requests under a
-	// shared "unknown" key, because one caller could then block every such request for everybody.
+	// These buckets stop one caller address from repeating the same abuse across many identities. A request with no
+	// caller address stays unbucketed. A shared key would let one caller block every such request.
 	app.use(async (c, next) => {
 		const { address } = callerOf(c);
 		if (address) {
@@ -305,10 +257,8 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 				...withErrorResponses(),
 			},
 		}),
-		// The handler sorts by id, so the answer does not depend on the order a KV provider enumerates in. A session
-		// id is a ksuid, and its leading characters carry the creation second, so the list follows creation order
-		// closely. `localeCompare` orders by locale collation, not by the base62 value of the id, so two ids from
-		// different seconds can still appear in the wrong order. The order stays stable for the same set of sessions.
+		// The sort by id keeps the order independent of the enumeration order of a KV provider. `localeCompare` orders
+		// by collation, not by the base62 value of the id, so two ids from different seconds can come out unsorted.
 		async (c) => {
 			const { session } = await c.env.api.accessTokenIdentity(bearer(c));
 			const sessions = await c.env.api.storage.listSession(session.identityId);

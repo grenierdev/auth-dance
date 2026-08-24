@@ -1,13 +1,8 @@
 /**
  * @module
  *
- * The document the demo lives in.
- *
- * Two components hang off this route and they run in different places. `shellComponent` writes the `<html>` the
- * client hydrates and always renders on the server, so it stays as plain as it can be. `component` is the ordinary
- * React tree, which is where the tooltip provider belongs: it is context and nothing else, but a page whose route
- * has opted out of server rendering should keep its providers on the same side of the fence as the things that use
- * them.
+ * The document the demo lives in. `shellComponent` writes the `<html>` and always renders on the server.
+ * `component` is the client React tree, and holds the providers.
  */
 
 import type { ReactNode } from "react";
@@ -20,12 +15,10 @@ import { TooltipProvider } from "@/components/ui/tooltip.tsx";
 // @ts-types="../../types/css-url.d.ts"
 import appCss from "../styles.css?url";
 
-// The favicon the reference page carried, percent-encoded so it survives any transport that would rather not carry
-// four raw bytes of UTF-8. There is no reason to be more serious about a favicon than the reference was.
 const FAVICON =
 	"data:image/svg+xml,%3Csvg%20xmlns='http://www%2Ew3%2Eorg/2000/svg'%20viewBox='0%200%2022%2016'%3E%3Ctext%20y='14'%3E%F0%9F%9A%80%3C/text%3E%3C/svg%3E";
 
-/** The root of the tree: the document, the head, and the providers every panel below leans on. */
+/** The root route: the document, the head, and the providers. */
 export const Route = createRootRoute({
 	head: () => ({
 		meta: [

@@ -1,15 +1,9 @@
 /**
  * @module
  *
- * The instance the page dances with, and the shapes its answers take.
- *
- * Everything runs in the browser. The memory providers keep identities, sessions, one-time codes and rate limit
- * counters in a `Map` that a reload erases, and a call goes straight into `auth.fetch()`, which is the same HTTP
- * surface a server would expose, minus the server.
- *
- * The reference demo wrote what the channel and the hooks reported into module globals. A React page cannot: a module
- * global is shared by every instance and invisible to the renderer. `buildDance` therefore takes a sink, and the
- * store hands it one that lands in state. Nothing in this module is mutable at module scope.
+ * The instance the page dances with, and the shapes its answers take. Everything runs in the browser. The memory
+ * providers keep identities, sessions, one-time codes and rate limit counters in a `Map` that a reload erases.
+ * `buildDance` takes a sink, and the store hands it one that lands in state.
  */
 
 import {
@@ -34,18 +28,10 @@ import { OtpAuthDanceComponent } from "auth-dance/components/otp";
 import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "auth-dance/components/password";
 import type { Durations } from "./config.ts";
 
-/**
- * The key that signs the tokens and encrypts the state.
- *
- * It sits in the bundle in plain sight, which a real deployment must never do. Here both ends of the dance are the
- * same page, so there is no second party to keep it from.
- */
+/** The key that signs the tokens and encrypts the state. It sits in the bundle. A real deployment must not do this. */
 export const SECRET = "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs";
 
-/**
- * The PBKDF2 rounds of the password component. The library defaults to 600 000, which is right for a server and about
- * a second of a phone browser per submitted password.
- */
+/** The PBKDF2 rounds of the password component. The library default is 600 000. */
 export const PASSWORD_ROUNDS = 60_000;
 
 /** What the seed puts in storage, and what the start card offers to type. */
@@ -66,7 +52,7 @@ export interface DeliveredMessage {
 	recipient: string;
 	/** The subject line the component wrote. */
 	subject: string;
-	/** The bare one-time code, which `OtpAuthDanceComponent` puts under `text/x-code`. Absent on any other message. */
+	/** The bare one-time code, under `text/x-code`. Absent on any other message. */
 	code?: string;
 }
 
@@ -80,12 +66,7 @@ export interface ReportedHook {
 	summary: string;
 }
 
-/**
- * Where a running instance reports what happened out of band.
- *
- * A channel takes a message and a hook fires while a call is still awaited, so neither can return anything the caller
- * would read. They report here instead, and the store turns each report into state.
- */
+/** Where a running instance reports what happened out of band. */
 export interface DanceSink {
 	/** Called by a channel for every message it took. */
 	delivered(message: DeliveredMessage): void;
@@ -108,15 +89,8 @@ export interface Dance {
 }
 
 /**
- * A one-time code as a step of the choreography, rather than as the proof another component asks for.
- *
- * `OtpAuthDanceComponent` declares no verification of its own, and its `verificationComponent` throws to say so. A
- * sign-up calls that method for any collected value that is not confirmed yet, so the base class can only ever be a
- * verification. Dropping the method says the same thing in the form the sign-up reads: a code the owner read at an
- * address the identity already holds is proof enough on its own.
- *
- * This is all a component of your own has to do. The library asks for a prompt, a check and a record, and the
- * choreography names it like any other step.
+ * A one-time code as a step of the choreography, and not as the proof another component asks for.
+ * The base class throws from `verificationComponent`. This class drops it, so a sign-up takes the code as proof.
  */
 export class CodeAuthDanceComponent extends OtpAuthDanceComponent {
 	override verificationComponent = undefined;
@@ -142,8 +116,7 @@ export class DemoChannel extends MemoryAuthDanceChannel {
 	override async sendMessage(message: AuthDanceMessage): Promise<void> {
 		await super.sendMessage(message);
 		const content = message.content as Record<string, string>;
-		// The memory channel files every recipient under the literal key `sms`, whatever the channel is called, so the
-		// address is read as the one string in the bag rather than under a fixed key.
+		// The memory channel files every recipient under the literal key `sms`, so read the one string in the bag.
 		const recipient = Object.values(message.recipient.data ?? {}).find((value) => typeof value === "string");
 		this.#sink.delivered({
 			channel: this.#name,
@@ -155,11 +128,8 @@ export class DemoChannel extends MemoryAuthDanceChannel {
 }
 
 /**
- * Builds one instance from a choreography, a set of durations and a sink.
- *
- * The four components are fixed and the choreography picks among them by name. `email` and `email2` are two addresses,
- * each with a channel of its own. `password` is a challenge. `otp` is a code over the `email` channel, which lets a
- * choreography name it as a step of its own rather than as a verification.
+ * Builds one instance from a choreography, a set of durations and a sink. The choreography picks components by name.
+ * `email` and `email2` are two addresses with a channel each. `password` is a challenge. `otp` is a code over `email`.
  */
 export function buildDance(choreography: AuthDanceChoreography, durations: Durations, sink: DanceSink): Dance {
 	const channels = {
@@ -189,9 +159,6 @@ export function buildDance(choreography: AuthDanceChoreography, durations: Durat
 			secret: SECRET,
 			storage,
 			durations,
-			// A demo gets poked at far harder than an account does. The defaults allow one identity 10 verifications
-			// and 5 deliveries per five minutes, which a curious visitor empties in a minute of clicking. These are
-			// the same buckets, opened wide.
 			limits: {
 				identity: {
 					verify: { limit: 200, window: 300 },
@@ -200,8 +167,7 @@ export function buildDance(choreography: AuthDanceChoreography, durations: Durat
 					refresh: { limit: 200, window: 300 },
 				},
 			},
-			// The listeners the library calls after it saves a change. They report what happened; they never decide
-			// anything, and one that throws never fails the flow.
+			// A hook that throws never fails the flow.
 			hooks: {
 				onIdentityCreated: (event) => sink.reported({ hook: "onIdentityCreated", flow: event.flow, summary: event.identity.id }),
 				onIdentityUpdated: (event) =>
@@ -217,12 +183,8 @@ export function buildDance(choreography: AuthDanceChoreography, durations: Durat
 	});
 
 	/**
-	 * Seeds an identity the way a sign-up would leave one, without running the flow. The password record is salted
-	 * with the id of the identity, so the id comes first and the components are built against it. Hence `setIdentity`
-	 * rather than `createIdentity`, which would mint an id of its own after the fact.
-	 *
-	 * A rebuild throws the old instance away with everything in it, so this small warm 🥔 of state is written again
-	 * every time.
+	 * Writes the John Doe identity into storage, the way a sign-up would leave one.
+	 * The password record uses the identity id as salt, so the id must exist before the components are built.
 	 */
 	async function seedIdentity(): Promise<AuthDanceIdentity> {
 		const identity: AuthDanceIdentity = { id: SEEDED.id, data: { name: "John Doe" }, components: [] };
@@ -238,21 +200,16 @@ export function buildDance(choreography: AuthDanceChoreography, durations: Durat
 	return { auth, storage, componentNames: Object.keys(components), channelNames: Object.keys(channels), seedIdentity };
 }
 
-/**
- * A state response as it arrives over the wire.
- *
- * `AuthDanceResponseState` carries `expireAt` as a `Date`, which is what `auth.api` returns in process. The HTTP layer
- * serializes it, and this page reads the HTTP layer, so here it is a string.
- */
+/** A state response as it arrives over the wire, with `expireAt` as a string and not a `Date`. */
 export interface StateBody extends Omit<AuthDanceResponseState, "expireAt"> {
 	/** The moment the flow expires, as an ISO 8601 string. An answer to a prompt never extends it. */
 	expireAt: string;
 }
 
-/** A completed sign-in, a completed sign-up or a refresh. Nothing in this shape is a `Date`, so the wire copies it as it is. */
+/** A completed sign-in, a completed sign-up or a refresh. */
 export type TokensBody = AuthDanceResponseTokens;
 
-/** A call that succeeded and returns nothing else, which is how every flow but a sign-in and a sign-up ends. */
+/** A call that succeeded and returns nothing else. */
 export type ResultBody = AuthDanceResponseResult;
 
 /** The body of `/list-sessions`: every open session, and the id of the one that asked. */
@@ -267,19 +224,17 @@ export interface ErrorBody {
 	error: string;
 }
 
-/** The public component records `/list-components` answers with. Re-exported so a panel types its list without reaching for the library. */
+/** The public component records `/list-components` answers with. */
 export type EnrolledComponent = AuthDanceIdentityComponentPublic;
 
 /**
  * A refusal from the library. The body of a failure is always a single `{ error: CODE }`.
- *
- * Do not branch on the status. Everything but a missing body and an empty rate limit bucket comes back as 500, so
- * `INVALID_PROMPT_VALUE` and `FRESH_SIGN_IN_REQUIRED` share a status with a genuine fault. The code is the answer.
+ * Do not branch on the status. Everything but a missing body and an empty rate limit bucket comes back as 500.
  */
 export class ApiError extends Error {
 	/** The HTTP status the call answered with: 400 for a missing body, 429 for a rate limit, 500 for everything else. */
 	readonly status: number;
-	/** The code the body named, which is what a caller branches on. */
+	/** The code the body named. Branch on it. */
 	readonly code: string;
 
 	constructor(status: number, code: string) {

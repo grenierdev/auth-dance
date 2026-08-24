@@ -1,15 +1,10 @@
 /**
  * @module
  *
- * The icon rail down the left of the page, and the one slideout it drives.
+ * The icon rail at the left of the page, and the sheet it opens. Only one panel is open at a time.
  *
- * The login card in the middle is the demo; everything that explains the demo lives out here. Four entries name the
- * four panels, a click puts one of them in a sheet on the right, and only ever one is open, so the stage keeps the
- * screen to itself until somebody asks a question about it.
- *
- * The open panel is a piece of page state rather than a piece of sidebar state: the choreography card wants to open
- * the options panel too. {@link PanelsProvider} holds it and {@link usePanels} reads it, so a control anywhere under
- * the provider can reach for the same sheet the rail reaches for.
+ * {@link PanelsProvider} holds the open panel and {@link usePanels} reads it, so a control anywhere under the
+ * provider can open the same sheet the rail opens.
  */
 
 import * as React from "react";
@@ -43,29 +38,23 @@ import { WirePanel } from "@/components/panels/wire-panel.tsx";
 /** The four panels the rail can put on screen. */
 export type PanelName = "options" | "inbox" | "wire" | "session";
 
-/** What a control needs to drive the slideout: the panel on screen, and the two ways to change it. */
+/** The panel on screen, and the two ways to change it. */
 export interface Panels {
-	/** The panel in the sheet, or nothing when the sheet is closed. */
+	/** The panel in the sheet. Null when the sheet is closed. */
 	open: PanelName | null;
-	/** Puts a panel on screen, replacing whichever one was there. */
+	/** Opens a panel, and replaces the one on screen. */
 	openPanel: (panel: PanelName) => void;
 	/** Closes the sheet. */
 	closePanel: () => void;
 }
 
-// A page that forgot the provider should still work, minus the slideout, rather than take the whole render down with
-// it. The demo is worth more on screen than a missing provider is worth loud.
 const PanelsContext = React.createContext<Panels>({
 	open: null,
 	openPanel: () => {},
 	closePanel: () => {},
 });
 
-/**
- * Holds which panel is on screen, for the rail and for anything else that wants to open one.
- *
- * It renders no element of its own, so it can sit outside the sidebar wrapper without disturbing the layout.
- */
+/** Holds which panel is on screen. It renders no element of its own. */
 export function PanelsProvider({ children }: { children: React.ReactNode }) {
 	const [open, setOpen] = React.useState<PanelName | null>(null);
 	const value = React.useMemo<Panels>(
@@ -80,12 +69,12 @@ export function PanelsProvider({ children }: { children: React.ReactNode }) {
 	return <PanelsContext.Provider value={value}>{children}</PanelsContext.Provider>;
 }
 
-/** Reads the slideout, from anywhere under {@link PanelsProvider}. */
+/** Reads the slideout state from anywhere under {@link PanelsProvider}. */
 export function usePanels(): Panels {
 	return React.useContext(PanelsContext);
 }
 
-/** The one call the choreography card needs: open the options panel and leave the rest alone. */
+/** Returns a function that opens the options panel. */
 export function useOpenOptions(): () => void {
 	const { openPanel } = usePanels();
 	return React.useCallback(() => openPanel("options"), [openPanel]);
@@ -96,16 +85,10 @@ interface PanelDefinition {
 	label: string;
 	hint: string;
 	icon: React.ComponentType<{ className?: string }>;
-	/**
-	 * The body of the sheet. It is handed the one thing a panel cannot do for itself: close the sheet it sits in.
-	 * Options takes it so an apply can step out of the way of the rebuilt page, and Inbox takes it so a code that
-	 * has been put in the form does not have to be read past the slideout that carried it.
-	 */
+	/** The body of the sheet. The function gets a callback that closes the sheet. */
 	body: (close: () => void) => React.ReactNode;
 }
 
-// The order of the rail. A panel that counts something reads its count off the store below rather than carrying one
-// here, because the count changes and this list does not.
 const PANELS: readonly PanelDefinition[] = [
 	{
 		name: "options",
@@ -149,10 +132,8 @@ export function AppSidebar() {
 
 	const counts: Partial<Record<PanelName, number>> = { inbox: messages.length, wire: log.length };
 	const current = PANELS.find((panel) => panel.name === open);
-	// The sheet stays mounted for the two hundred milliseconds it takes to slide out, and by then `open` is already
-	// null. Hold on to the panel that is leaving so it goes with its own title and body rather than blanking to a bare
-	// "Panel" on the way. Writing the ref during render is the same value for the same `open`, so a double render is
-	// free of consequence.
+	// The sheet stays mounted while it slides out, and `open` is already null. Keep the panel that leaves so it slides
+	// out with its own title and body.
 	const leaving = React.useRef(current);
 	if (current !== undefined) {
 		leaving.current = current;
@@ -196,7 +177,7 @@ export function AppSidebar() {
 												isActive={open === panel.name}
 												tooltip={panel.label}
 												onClick={() => {
-													// On a phone the rail itself is a sheet. Get it out of the way before the panel arrives.
+													// On a phone the rail is itself a sheet. Close it first.
 													if (isMobile) {
 														setOpenMobile(false);
 													}

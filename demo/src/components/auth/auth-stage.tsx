@@ -1,15 +1,8 @@
 /**
  * @module
  *
- * The card in the middle of the page, and the strip of choreography under it.
- *
- * The card has three faces and one shape. Signed out it is a login page. Signed in it is the management surface for
- * the identity behind the tokens. With a flow running it is whatever the library asked for next. Nothing here decides
- * what the library can do: the rows come from {@link FLOWS} filtered on the session, so a flow added to the library
- * shows up without a line changing here.
- *
- * The strip below the card names the tree the running instance was built from, because the card makes no sense without
- * it: the same button asks for a password under one choreography and a one-time code under another.
+ * The card in the middle of the page, and the strip of choreography under it. The card is a login page, a manager of the
+ * identity behind the tokens, or the prompt of a running flow. The rows come from {@link FLOWS} filtered on the session.
  */
 
 import { useState } from "react";
@@ -27,24 +20,18 @@ import { resolvedTree } from "@/lib/format.ts";
 
 import { PromptForm } from "./prompt-form.tsx";
 
-/**
- * How prominent the button of a flow that takes no argument is.
- *
- * Signing in is what a login page is for, and deleting an identity is the one row worth colouring as a warning. Every
- * other flow is an outline button, so a flow this table has never heard of still renders.
- */
+/** How prominent the button of a flow that takes no argument is. Any flow that is absent gets an outline button. */
 const FLOW_VARIANTS: Partial<Record<FlowName, "default" | "outline" | "destructive">> = {
 	"sign-in": "default",
 	"delete": "destructive",
 };
 
-/** The login card, the management card and the prompt card, which are the same card. */
+/** The login card, the management card and the prompt card. */
 export function AuthStage() {
 	const { ready, config, componentNames, channelNames, step, tokens, busy, error, notice } = useDance();
 	const { startFlow, refreshTokens, signOutOthers, signOut } = useDanceActions();
-	// The rail owns the slideout and the strip below only asks for it, which is what the panels context is for.
 	const openOptions = useOpenOptions();
-	// Which component or channel each picker holds. The store owns nothing of it, because nothing has been started yet.
+	// Which component or channel each picker holds.
 	const [picked, setPicked] = useState<Record<string, string>>({});
 
 	if (!ready) {
@@ -74,8 +61,6 @@ export function AuthStage() {
 	const pickedFor = (flow: FlowName) => picked[flow] ?? namesFor(flow)[0] ?? "";
 
 	const preset = PRESETS.find((entry) => entry.id === config.preset);
-	// The hint of a shipped preset is the call that builds it, which is already the shortest true summary. The custom
-	// entry has no such line, so its tree is drawn instead, and a tree the parser refuses shows what it refused.
 	const summary = preset?.choreography ? preset.hint : resolvedTree(config).text;
 
 	return (

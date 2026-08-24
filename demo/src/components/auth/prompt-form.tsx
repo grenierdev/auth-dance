@@ -1,11 +1,8 @@
 /**
  * @module
  *
- * The body of the card while a flow is running.
- *
- * One prompt is on screen at a time and the form knows nothing about which one: it asks {@link promptInputs} what to
- * render, {@link activePrompt} what is being answered, and hands the rest to the store. Every answer goes to the same
- * route, whether the prompt collects a value or proves control of one, which is what the badge shows.
+ * The body of the card while a flow is running. One prompt is on screen at a time. The form asks {@link promptInputs}
+ * what to render and {@link activePrompt} what the owner answers.
  */
 
 import { Badge } from "@/components/ui/badge.tsx";
@@ -18,7 +15,7 @@ import { clock } from "@/lib/format.ts";
 import { FlowTrail } from "./flow-trail.tsx";
 import { PromptField } from "./prompt-fields.tsx";
 
-/** The prompt in progress: the trail, the fields it asks for, and the three things that can be done with them. */
+/** The prompt in progress: the trail, the fields it asks for, and the actions on them. */
 export function PromptForm() {
 	const { step, branch, busy } = useDance();
 	const { submitCurrent, sendCurrent, cancel, setBranch } = useDanceActions();
@@ -47,8 +44,6 @@ export function PromptForm() {
 				<FieldSet>
 					<FieldLegend variant="label">Answer the prompt</FieldLegend>
 					{step.prompt.kind === "input" ? <PromptField prompt={step.prompt} /> : (
-						// A choice is a fork of the choreography: every branch is a whole path, and answering one takes it.
-						// Which is why the picker sits above the fields rather than beside them.
 						<>
 							<FieldDescription>The dance forks here. Pick a branch and answer it.</FieldDescription>
 							<Tabs value={branch ?? ""} onValueChange={(value) => setBranch(String(value))}>
@@ -76,11 +71,7 @@ export function PromptForm() {
 						<div className="flex flex-wrap gap-2">
 							<Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void cancel()}>Abandon</Button>
 							{
-								/*
-								`sendable` is advisory metadata the library never reads, so it alone is not the rule. A prompt worth a
-								send button is one whose recipient the library already knows, which is a one-time code it is about to
-								mail.
-							*/
+								/* `sendable` is advisory metadata the library never reads. A send button needs a known recipient. */
 							}
 							{isSendable(step) && (
 								<Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void sendCurrent()}>

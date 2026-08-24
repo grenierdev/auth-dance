@@ -15,44 +15,29 @@ export interface OtpAuthDanceComponentOptions {
 }
 
 /**
- * A one-time code that the library delivers over a channel. A verifiable component uses it to prove control of
- * its own value, as `EmailAuthDanceComponent` does.
- *
- * The code never reaches the identity record. `sendPrompt` writes it to KV under `otp/<stateId>/<name>`, so one
- * code belongs to one state and one step of it. `verifyPrompt` deletes that key on a match, so a code works one
- * time only. The key-value store drops a code that nobody submits when the time to live ends.
- *
- * This is the only sendable component of the library. The client asks the library to deliver the code, and then
- * submits it the same way it submits any other prompt value.
+ * A one-time code that the library delivers over a channel. A verifiable component uses it to prove control of its own value.
+ * `sendPrompt` writes the code to KV under `otp/<stateId>/<name>`. `verifyPrompt` deletes that key on a match, so a code works
+ * one time only. The key-value store drops a code that nobody submits at the end of the time to live.
  */
 export class OtpAuthDanceComponent implements AuthDanceComponent {
-	/** The record the component contributes to an identity. A `challenge` proves a claim against an identity, and never resolves one. */
+	/** The record kind the component contributes to an identity. A `challenge` proves a claim, and never resolves an identity. */
 	readonly kind: AuthDanceIdentityComponent["kind"] = "challenge";
-	/**
-	 * A verifiable component uses the OTP as its verification. The OTP has none of its own, so
-	 * `verificationComponent` throws instead of returning one.
-	 */
+	/** This component has no verification of its own. */
 	readonly verifiable = false;
 
 	#options: OtpAuthDanceComponentOptions;
 
 	/**
-	 * Sets the channel that carries a one-time code, the length of the code, and the time that the code stays valid.
-	 * @param channel The name of the channel that delivers the code. The identity must hold a channel with this name.
-	 * @param digits The number of digits in each code the component generates. Defaults to `6`.
-	 * @param ttl How long a code stays valid, in seconds. The key-value store drops the code at the end of this time.
-	 * Defaults to `300` seconds.
+	 * @param options The name of the channel that delivers the code, the number of digits in a code (default `6`), and the time
+	 * that a code stays valid, in seconds (default `300`). The identity must hold a channel with the given name.
 	 */
 	constructor(options: OtpAuthDanceComponentOptions) {
 		this.#options = options;
 	}
 
 	/**
-	 * Builds the challenge record the OTP contributes to an identity.
-	 *
-	 * The record holds no code. It keeps the submitted value under `data.recipient`. The code itself stays in KV,
-	 * under the key of the state and the step.
-	 * @param component The name the record carries, which is the name of the step in the choreography.
+	 * Builds the challenge record this component contributes to an identity. The record holds no code.
+	 * @param component The name of the step in the choreography.
 	 * @param value What the owner submitted. The record keeps it under `data.recipient` without a type check.
 	 * @param confirmed Whether the owner already proved control of the value. Defaults to `false`.
 	 * @returns One challenge record.
@@ -73,10 +58,7 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 		];
 	}
 
-	/**
-	 * Describes the code entry the client renders. The prompt is sendable, so the client can ask the library for a
-	 * fresh code before the owner types anything.
-	 */
+	/** Describes the code entry the client renders. The prompt is sendable, so the client can ask for a fresh code. */
 	// deno-lint-ignore require-await
 	async getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput> {
 		return {
@@ -89,10 +71,7 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 
 	/**
 	 * Compares the submitted code with the one in KV, then deletes the key so a code works one time only.
-	 *
-	 * A code that expired and a code the owner already used both give `false`. The key holds nothing in either
-	 * case, and the library treats that as a rejected value, not as a fault of its own.
-	 * @returns `true` when the code matches. `false` in every other case, which includes a value that is not a string.
+	 * @returns `true` when the code matches. `false` in every other case, which includes an expired code and a used code.
 	 */
 	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]> {
 		const value = typeof response === "string" ? response : null;
@@ -111,15 +90,11 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 	}
 
 	/**
-	 * Generates a code, stores it under `otp/<stateId>/<name>` for the configured time to live, and returns the
-	 * message to deliver.
-	 *
-	 * The recipient is the channel the identity holds under the configured channel name. The code therefore goes to
-	 * an address the identity already carries, and never to a value the client supplies. `content["text/x-code"]`
-	 * holds the code. The component ignores `locale` for now, and the subject and the readable bodies are
-	 * placeholders.
-	 * @throws {@link ChannelNotSubscribedError} When the context carries no identity, or the identity holds no
-	 * channel with the configured name.
+	 * Generates a code, stores it under `otp/<stateId>/<name>` for the time to live, and returns the message to deliver.
+	 * The recipient is the channel that the identity holds under the configured channel name, and never a value from the
+	 * client. `content["text/x-code"]` holds the code. The component ignores `locale`.
+	 * @throws {@link ChannelNotSubscribedError} When the context carries no identity, or the identity holds no channel with
+	 * the configured name.
 	 */
 	async sendPrompt(_locale: string, context: AuthDanceComponentContext): Promise<AuthDanceMessage> {
 		const identityChannel = context.identity?.components
@@ -150,10 +125,8 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 	}
 
 	/**
-	 * Always throws. As `verifiable` states, another component uses the OTP as its verification, so the OTP has
-	 * none of its own.
-	 * @throws {@link ComponentNotVerifiableError} On every call. The error message carries the step name from the
-	 * context.
+	 * Always throws, because another component uses this one as its verification.
+	 * @throws {@link ComponentNotVerifiableError} On every call. The message carries the step name.
 	 */
 	// deno-lint-ignore require-await
 	async verificationComponent?(context: AuthDanceComponentContext): Promise<AuthDanceComponent> {

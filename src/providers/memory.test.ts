@@ -7,8 +7,7 @@ describe("Memory provider", () => {
 	testIdentityProvider(() => new MemoryIdentityProvider());
 	testKvProvider(() => new MemoryKvProvider());
 
-	// A lifetime of zero seconds is already over when the write returns, so these two cases need no clock of their
-	// own. The provider runs no timer, so the entry is still in the map at the moment of the read.
+	// A lifetime of zero seconds is already over when the write returns.
 	it("should resolve undefined for an expired key", async () => {
 		using provider = new MemoryKvProvider();
 		await provider.set("otp/state_1/email", "123456", 0);

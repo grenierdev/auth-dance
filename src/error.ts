@@ -1,20 +1,17 @@
 /**
- * Base class for every failure the library reports with a code. `AuthDanceApi`, the HTTP layer, a
- * component and a storage provider each raise one.
+ * The base class for every failure the library reports with a code.
  *
- * `code` is an own enumerable property. `message` and `name` are not, so `JSON.stringify(error)` gives
- * exactly `{"code":"…"}`. `Error` itself keeps `message` non-enumerable, and the constructor below does
- * the same for `name`. Internal detail in the message, such as a component name or a storage failure,
- * therefore never reaches a response.
+ * `code` is an own enumerable property. `message` and `name` are not, so `JSON.stringify(error)` gives exactly
+ * `{"code":"…"}`. Internal detail in the message never reaches a response.
  */
 export abstract class AuthDanceError extends Error {
-	/** The stable code the HTTP layer puts in the `{ "error": CODE }` body. Each subclass fixes it to one literal. */
+	/** The stable code the HTTP layer puts in the `{ "error": CODE }` body. */
 	abstract readonly code: string;
 
 	/**
-	 * Sets `name` to the name of the subclass under construction, and defines it as non-enumerable.
+	 * Makes the error.
 	 *
-	 * @param message Internal detail for the server log, for example the component that failed. It never reaches the client.
+	 * @param message Internal detail for the server log. It never reaches the client.
 	 */
 	constructor(message?: string, options?: ErrorOptions) {
 		super(message, options);
@@ -24,9 +21,8 @@ export abstract class AuthDanceError extends Error {
 
 // Token & session
 /**
- * The access token does not verify, or it carries no `sub` or no numeric `auth_time`. The HTTP layer also
- * raises it when the `Authorization` header is missing or malformed, because both cases mean the request
- * carried no usable access token.
+ * The access token does not verify, or it carries no `sub` or no numeric `auth_time`. The HTTP layer also raises it
+ * when the `Authorization` header is missing or malformed.
  */
 export class InvalidAccessTokenError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"INVALID_ACCESS_TOKEN"}`. */
@@ -37,10 +33,7 @@ export class InvalidRefreshTokenError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"INVALID_REFRESH_TOKEN"}`. */
 	readonly code: "INVALID_REFRESH_TOKEN" = "INVALID_REFRESH_TOKEN";
 }
-/**
- * Storage holds no session under the id a token or a flow state names. The session expired, or a sign-out
- * or an identity delete removed it.
- */
+/** Storage holds no session under the id a token or a flow state names. */
 export class SessionNotFoundError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"SESSION_NOT_FOUND"}`. */
 	readonly code: "SESSION_NOT_FOUND" = "SESSION_NOT_FOUND";
@@ -52,27 +45,22 @@ export class IdentityNotFoundError extends AuthDanceError {
 }
 
 // Choreography state
-/**
- * The state string does not decrypt, carries no expiry, or no longer matches the `AuthDanceState` schema.
- * The client holds the state, so a stale or a forged value is expected input rather than a server fault.
- */
+/** The state string does not decrypt, carries no expiry, or no longer matches the `AuthDanceState` schema. */
 export class InvalidStateError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"INVALID_STATE"}`. */
 	readonly code: "INVALID_STATE" = "INVALID_STATE";
 }
 /**
- * The step does not accept the flow the state carries. `sendPrompt` raises it for a flow that holds nothing to
- * deliver over a channel: a confirmation-only flow such as unenroll, unsubscribe or delete, and a flow that has
- * not collected the value a validation would prove. It also guards against a state `kind` the schema does not
- * know about.
+ * The step does not accept the flow the state carries. `sendPrompt` raises it for a flow that holds nothing to deliver
+ * over a channel, such as a confirmation-only unenroll, unsubscribe or delete.
  */
 export class InvalidStateForFlowError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"INVALID_STATE_FOR_FLOW"}`. */
 	readonly code: "INVALID_STATE_FOR_FLOW" = "INVALID_STATE_FOR_FLOW";
 }
 /**
- * The session is authentic, but its sign-in is older than the elevated window a sensitive action requires.
- * A refresh carries `auth_time` forward unchanged, so a refresh cannot re-open this window.
+ * The sign-in of the session is older than the elevated window a sensitive action requires. A refresh carries
+ * `auth_time` forward unchanged, so a refresh cannot re-open the window.
  */
 export class FreshSignInRequiredError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"FRESH_SIGN_IN_REQUIRED"}`. */
@@ -80,11 +68,8 @@ export class FreshSignInRequiredError extends AuthDanceError {
 }
 
 /**
- * A rate limit bucket has no hit left. `AuthDanceApi` consumes the per-identity buckets, and the HTTP
- * layer consumes the per-address buckets.
- *
- * `retryAfter` is not enumerable, so the HTTP layer can copy it into a `Retry-After` header. The
- * `{ "error": … }` body keeps the one shape every other failure has.
+ * A rate limit bucket has no hit left. `AuthDanceApi` consumes the per-identity buckets, and the HTTP layer consumes
+ * the per-address buckets. `retryAfter` is not enumerable, so it never reaches the `{ "error": … }` body.
  */
 export class RateLimitedError extends AuthDanceError {
 	/** The app layer answers HTTP 429 with this code, and adds `Retry-After` in seconds when `retryAfter` holds a value. */
@@ -93,7 +78,7 @@ export class RateLimitedError extends AuthDanceError {
 	readonly retryAfter: number | undefined;
 
 	/**
-	 * Sets the message to `rate limit exceeded`, and defines `retryAfter` as a non-enumerable property.
+	 * Makes the error.
 	 *
 	 * @param retryAfter Seconds until the bucket accepts a hit again, as the storage provider reports it.
 	 */
@@ -103,11 +88,8 @@ export class RateLimitedError extends AuthDanceError {
 	}
 }
 
-// Configuration — these signal a miswired AuthDanceApiOptions or choreography rather than caller error
-/**
- * A flow named a component that `AuthDanceApiOptions.components` does not hold. The choreography names it
- * on a step, or the caller names it in an `enroll`, `unenroll`, `rotate` or `recover` call.
- */
+// Configuration
+/** A flow named a component that `AuthDanceApiOptions.components` does not hold. */
 export class UnknownComponentError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"UNKNOWN_COMPONENT"}`. */
 	readonly code: "UNKNOWN_COMPONENT" = "UNKNOWN_COMPONENT";
@@ -123,31 +105,27 @@ export class ComponentNotInChoreographyError extends AuthDanceError {
 	readonly code: "COMPONENT_NOT_IN_CHOREOGRAPHY" = "COMPONENT_NOT_IN_CHOREOGRAPHY";
 }
 /**
- * The flow needs a second prompt to prove control of a value, but the component declares no
- * `verificationComponent`. Enroll, rotate, recover and the sign-up validation all need one.
+ * The flow needs a second prompt to prove control of a value, but the component declares no `verificationComponent`.
+ * Enroll, rotate, recover and the sign-up validation all need one.
  */
 export class ComponentNotVerifiableError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"COMPONENT_NOT_VERIFIABLE"}`. */
 	readonly code: "COMPONENT_NOT_VERIFIABLE" = "COMPONENT_NOT_VERIFIABLE";
 }
-/**
- * The caller asked to deliver a prompt or a validation for a component that declares no `sendPrompt`, or
- * whose `sendPrompt` produced no message.
- */
+/** The component declares no `sendPrompt`, or its `sendPrompt` produced no message. */
 export class ComponentNotSendableError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"COMPONENT_NOT_SENDABLE"}`. */
 	readonly code: "COMPONENT_NOT_SENDABLE" = "COMPONENT_NOT_SENDABLE";
 }
 /**
- * `recover` named a component the flow cannot reset. A step of the choreography must carry that name, and
- * another step of it must both resolve an identity and prove control of it, so the caller has something left
- * to identify themselves through.
+ * `recover` named a component the flow cannot reset. One step of the choreography must carry that name, and another
+ * step must both resolve an identity and prove control of it.
  */
 export class ComponentNotRecoverableError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"COMPONENT_NOT_RECOVERABLE"}`. */
 	readonly code: "COMPONENT_NOT_RECOVERABLE" = "COMPONENT_NOT_RECOVERABLE";
 }
-/** `signIn` or `signUp` found no first step, so the choreography has nothing to authenticate against. */
+/** `signIn` or `signUp` found no first step in the choreography. */
 export class ChoreographyEmptyError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"CHOREOGRAPHY_EMPTY"}`. */
 	readonly code: "CHOREOGRAPHY_EMPTY" = "CHOREOGRAPHY_EMPTY";
@@ -165,25 +143,22 @@ export class ComponentNotEnrolledError extends AuthDanceError {
 	readonly code: "COMPONENT_NOT_ENROLLED" = "COMPONENT_NOT_ENROLLED";
 }
 /**
- * The flow already collected a value for this component. Sign-up, enroll, rotate and recover each collect
- * a component exactly once, and every step after that belongs to the validation.
+ * The flow already collected a value for this component. Sign-up, enroll, rotate and recover each collect a component
+ * one time. Every step after that belongs to the validation.
  */
 export class ComponentAlreadyCollectedError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"COMPONENT_ALREADY_COLLECTED"}`. */
 	readonly code: "COMPONENT_ALREADY_COLLECTED" = "COMPONENT_ALREADY_COLLECTED";
 }
-/**
- * The state holds no collected value for the component. The flow reached a validation with nothing to
- * validate, or the component yielded no identification and no challenge under its own name.
- */
+/** The state holds no collected value for the component. */
 export class ComponentNotCollectedError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"COMPONENT_NOT_COLLECTED"}`. */
 	readonly code: "COMPONENT_NOT_COLLECTED" = "COMPONENT_NOT_COLLECTED";
 }
 /**
- * Without the component, no path through the choreography stays completable for the confirmed components
- * that survive. `unenroll` checks this when it starts, and again when the caller confirms. The check counts
- * every component the linked channels take down with the named one, not the named one alone.
+ * Without the component, no path through the choreography stays completable for the confirmed components that survive.
+ * `unenroll` checks this at the start and again at the confirmation. The check counts every component the linked
+ * channels take down with the named one.
  */
 export class WouldLockOutError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"WOULD_LOCK_OUT"}`. */
@@ -200,10 +175,9 @@ export class ChannelNotSubscribedError extends AuthDanceError {
 	readonly code: "CHANNEL_NOT_SUBSCRIBED" = "CHANNEL_NOT_SUBSCRIBED";
 }
 /**
- * A removal would leave an enrolled record naming a component that is gone, and the library cannot take that
- * record down with it. `unenroll` and `unsubscribe` both follow `linkedTo` in either direction and remove the
- * whole linked set, so neither of them raises this on a link it can resolve. It stays the code for a link a
- * removal cannot cascade away.
+ * A removal would leave an enrolled record that names a component which is gone, and the library cannot take that
+ * record down with it. `unenroll` and `unsubscribe` follow `linkedTo` in both directions, so a link they resolve
+ * never raises this.
  */
 export class ComponentInUseError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"COMPONENT_IN_USE"}`. */
@@ -214,7 +188,7 @@ export class IdentificationTakenError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"IDENTIFICATION_TAKEN"}`. */
 	readonly code: "IDENTIFICATION_TAKEN" = "IDENTIFICATION_TAKEN";
 }
-/** `unenroll`, `unsubscribe` and `delete` each end with one explicit confirmation. The caller submitted a value other than `true`. */
+/** `unenroll`, `unsubscribe` and `delete` each end with one explicit confirmation. The owner submitted a value other than `true`. */
 export class ConfirmationRequiredError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"CONFIRMATION_REQUIRED"}`. */
 	readonly code: "CONFIRMATION_REQUIRED" = "CONFIRMATION_REQUIRED";
@@ -222,33 +196,24 @@ export class ConfirmationRequiredError extends AuthDanceError {
 
 // Verification
 /**
- * A component rejected the submitted value. The choreography never advances after this.
- *
- * A sign-in raises it for a value that does not verify, a wrong password for example. A flow that collects a
- * value raises it for a value the component refuses to store by its own rules. `PasswordAuthDanceComponent`
- * refuses a value that is not a string, an empty one, one that matches the password it replaces, and one that
- * matches the value that identifies its owner.
+ * A component rejected the submitted value, a wrong password for example. The choreography does not advance. A flow
+ * that collects a value also raises it for a value the component refuses to store by its own rules.
  */
 export class InvalidPromptValueError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"INVALID_PROMPT_VALUE"}`. */
 	readonly code: "INVALID_PROMPT_VALUE" = "INVALID_PROMPT_VALUE";
 }
 /**
- * The validation rejected the submitted value, for example a wrong one-time code. Nothing becomes confirmed
- * and the flow does not advance.
+ * The validation rejected the submitted value, a wrong one-time code for example. Nothing becomes confirmed and the
+ * flow does not advance.
  */
 export class InvalidValidationValueError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"INVALID_VALIDATION_VALUE"}`. */
 	readonly code: "INVALID_VALIDATION_VALUE" = "INVALID_VALIDATION_VALUE";
 }
 /**
- * A step needs an identity, but no step resolved one.
- *
- * A sign-in needs an identification to resolve the identity before a challenge can prove a claim against
- * it. The prompt verified, it yielded no identity, and the state holds none either.
- *
- * A recovery identifies through a component that resolves the identity on its own. That component raises this
- * error for a rejected value too, because the step accepts only an identity id.
+ * A step needs an identity, but no step resolved one and the state holds none. A recovery component that resolves the
+ * identity on its own also raises this for a rejected value, because the step accepts only an identity id.
  */
 export class IdentityNotResolvedError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"IDENTITY_NOT_RESOLVED"}`. */
@@ -259,17 +224,15 @@ export class IdentityMismatchError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"IDENTITY_MISMATCH"}`. */
 	readonly code: "IDENTITY_MISMATCH" = "IDENTITY_MISMATCH";
 }
-/** A recovery step needs the identity, but the caller has not answered the identification yet. */
+/** A recovery step needs the identity, but the owner has not answered the identification yet. */
 export class RecoveryNotIdentifiedError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"RECOVERY_NOT_IDENTIFIED"}`. */
 	readonly code: "RECOVERY_NOT_IDENTIFIED" = "RECOVERY_NOT_IDENTIFIED";
 }
 
 /**
- * The wrapper for anything raised inside `AuthDanceApi` that is not an `AuthDanceError`: jose, valibot, a
- * storage provider, or a plain bug. `AuthDanceApi` never returns it as a result. The error boundary of
- * each method raises it as an exception, and puts the original failure in `cause` for the server log. A
- * caller that sees this code met a server fault, not a rule it can act on.
+ * The wrapper for anything raised inside `AuthDanceApi` that is not an `AuthDanceError`. The error boundary of each
+ * method raises it as an exception, and puts the original failure in `cause` for the server log.
  */
 export class AuthDanceUnknownError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"UNKNOWN"}`. It answers the same for any error that is not an `AuthDanceError`. */
@@ -277,12 +240,8 @@ export class AuthDanceUnknownError extends AuthDanceError {
 }
 
 /**
- * Every code, mapped to the class that carries it.
- *
- * `createAuthDanceApp` builds the `{ error: CODE }` picklist of its OpenAPI error response from
- * `Object.keys(Errors)`. The documented codes therefore stay derived instead of restated. Register a new
- * subclass here and it reaches the specification. Each entry repeats the code its own class already
- * declares, so no entry needs a comment of its own.
+ * Every code, mapped to the class that carries it. `createAuthDanceApp` builds the `{ error: CODE }` picklist of its
+ * OpenAPI error response from `Object.keys(Errors)`, so register a new subclass here.
  */
 export const Errors = {
 	CHANNEL_ALREADY_SUBSCRIBED: ChannelAlreadySubscribedError,

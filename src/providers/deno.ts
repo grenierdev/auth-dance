@@ -32,7 +32,6 @@ export class DenoIdentityProvider implements AuthDanceIdentityProvider {
 		return this.get(entry.value);
 	}
 
-	// set: (identity: AuthDanceIdentity) => Promise<void>;
 	async set(identity: AuthDanceIdentity): Promise<void> {
 		const entry = await this.#kv.get<AuthDanceIdentity>(["identity", identity.id]);
 		const keys: Deno.KvKey[] = [];
@@ -41,7 +40,7 @@ export class DenoIdentityProvider implements AuthDanceIdentityProvider {
 				keys.push(["identification", component.component, component.identification]);
 			}
 		}
-		// `getMany` reads at most 10 keys per call, so an identity with more identifications needs more calls.
+		// `getMany` reads at most 10 keys per call.
 		const indexEntries: Deno.KvEntryMaybe<string>[] = [];
 		for (let i = 0; i < keys.length; i += 10) {
 			indexEntries.push(...await this.#kv.getMany<string[]>(keys.slice(i, i + 10)));
@@ -67,7 +66,7 @@ export class DenoIdentityProvider implements AuthDanceIdentityProvider {
 				atomic = atomic.set(["identification", component.component, component.identification], identity.id);
 			}
 		}
-		// A failed check means another writer took one of these keys between the read and the commit.
+		// A failed check means another writer took one of these keys after the read.
 		const result = await atomic.commit();
 		if (!result.ok) {
 			throw new IdentificationTakenError();

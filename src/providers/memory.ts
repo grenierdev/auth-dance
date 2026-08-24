@@ -12,24 +12,14 @@ import type {
 import { AuthDanceStorage } from "../storage.ts";
 
 /**
- * An `AuthDanceIdentityProvider` that holds every identity in a `Map`.
- *
- * The map lives in the process memory. A process restart erases every identity. Use this provider for
- * tests and local examples, not for production.
- *
- * `set` stores a clone and every read returns a clone. A caller therefore cannot change stored data
- * through a reference it still holds.
+ * An `AuthDanceIdentityProvider` that holds every identity in a `Map`. A process restart erases every identity.
+ * Use this provider for tests, not for production. `set` stores a clone, and every read returns a clone.
  */
 export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Disposable {
 	#storage: Map<string, AuthDanceIdentity>;
 	#identificationIndex: Map<string, string>;
 
-	/**
-	 * Creates a provider with an empty map, or with the identities that `storage` holds.
-	 * @param storage Identities to preload, as `[id, identity]` pairs. The provider copies the pairs into
-	 * its own map. It does not clone the identity objects themselves. This seed lets a test start from a
-	 * known set of identities.
-	 */
+	/** Creates a provider with the identities that `storage` holds, as `[id, identity]` pairs. The provider does not clone them. */
 	constructor(storage?: Iterable<[string, AuthDanceIdentity]>) {
 		this.#storage = new Map(storage);
 		this.#identificationIndex = new Map(
@@ -41,17 +31,14 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 		);
 	}
 
-	/** Empties the map. A `using` declaration calls this at the end of the block. */
+	/** Empties the map. */
 	[Symbol.dispose](): void {
 		this.#storage.clear();
 	}
 
 	/**
 	 * Lists the stored identities in insertion order.
-	 *
-	 * @param cursor The id of the first identity of the page. Without it, the page starts at the first
-	 * identity. An id the map does not hold gives an empty page.
-	 * @param limit The number of identities to return at most. Without it, the page runs to the last identity.
+	 * @param cursor The id of the first identity of the page. An unknown id gives an empty page.
 	 * @returns A clone of each identity in the range.
 	 */
 	list(cursor?: string, limit?: number): Promise<AuthDanceIdentity[]> {
@@ -66,24 +53,13 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 		return Promise.resolve(results);
 	}
 
-	/**
-	 * Reads one identity by id.
-	 * @returns A clone of the stored identity, or `undefined` when the map holds no such id.
-	 */
+	/** Reads one identity by id. Returns a clone, or `undefined` when the map holds no such id. */
 	get(id: string): Promise<AuthDanceIdentity | undefined> {
 		const identity = this.#storage.get(id);
 		return Promise.resolve(identity ? structuredClone(identity) : undefined);
 	}
 
-	/**
-	 * Finds the identity that carries an identification component with this value.
-	 *
-	 * The provider reads the stored identities one by one until a component matches both `type` and
-	 * `identification`. The match ignores the `confirmed` flag of the component.
-	 * @param component The component name of the identification, for example `email`.
-	 * @param identification The resolved value, for example the email address itself.
-	 * @returns A clone of the first identity that matches, or `undefined`.
-	 */
+	/** Finds the identity that carries an identification component with this value. The match ignores the `confirmed` flag. */
 	getByIdentification(component: string, identification: string): Promise<AuthDanceIdentity | undefined> {
 		const identityId = this.#identificationIndex.get(`${component}:${identification}`);
 		if (identityId) {
@@ -130,35 +106,24 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 	}
 }
 
-// One rule for the deadline of an entry: the entry dies at the deadline. `get`, `list` and `clearExpired` all
-// read it through this function, so the three never disagree about one entry.
 function expired(item: { expiration?: number }, now: number): boolean {
 	return item.expiration !== undefined && item.expiration <= now;
 }
 
 /**
- * An `AuthDanceKvProvider` that holds every key in a `Map`.
- *
- * The map lives in the process memory. A process restart erases every entry. Use this provider for tests
- * and local examples, not for production.
- *
- * The provider runs no timer. An expired entry stays in the map until a read of its own key, `clearExpired`,
- * `unset` or dispose removes it. `get` and `list` both ignore an expired entry, so the map never reports one.
+ * An `AuthDanceKvProvider` that holds every key in a `Map`. A process restart erases every entry. Use this provider for
+ * tests, not for production. The provider runs no timer. An expired entry stays in the map until a read, `clearExpired`,
+ * `unset` or dispose removes it. `get` and `list` ignore an expired entry.
  */
 export class MemoryKvProvider implements AuthDanceKvProvider, Disposable {
 	#storage = new Map<string, { value: string; expiration?: number }>();
 
-	/** Empties the map. A `using` declaration calls this at the end of the block. */
+	/** Empties the map. */
 	[Symbol.dispose](): void {
 		this.#storage.clear();
 	}
 
-	/**
-	 * Removes every entry whose expiration already passed.
-	 *
-	 * Nothing in this library calls this method, and no test calls it either. It is a manual hook for a
-	 * caller that wants to remove dead entries, because the provider runs no timer of its own.
-	 */
+	/** Removes every entry whose expiration already passed. The library never calls this method. */
 	clearExpired(): void {
 		const now = Date.now();
 		for (const [key, data] of this.#storage) {
@@ -168,10 +133,7 @@ export class MemoryKvProvider implements AuthDanceKvProvider, Disposable {
 		}
 	}
 
-	/**
-	 * Reads the value of one key. A read of an expired key also removes the entry from the map.
-	 * @returns The stored value, or `undefined` when the map holds no such key, or when the entry expired.
-	 */
+	/** Reads the value of one key. A read of an expired key removes the entry. Returns `undefined` for an unknown or expired key. */
 	get(key: string): Promise<string | undefined> {
 		const item = this.#storage.get(key);
 		if (!item) {
@@ -185,12 +147,8 @@ export class MemoryKvProvider implements AuthDanceKvProvider, Disposable {
 	}
 
 	/**
-	 * Lists the keys that start with `prefix`, in insertion order. The values stay in the map.
-	 *
-	 * The listing drops an expired key, because `get` resolves `undefined` for one. An entry that expires
-	 * between this call and that read is still normal: the two are two calls.
-	 * @param offset The number of keys to skip. Without it, the page starts at the first key.
-	 * @param limit The number of keys to return at most. Without it, the page runs to the last key.
+	 * Lists the keys that start with `prefix`, in insertion order. The listing drops an expired key.
+	 * @param limit The maximum number of keys to return.
 	 */
 	list(prefix: string, offset?: number, limit?: number): Promise<string[]> {
 		const now = Date.now();
@@ -203,9 +161,7 @@ export class MemoryKvProvider implements AuthDanceKvProvider, Disposable {
 
 	/**
 	 * Writes a value under a key, and replaces an earlier value for the same key.
-	 * @param ttl Lifetime of the entry in seconds, as the `AuthDanceKvProvider` contract states. The provider
-	 * keeps a millisecond clock, so it multiplies the count before it stores the deadline. Omit `ttl` to keep
-	 * the entry until `unset` or until dispose.
+	 * @param ttl Lifetime of the entry in seconds. Omit `ttl` to keep the entry until `unset` or dispose.
 	 */
 	set(key: string, value: string, ttl?: number): Promise<void> {
 		const now = new Date().getTime();
@@ -223,31 +179,22 @@ export class MemoryKvProvider implements AuthDanceKvProvider, Disposable {
 }
 
 /**
- * An `AuthDanceRateLimiterProvider` that counts the hits of each bucket in a `Map`.
- *
- * The map lives in the process memory. A process restart erases every counter. Use this provider for
- * tests and local examples, not for production. Each process keeps its own counters, so two processes
- * never share one bucket.
+ * An `AuthDanceRateLimiterProvider` that counts the hits of each bucket in a `Map`. A process restart erases every
+ * counter. Use this provider for tests, not for production. Each process keeps its own counters.
  */
 export class MemoryRateLimiterProvider implements AuthDanceRateLimiterProvider, Disposable {
 	#storage = new Map<string, { count: number; expiration: number }>();
 
-	/** Empties the map, and with it every counter. A `using` declaration calls this at the end of the block. */
+	/** Empties the map, and with it every counter. */
 	[Symbol.dispose](): void {
 		this.#storage.clear();
 	}
 
 	/**
 	 * Counts one hit against the bucket of `key` and reports whether the caller may continue.
-	 *
-	 * The first hit opens a fixed window and sets the counter to 1. A later hit inside the window adds 1 to
-	 * the counter while the counter is below `limit`. The first hit after the expiration opens a new window.
 	 * @param limit Number of hits that one window allows.
-	 * @param window Length of the window in milliseconds. The provider adds this number to the current
-	 * clock time. The two callers in this library multiply the configured seconds by 1000 before the call.
-	 * @returns `allowed: false` once the bucket is full. For a `limit` of 1 or more the counter stops at
-	 * `limit`, so `retryAfter` is always `undefined`. For a `limit` of 0 or less the first hit already sets
-	 * the counter above `limit`. A later hit in the same window then carries `retryAfter` in seconds.
+	 * @param window Length of the window in milliseconds.
+	 * @returns `allowed: false` once the bucket is full. `retryAfter` is in seconds, and is `undefined` for a `limit` of 1 or more.
 	 */
 	limit(key: string, limit: number, window: number): Promise<AuthDanceRateLimiterResult> {
 		const now = Date.now();
@@ -271,34 +218,29 @@ export class MemoryRateLimiterProvider implements AuthDanceRateLimiterProvider, 
 }
 
 /**
- * An `AuthDanceChannel` that keeps each message in an array instead of delivering it.
- *
- * The array lives in the process memory. A process restart erases every message. Use this channel for
- * tests and local examples, not for production. A test reads `messages` to get the code that a component
- * sent. 🥔
+ * An `AuthDanceChannel` that keeps each message in an array and does not deliver it. A process restart erases every
+ * message. Use this channel for tests, not for production.
  *
  * @example
  * ```ts
  * using channel = new MemoryAuthDanceChannel("email");
- * // run a flow that sends a code
  * const code = channel.messages[0].content["text/x-code"];
  * ```
  */
 export class MemoryAuthDanceChannel implements AuthDanceChannel, Disposable {
 	#type: string;
-	/** Each message that `sendMessage` received, in call order. `Symbol.dispose` replaces it with an empty array. */
+	/** Each message that `sendMessage` received, in call order. */
 	messages: AuthDanceMessage[] = [];
 
 	/**
 	 * Creates a channel with an empty `messages` array.
-	 * @param type The prompt input type that `getPrompt` reports, for example `email` or `phone`. The channel
-	 * keeps this value and writes it into every prompt that `getPrompt` builds.
+	 * @param type The prompt input type that `getPrompt` reports, for example `email`.
 	 */
 	constructor(type: string) {
 		this.#type = type;
 	}
 
-	/** Replaces `messages` with an empty array. A `using` declaration calls this at the end of the block. */
+	/** Replaces `messages` with an empty array. */
 	[Symbol.dispose](): void {
 		this.messages = [];
 	}
@@ -309,12 +251,7 @@ export class MemoryAuthDanceChannel implements AuthDanceChannel, Disposable {
 		return Promise.resolve();
 	}
 
-	/**
-	 * Builds the prompt that the client renders for this channel.
-	 *
-	 * The prompt takes its name from `context` and its type from the constructor. It is always `sendable`,
-	 * so a client may request a message from the channel.
-	 */
+	/** Builds the prompt that the client renders for this channel. The prompt is always `sendable`. */
 	// deno-lint-ignore require-await
 	async getPrompt(context: AuthDanceChannelContext): Promise<AuthDancePromptInput> {
 		return {
@@ -326,12 +263,7 @@ export class MemoryAuthDanceChannel implements AuthDanceChannel, Disposable {
 	}
 
 	/**
-	 * Builds the channel component that a flow then stores on the identity.
-	 *
-	 * The channel writes `value` under the `sms` key of `data` for every channel name, because this test
-	 * double keeps one shape for all of them.
-	 * @param channel The channel name to record on the identity.
-	 * @param value The recipient, for example an email address or a phone number.
+	 * Builds the channel component that a flow stores on the identity. The channel writes `value` under the `sms` key of `data`.
 	 * @param confirmed Whether control of the recipient is already proven. The default is `false`.
 	 */
 	// deno-lint-ignore require-await

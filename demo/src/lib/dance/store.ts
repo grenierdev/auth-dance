@@ -1,24 +1,10 @@
 /**
  * @module
  *
- * Everything the page knows, in one observable record.
+ * Everything the page knows, in one observable record. Only {@link useDance} knows React exists.
  *
- * The store owns the running instance, the flow in progress, the values on screen, the tokens, the inbox and the wire
- * log. It is a plain class with a subscribe and a snapshot, so nothing but {@link useDance} knows React exists.
- *
- * Two things differ from the reference demo, and both come from React rather than from the library.
- *
- * The first is the fields. The reference read a value straight out of the DOM at submit time, which let it rebuild the
- * whole stage after an action without losing what was typed. Here every field is controlled state, keyed by prompt
- * name, seeded when a step arrives and dropped when it advances. A checkbox that nobody touched therefore submits
- * `false`, exactly as an unchecked box did, and the refusal it earns is part of what the demo shows.
- *
- * The second is when the page moves. The reference rendered once, at the end of an action, because rebuilding the
- * stage mid-action would have emptied the form it was reading. Controlled fields remove that reason, so the store
- * notifies as soon as an action starts and again as each hook reports.
- *
- * The module is safe to evaluate on the server: it touches no storage and builds no instance until {@link useDance}
- * runs its effect, which only ever happens in a browser.
+ * Every field of a prompt is controlled state, keyed by prompt name. A checkbox that nobody touched submits `false`.
+ * The module builds no instance until {@link useDance} runs its effect, so a server pass is safe.
  */
 
 import { useEffect, useSyncExternalStore } from "react";
@@ -45,15 +31,15 @@ import { activePrompt, type FlowName, FLOWS, promptInputs, type Step } from "./f
 
 /** One message a channel took, as the inbox lists it. */
 export interface Message extends DeliveredMessage {
-	/** A number that rises with every message and every log entry, which is what a list keys on. */
+	/** A number that rises with every message and every log entry. A list keys on it. */
 	id: number;
 	/** When the channel took it. */
 	at: Date;
 }
 
-/** One line of the wire log: a call into the library, or something a hook reported while a call was running. */
+/** One line of the wire log: a call into the library, or a hook report. */
 export interface LogEntry {
-	/** A number that rises with every message and every log entry, which is what a list keys on. */
+	/** A number that rises with every message and every log entry. A list keys on it. */
 	id: number;
 	/** When the line was written. */
 	at: Date;
@@ -71,7 +57,7 @@ export interface LogEntry {
 	response?: unknown;
 }
 
-/** The whole state of the page. Every field is replaced, never mutated, so a snapshot stays the snapshot it was. */
+/** The whole state of the page. Every field is replaced, never mutated. */
 export interface DanceState {
 	/** Whether the first instance has been built. Every panel shows a placeholder until it has. */
 	ready: boolean;
@@ -99,7 +85,7 @@ export interface DanceState {
 	messages: Message[];
 	/** Every call and every hook report, newest first. */
 	log: LogEntry[];
-	/** Whether an action is running. Only the progress bar moves while it is. */
+	/** Whether an action is running. */
 	busy: boolean;
 	/** What the last action refused with: the code, and the sentence for it when there is one. */
 	error: string | undefined;
@@ -107,14 +93,9 @@ export interface DanceState {
 	notice: string | undefined;
 }
 
-/** Everything a control can do. Each one is bound, so a panel may destructure it. */
+/** Everything a control can do. Every action is bound. */
 export interface DanceActions {
-	/**
-	 * Runs one action, and turns whatever it throws into the alert at the top of the stage.
-	 *
-	 * A second call while one is running does nothing. Use it to wrap a composite of your own; every action below
-	 * already wraps itself.
-	 */
+	/** Runs one action, and turns whatever it throws into the alert. A second call while one is running does nothing. */
 	act(action: () => void | Promise<void>): Promise<void>;
 	/** Loads the stored config and builds the first instance. Idempotent, and called for you by {@link useDance}. */
 	start(): Promise<void>;
@@ -124,9 +105,9 @@ export interface DanceActions {
 	startFlow(flow: FlowName, argument?: string): Promise<void>;
 	/** Answers the current prompt and takes whatever comes back: the next prompt, the tokens, or a plain success. */
 	submitCurrent(): Promise<void>;
-	/** Asks the library to deliver the current prompt over its channel, which is how a one-time code arrives. */
+	/** Asks the library to deliver the current prompt over its channel. */
 	sendCurrent(): Promise<void>;
-	/** Drops the flow in progress. The library keeps nothing for it, so there is nothing to tell it. */
+	/** Drops the flow in progress. */
 	cancel(): Promise<void>;
 	/** Ends this session. */
 	signOut(): Promise<void>;
@@ -142,24 +123,20 @@ export interface DanceActions {
 	clearLog(): Promise<void>;
 	/**
 	 * Fills the one-time code field of the current prompt with a code out of the inbox.
-	 *
-	 * It stays outside {@link act}, because taking a code changes nothing else and must not clear the alert the owner
-	 * is reading.
-	 *
-	 * @returns The prompt name it filled, so the panel can move focus there, or nothing when the step has no code field.
+	 * @returns The prompt name it filled, or nothing when the step has no code field.
 	 */
 	useCode(code: string): string | undefined;
 	/** Writes one field of the current prompt. */
 	setPromptValue(name: string, value: unknown): void;
 	/** Picks a branch of a choice prompt, by name. */
 	setBranch(name: string): void;
-	/** Stores a config and rebuilds on it. A broken custom tree is refused before the running instance is thrown away. */
+	/** Stores a config and rebuilds on it. It refuses a broken custom tree before it drops the running instance. */
 	applyConfig(next: Config): Promise<void>;
 	/** Goes back to the shipped config and rebuilds on it. */
 	restoreDefaults(): Promise<void>;
 }
 
-/** The state before anything is built. It is also the snapshot a server pass reads, so hydration starts from it. */
+/** The state before anything is built. A server pass reads it, so hydration starts from it. */
 const INITIAL: DanceState = {
 	ready: false,
 	config: defaultConfig(),
@@ -179,12 +156,7 @@ const INITIAL: DanceState = {
 	notice: undefined,
 };
 
-/**
- * What a field holds before the owner touches it.
- *
- * The library takes the boolean `true` for a confirmation and nothing else, so a confirmation starts at `false` on
- * purpose: that is what an unchecked box submitted, and the refusal it earns is part of what this demo shows.
- */
+/** What a field holds before the owner touches it. A confirmation starts at `false`. */
 function emptyValues(step: Step): Record<string, unknown> {
 	const values: Record<string, unknown> = {};
 	for (const input of promptInputs(step.prompt)) {
@@ -193,12 +165,10 @@ function emptyValues(step: Step): Record<string, unknown> {
 	return values;
 }
 
-/** The branch a choice prompt arrives on. A single input needs none. */
 function firstBranch(step: Step): string | undefined {
 	return step.prompt.kind === "choice" ? promptInputs(step.prompt)[0]?.name : undefined;
 }
 
-/** Turns whatever an action threw into the sentence the alert shows. */
 function describe(cause: unknown): string {
 	if (cause instanceof ApiError) {
 		const hint = ERROR_HINTS[cause.code];
@@ -207,13 +177,7 @@ function describe(cause: unknown): string {
 	return cause instanceof Error ? cause.message : String(cause);
 }
 
-/**
- * The page, as a store.
- *
- * Nothing constructs an instance of the library until {@link start} runs, so the class itself is safe to build during
- * a server pass. `subscribe`, `getSnapshot` and every action are bound fields, which is what `useSyncExternalStore`
- * and a destructuring panel both need.
- */
+/** The page, as a store. Nothing constructs an instance of the library until {@link start} runs. */
 export class DanceStore implements DanceActions {
 	#state: DanceState = INITIAL;
 	#listeners = new Set<() => void>();
@@ -221,7 +185,7 @@ export class DanceStore implements DanceActions {
 	#counter = 0;
 	#started = false;
 
-	/** Where the channels and the hooks of the running instance report. It is the reason `buildDance` takes a sink. */
+	/** Where the channels and the hooks of the running instance report. */
 	#sink: DanceSink = {
 		delivered: (message) => this.#deliver(message),
 		reported: (event) => this.#report(event),
@@ -235,10 +199,10 @@ export class DanceStore implements DanceActions {
 		};
 	};
 
-	/** The current state. The reference changes on every write and only then, which is what React compares. */
+	/** The current state. The reference changes on every write. */
 	readonly getSnapshot = (): DanceState => this.#state;
 
-	/** The state a server pass reads. It is the state a browser starts from, so the first paint matches. */
+	/** The state a server pass reads. */
 	readonly getServerSnapshot = (): DanceState => INITIAL;
 
 	readonly act = async (action: () => void | Promise<void>): Promise<void> => {
@@ -290,8 +254,6 @@ export class DanceStore implements DanceActions {
 				throw new Error("Pick which component to answer.");
 			}
 			const value = this.#state.values[target.name];
-			// One route for every step. A prompt that collects a value and a prompt that proves control of one both
-			// go here, and the state the library handed back says which of the two this answer is.
 			const result = await this.#post<StateBody | TokensBody | ResultBody>("/submit-prompt", {
 				name: target.name,
 				value,
@@ -404,7 +366,7 @@ export class DanceStore implements DanceActions {
 
 	readonly applyConfig = (next: Config): Promise<void> =>
 		this.act(async () => {
-			currentChoreography(next); // Refuses a broken custom tree before the running instance is thrown away.
+			currentChoreography(next);
 			saveConfig(next);
 			this.#patch({ config: next });
 			await this.#rebuild();
@@ -420,7 +382,6 @@ export class DanceStore implements DanceActions {
 			this.#patch({ notice: "Back to the defaults." });
 		});
 
-	/** Replaces the state and tells every listener. */
 	#patch(partial: Partial<DanceState>): void {
 		this.#state = { ...this.#state, ...partial };
 		for (const listener of this.#listeners) {
@@ -428,22 +389,18 @@ export class DanceStore implements DanceActions {
 		}
 	}
 
-	/** Takes a step, and seeds the fields it puts on screen. */
 	#enter(step: Step): void {
 		this.#patch({ step, values: emptyValues(step), branch: firstBranch(step) });
 	}
 
-	/** Ends the flow in progress, and drops the fields with it. */
 	#leave(partial: Partial<DanceState>): void {
 		this.#patch({ step: undefined, values: {}, branch: undefined, ...partial });
 	}
 
-	/** The locale the browser reports, which the library falls back to `en` without. */
 	#locale(): string {
 		return navigator.language || "en";
 	}
 
-	/** The running instance, or a refusal that says the page has not booted yet. */
 	#require(): Dance {
 		if (!this.#dance) {
 			throw new Error("The library is not built yet.");
@@ -451,12 +408,7 @@ export class DanceStore implements DanceActions {
 		return this.#dance;
 	}
 
-	/**
-	 * Builds the instance and empties everything the old one held.
-	 *
-	 * It runs outside {@link act} so that a caller already inside one can rebuild without deadlocking on the busy flag.
-	 * {@link rebuild} is the wrapped form.
-	 */
+	/** Builds the instance and empties everything the old one held. It runs outside {@link act}. */
 	async #rebuild(): Promise<void> {
 		const config = this.#state.config;
 		const dance = buildDance(currentChoreography(config), config.durations, this.#sink);
@@ -482,10 +434,6 @@ export class DanceStore implements DanceActions {
 
 	/**
 	 * Sends one request into the library and records it.
-	 *
-	 * The caller is a header and never a field of the body, because that is where the library reads it. The fake
-	 * address is what gives a session an address to show.
-	 *
 	 * @throws {ApiError} For any status other than 200, carrying the code the body names.
 	 */
 	async #post<T>(path: string, body?: unknown, authenticated = false): Promise<T> {
@@ -493,7 +441,6 @@ export class DanceStore implements DanceActions {
 		const headers: Record<string, string> = {
 			"content-type": "application/json",
 			"accept-language": this.#locale(),
-			// The library reads the caller off the connection and never off the body, so these two are headers.
 			"cf-connecting-ip": CALLER_ADDRESS,
 			"user-agent": navigator.userAgent,
 		};
@@ -525,12 +472,10 @@ export class DanceStore implements DanceActions {
 		return payload as T;
 	}
 
-	/** Files a message a channel took, newest first. */
 	#deliver(message: DeliveredMessage): void {
 		this.#patch({ messages: [{ id: ++this.#counter, at: new Date(), ...message }, ...this.#state.messages] });
 	}
 
-	/** Records what a hook reported, beside the calls in the wire log. */
 	#report(event: ReportedHook): void {
 		this.#write({
 			id: ++this.#counter,
@@ -541,7 +486,6 @@ export class DanceStore implements DanceActions {
 		});
 	}
 
-	/** Puts one line at the top of the wire log. */
 	#write(entry: LogEntry): void {
 		this.#patch({ log: [entry, ...this.#state.log] });
 	}
@@ -549,24 +493,13 @@ export class DanceStore implements DanceActions {
 
 let store: DanceStore | undefined;
 
-/**
- * The one store of the page.
- *
- * It is a singleton because the instance it owns is one: rebuilding on a second store would leave two libraries
- * writing into two sets of memory providers. Constructing it is free and touches nothing, so calling this during a
- * server pass is safe.
- */
+/** The one store of the page. Construction touches nothing, so a server pass can call it. */
 export function getDanceStore(): DanceStore {
 	store ??= new DanceStore();
 	return store;
 }
 
-/**
- * Reads the state of the page, and boots it on the first mount.
- *
- * The effect that boots is what keeps the library out of the server pass: a route module still evaluates there, but an
- * effect never runs.
- */
+/** Reads the state of the page, and boots it on the first mount. */
 export function useDance(): DanceState {
 	const dance = getDanceStore();
 	const state = useSyncExternalStore(dance.subscribe, dance.getSnapshot, dance.getServerSnapshot);
@@ -576,7 +509,7 @@ export function useDance(): DanceState {
 	return state;
 }
 
-/** The actions of the page. They never change, so a panel may destructure them and lean on them in a dependency list. */
+/** The actions of the page. The reference never changes. */
 export function useDanceActions(): DanceActions {
 	return getDanceStore();
 }

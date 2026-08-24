@@ -6,28 +6,18 @@ import { AuthDanceSession } from "./session.ts";
 /**
  * The next move of the dance, as the client receives it.
  *
- * `signIn`, `signUp`, `enroll`, `unenroll`, `rotate`, `recover`, `subscribe`, `unsubscribe` and `delete` all answer with
- * this shape. `submitPrompt` answers with it too while a step remains. The matching HTTP routes
- * are `/sign-in`, `/sign-up`, `/enroll`, `/unenroll`, `/rotate`, `/recover`, `/subscribe`, `/unsubscribe`, `/delete`,
- * `/submit-prompt`.
+ * `signIn`, `signUp`, `enroll`, `unenroll`, `rotate`, `recover`, `subscribe`, `unsubscribe` and `delete` answer with
+ * this shape. `submitPrompt` answers with it while a step remains.
  */
 export interface AuthDanceResponseState {
-	/**
-	 * The in-progress dance, encrypted as a JWE (A256GCM).
-	 *
-	 * The client keeps this opaque string and sends it with the next call, so the server holds nothing for a
-	 * half-finished flow.
-	 */
+	/** The in-progress dance, encrypted as a JWE (A256GCM). The client sends this opaque string with the next call. */
 	state: string;
-	/**
-	 * What the client renders next: one input, or a choice between the branches of the choreography.
-	 */
+	/** What the client renders next: one input, or a choice between the branches of the choreography. */
 	prompt: AuthDancePrompt;
 	/**
 	 * The moment the flow expires.
 	 *
-	 * The flow duration under `api.durations` sets this deadline when the flow starts, and the encrypted `state` carries
-	 * the same deadline. Every later step re-encrypts the state with that deadline, so an answer to a prompt never
+	 * The flow duration under `api.durations` sets this deadline when the flow starts. An answer to a prompt never
 	 * extends the flow. The HTTP layer serializes the value to an ISO 8601 string.
 	 */
 	expireAt: Date;
@@ -52,14 +42,11 @@ export const AuthDanceResponseState: v.GenericSchema<AuthDanceResponseState> = v
 /**
  * What a completed sign-in or sign-up mints, and what a refresh returns again.
  *
- * `submitPrompt` answers with this shape on the last step of a sign-in or a sign-up, whether that step collects a value
- * or validates one only, because a sign-in carries no validation step. `refreshToken` answers with it as
- * well. The matching HTTP routes are `/submit-prompt` and `/refresh-token`.
+ * `submitPrompt` answers with this shape on the last step of a sign-in or a sign-up. `refreshToken` answers with it as
+ * well.
  */
 export interface AuthDanceResponseTokens {
-	/**
-	 * The three HS256 JWTs of the session.
-	 */
+	/** The three HS256 JWTs of the session. */
 	tokens: {
 		/**
 		 * The bearer token every authenticated route reads. It carries the session id as `sub` and the moment of the
@@ -72,37 +59,26 @@ export interface AuthDanceResponseTokens {
 		 */
 		id_token: string;
 		/**
-		 * The token `refreshToken` exchanges for a new set. It carries the session id as `sub`, the session scopes in
-		 * its protected header, and the same `auth_time` as the first set. A refresh keeps `auth_time`, so a refresh
-		 * never opens the elevated window again.
+		 * The token `refreshToken` exchanges for a new set. It carries the session id as `sub` and the session scopes
+		 * in its protected header. A refresh keeps `auth_time`, so a refresh never opens the elevated window again.
 		 */
 		refresh_token: string;
 	};
-	/**
-	 * The session record a sign-in or a sign-up minted, or the record a refresh used again.
-	 */
+	/** The session record a sign-in or a sign-up minted, or the record a refresh used again. */
 	session: AuthDanceSession;
-	/**
-	 * Who the tokens belong to.
-	 */
+	/** Who the tokens belong to. */
 	identity: {
-		/**
-		 * The identity id, a ksuid with an `id_` prefix.
-		 */
+		/** The identity id, a ksuid with an `id_` prefix. */
 		id: string;
 		/**
 		 * The identity `data` entries the session scopes allow. These are the same claims the protected header of the
-		 * `id_token` carries. The server keeps every other entry of the identity `data`.
+		 * `id_token` carries. The server keeps every other entry.
 		 */
 		data?: Record<string, unknown>;
 	};
 }
 
-/**
- * Parses and validates an `AuthDanceResponseTokens` at runtime. `app.ts` uses it without a change to document the 200
- * body of `/refresh-token`, because this shape holds no `Date`. The union it documents for `/submit-prompt` holds this
- * schema as well.
- */
+/** Parses and validates an `AuthDanceResponseTokens` at runtime. */
 export const AuthDanceResponseTokens: v.GenericSchema<AuthDanceResponseTokens> = v.pipe(
 	v.object({
 		tokens: v.object({
@@ -128,23 +104,14 @@ export const AuthDanceResponseTokens: v.GenericSchema<AuthDanceResponseTokens> =
  * A call that succeeded and returns nothing else.
  *
  * `signOut`, `sendPrompt`, `sendMessage` and `sendMessageTo` answer with this shape. `submitPrompt` answers with it on
- * the last step of `unenroll`, `unsubscribe`, `delete` and `subscribe`. Both answer with it on the last step of `enroll`, `rotate` and `recover`. A component that
- * verifies itself adds a validation step to those three flows.
- *
- * A recovery proves control of one component, which is not a sign-in, so it completes here instead of with tokens. The
- * matching HTTP routes are `/sign-out`, `/send-prompt` and `/submit-prompt`.
+ * the last step of `unenroll`, `unsubscribe`, `delete`, `subscribe`, `enroll`, `rotate` and `recover`.
  */
 export interface AuthDanceResponseResult {
-	/**
-	 * Always `true`. A client uses this literal to identify the shape among the members of `AuthDanceResponse`.
-	 */
+	/** Always `true`. A client uses this literal to identify the shape among the members of `AuthDanceResponse`. */
 	success: true;
 }
 
-/**
- * Parses and validates an `AuthDanceResponseResult` at runtime. `app.ts` uses it without a change to document the 200
- * body of `/sign-out` and `/send-prompt`. The union it documents for `/submit-prompt` holds this schema as well.
- */
+/** Parses and validates an `AuthDanceResponseResult` at runtime. */
 export const AuthDanceResponseResult: v.GenericSchema<AuthDanceResponseResult> = v.pipe(
 	v.object({
 		success: v.literal(true),
@@ -161,22 +128,16 @@ export const AuthDanceResponseResult: v.GenericSchema<AuthDanceResponseResult> =
  */
 export interface AuthDanceResponseSessions {
 	/**
-	 * The open sessions, each with the address and the user agent of the caller that opened it. Either one is absent when
-	 * the connection did not report it. The route sorts the list by id with `localeCompare`. A session id is a ksuid, so
-	 * the order follows creation order closely. Locale collation can still put two ids from different seconds out of
-	 * order. A sign-out with `others` destroys exactly these.
+	 * The open sessions, each with the address and the user agent of the caller that opened it. Either one is absent
+	 * when the connection did not report it. The route sorts the list by id with `localeCompare`, so locale collation
+	 * can put two ids out of creation order. A sign-out with `others` destroys exactly these.
 	 */
 	sessions: AuthDanceSession[];
-	/**
-	 * The id of the session that made the call. It names one entry of `sessions`.
-	 */
+	/** The id of the session that made the call. It names one entry of `sessions`. */
 	current: string;
 }
 
-/**
- * Parses and validates an `AuthDanceResponseSessions` at runtime. `app.ts` uses it without a change to document the 200
- * body of `/list-sessions`.
- */
+/** Parses and validates an `AuthDanceResponseSessions` at runtime. */
 export const AuthDanceResponseSessions: v.GenericSchema<AuthDanceResponseSessions> = v.pipe(
 	v.object({
 		sessions: v.array(AuthDanceSession),
@@ -187,24 +148,21 @@ export const AuthDanceResponseSessions: v.GenericSchema<AuthDanceResponseSession
 );
 
 /**
- * Every component enrolled on the identity.
+ * Every component enrolled on the identity, without the private `data` of each component.
  *
- * The `/list-components` route builds this shape from the identity, and it drops the private `data` of each component.
- * No `AuthDanceApi` method returns it, and it is not a member of the `AuthDanceResponse` union.
+ * The `/list-components` route builds this shape. No `AuthDanceApi` method returns it, and it is not a member of the
+ * `AuthDanceResponse` union.
  */
 export interface AuthDanceResponseComponents {
 	/**
-	 * The enrolled identifications, challenges and channels, under the names the management routes take as `name`. Each
-	 * entry carries a `confirmed` flag. For an identification or a challenge the flag means the owner proved control.
-	 * For a channel it means the library proved delivery. The value a component holds never appears here.
+	 * The enrolled identifications, challenges and channels, under the names the management routes take as `name`. For
+	 * an identification or a challenge, `confirmed` means the owner proved control. For a channel it means the library
+	 * proved delivery. The value a component holds never appears here.
 	 */
 	components: AuthDanceIdentityComponentPublic[];
 }
 
-/**
- * Parses and validates an `AuthDanceResponseComponents` at runtime. `app.ts` uses it without a change to document the
- * 200 body of `/list-components`.
- */
+/** Parses and validates an `AuthDanceResponseComponents` at runtime. */
 export const AuthDanceResponseComponents: v.GenericSchema<AuthDanceResponseComponents> = v.pipe(
 	v.object({
 		components: v.array(AuthDanceIdentityComponentPublic),
@@ -216,17 +174,12 @@ export const AuthDanceResponseComponents: v.GenericSchema<AuthDanceResponseCompo
 );
 
 /**
- * What `submitPrompt` returns: the next prompt, the tokens of a completed authentication, or a
- * bare success for a completed management flow.
- *
- * The two list shapes are not members of the union, because only their own routes return them.
+ * What `submitPrompt` returns: the next prompt, the tokens of a completed authentication, or a bare success for a
+ * completed management flow.
  */
 export type AuthDanceResponse = AuthDanceResponseState | AuthDanceResponseTokens | AuthDanceResponseResult;
 
-/**
- * Parses and validates any of the three response shapes at runtime. `app.ts` mirrors the union with `expireAt` as an ISO
- * 8601 string, and documents the 200 body of `/submit-prompt` with the copy.
- */
+/** Parses and validates any of the three response shapes at runtime. */
 export const AuthDanceResponse: v.GenericSchema<AuthDanceResponse> = v.pipe(
 	v.union([AuthDanceResponseState, AuthDanceResponseTokens, AuthDanceResponseResult]),
 	v.title("AuthDanceResponse"),

@@ -75,11 +75,7 @@ import {
 	WouldLockOutError,
 } from "./error.ts";
 
-/**
- * One fixed-window rate limit bucket. It allows `limit` hits in each `window`.
- *
- * Every duration in this library is a number of seconds, and `window` keeps that rule.
- */
+/** One fixed-window rate limit bucket. It allows `limit` hits in each `window`. */
 export interface AuthDanceRateLimit {
 	/** How many hits the bucket allows in one window. */
 	limit: number;
@@ -87,48 +83,24 @@ export interface AuthDanceRateLimit {
 	window: number;
 }
 
-/**
- * The buckets `AuthDanceApi` consumes. `AuthDanceApi` keys each one on the identity or the session a call belongs to.
- *
- * These buckets guard one identity against repeated attacks, for example a brute-force attack on its password,
- * or many calls that drain its one-time code quota. They are tight on purpose. The per-address buckets of the
- * HTTP layer handle a caller that spreads the same abuse over many identities.
- */
+/** The buckets `AuthDanceApi` consumes. `AuthDanceApi` keys each one on the identity or the session a call belongs to. */
 export interface AuthDanceIdentityRateLimits {
-	/**
-	 * Each answer to a prompt or to a validation. Every attempt to prove something costs one slot.
-	 * @defaultValue `{ limit: 10, window: 300 }`
-	 */
+	/** Each answer to a prompt or to a validation. @defaultValue `{ limit: 10, window: 300 }` */
 	verify?: AuthDanceRateLimit;
-	/**
-	 * Each prompt or validation the library delivers over a channel. These calls cost real money.
-	 * @defaultValue `{ limit: 5, window: 300 }`
-	 */
+	/** Each prompt or validation the library delivers over a channel. @defaultValue `{ limit: 5, window: 300 }` */
 	send?: AuthDanceRateLimit;
 	/**
 	 * Each start of a management flow, such as enroll, rotate or subscribe. A sign-out consumes this bucket too.
 	 * @defaultValue `{ limit: 20, window: 300 }`
 	 */
 	manage?: AuthDanceRateLimit;
-	/**
-	 * Each exchange of a refresh token. A legitimate client does this often, so this bucket is the loosest of the four.
-	 * @defaultValue `{ limit: 60, window: 300 }`
-	 */
+	/** Each exchange of a refresh token. @defaultValue `{ limit: 60, window: 300 }` */
 	refresh?: AuthDanceRateLimit;
 }
 
-/**
- * The buckets the HTTP layer consumes. The HTTP layer keys each one on the address of the caller.
- *
- * These buckets guard against abuse from one address that probes many identities. They are generous on
- * purpose. A whole NATed campus shares one address, so a limit tuned for a single client blocks everybody
- * behind that address.
- */
+/** The buckets the HTTP layer consumes. The HTTP layer keys each one on the address of the caller. */
 export interface AuthDanceAddressRateLimits {
-	/**
-	 * Every request, whatever the route.
-	 * @defaultValue `{ limit: 300, window: 60 }`
-	 */
+	/** Every request, whatever the route. @defaultValue `{ limit: 300, window: 60 }` */
 	request?: AuthDanceRateLimit;
 	/**
 	 * The two routes that deliver a message over a channel. The HTTP layer consumes this bucket on top of `request`.
@@ -137,11 +109,7 @@ export interface AuthDanceAddressRateLimits {
 	send?: AuthDanceRateLimit;
 }
 
-/**
- * The flows that change an identity. Each one reports the change to one of the three identity hooks.
- *
- * A sign-in is absent from the list. It reads an identity and it changes nothing on it.
- */
+/** The flows that change an identity. Each one reports the change to one of the three identity hooks. */
 export type AuthDanceIdentityEventFlow =
 	| "sign-up"
 	| "enroll"
@@ -154,26 +122,19 @@ export type AuthDanceIdentityEventFlow =
 
 /**
  * What the library hands an identity hook.
- *
  * @typeParam TFlow The flows the hook that reads this event reports.
  */
 export interface AuthDanceIdentityEvent<TFlow extends AuthDanceIdentityEventFlow = AuthDanceIdentityEventFlow> {
 	/** Which flow changed the identity. */
 	flow: TFlow;
 	/**
-	 * The identity the change produced, exactly as the library saved it.
-	 *
-	 * `onIdentityDeleted` is the one hook that reads an identity the store no longer holds. It gets the identity
-	 * as it stood one moment before the library removed it, because a hook that reports a delete has nothing left
-	 * to read.
+	 * The identity the change produced, exactly as the library saved it. `onIdentityDeleted` gets the identity
+	 * as it stood one moment before the library removed it.
 	 */
 	identity: AuthDanceIdentity;
 	/**
 	 * The component or the channel the flow acts on, under the name `options.components` or `options.channels`
-	 * declares it. A recovery names the component it reset, never the component it was proven through.
-	 *
-	 * The type marks it optional, but every flow `onIdentityUpdated` reports names one. A sign-up and a delete
-	 * act on the whole identity, so `onIdentityCreated` and `onIdentityDeleted` name nothing.
+	 * declares it. A recovery names the component it reset. `onIdentityCreated` and `onIdentityDeleted` name nothing.
 	 */
 	name?: string;
 }
@@ -182,20 +143,13 @@ export interface AuthDanceIdentityEvent<TFlow extends AuthDanceIdentityEventFlow
 export type AuthDanceSessionEventFlow = "sign-in" | "sign-up" | "refresh" | "sign-out" | "delete";
 
 /**
- * What the library hands a session hook.
- *
- * The event carries no token. A hook records what happened, and a token that reaches a log or a queue is a
- * credential in the wrong place.
- *
+ * What the library hands a session hook. The event carries no token.
  * @typeParam TFlow The flows the hook that reads this event reports.
  */
 export interface AuthDanceSessionEvent<TFlow extends AuthDanceSessionEventFlow = AuthDanceSessionEventFlow> {
 	/** Which flow created, renewed or deleted the session. */
 	flow: TFlow;
-	/**
-	 * The session the flow acts on. A refresh mints a new pair of tokens on the session it already holds, so the
-	 * record it reports is the one the sign-in created.
-	 */
+	/** The session the flow acts on. A refresh reports the record the sign-in created. */
 	session: AuthDanceSession;
 	/** The identity the session signs in. */
 	identity: AuthDanceIdentity;
@@ -210,64 +164,32 @@ export interface AuthDanceHookErrorEvent {
 }
 
 /**
- * The listeners the library calls after it changes an identity or a session. A deployment reacts to a change
- * here: it publishes an event, it writes an audit record, or it warns the owner that an account changed.
- *
- * A hook reports a change, it never decides one. The library calls it after the write, and a hook that rejects
- * never fails the flow. The tokens of a completed sign-in are already minted, and the identity of a completed
- * delete is already gone, so a listener cannot undo what it reads. `onError` gets every rejection.
- *
- * The library awaits each hook, so a hook that publishes an event finishes before the caller reads the answer. A
- * slow hook therefore slows the call that fires it. Return at once, and do the long work outside the flow.
+ * The listeners the library calls after it changes an identity or a session. The library calls a hook after the
+ * write. A hook that rejects never fails the flow, and `onError` gets every rejection. The library awaits each
+ * hook. Return at once, and do the long work outside the flow.
  */
 export interface AuthDanceApiHooks {
 	/** A sign-up completed and the store now holds a new identity. The session hook follows for the same flow. */
 	onIdentityCreated?(event: AuthDanceIdentityEvent<"sign-up">): void | Promise<void>;
-	/**
-	 * A flow changed the components of an identity that already existed, and the store holds the change.
-	 *
-	 * One flow reports one change, whatever it moved. A recovery therefore fires this hook one time, for the
-	 * component it reset.
-	 */
+	/** A flow changed the components of an identity that already existed, and the store holds the change. */
 	onIdentityUpdated?(event: AuthDanceIdentityEvent<Exclude<AuthDanceIdentityEventFlow, "sign-up" | "delete">>): void | Promise<void>;
-	/**
-	 * A delete flow removed an identity. Every session of that identity is already gone, and `onSessionDeleted`
-	 * reported each one before this hook.
-	 */
+	/** A delete flow removed an identity. `onSessionDeleted` reported each session of that identity before this hook. */
 	onIdentityDeleted?(event: AuthDanceIdentityEvent<"delete">): void | Promise<void>;
 	/** A sign-in or a sign-up minted a session, together with the first pair of tokens on it. */
 	onSessionCreated?(event: AuthDanceSessionEvent<"sign-in" | "sign-up">): void | Promise<void>;
-	/**
-	 * A refresh minted a new pair of tokens on a session that already existed.
-	 *
-	 * The hook reports the exchange alone. It does not report a new sign-in, because a refresh carries the
-	 * `auth_time` of the original sign-in unchanged.
-	 */
+	/** A refresh minted a new pair of tokens on a session that already existed. It keeps `auth_time` unchanged. */
 	onSessionRefreshed?(event: AuthDanceSessionEvent<"refresh">): void | Promise<void>;
-	/**
-	 * The library deleted a session. A sign-out that takes every session of the identity fires this hook one time
-	 * for each one, and a delete flow does the same before it removes the identity.
-	 */
+	/** The library deleted a session. A sign-out or a delete flow fires this hook one time for each session it takes. */
 	onSessionDeleted?(event: AuthDanceSessionEvent<"sign-out" | "delete">): void | Promise<void>;
-	/**
-	 * Another hook rejected. This is the one place a deployment sees a listener that is down, because the library
-	 * keeps that rejection away from the flow.
-	 *
-	 * A rejection from this hook has nowhere left to go, and the library drops it.
-	 */
+	/** Another hook rejected. The library drops a rejection from this hook. */
 	onError?(event: AuthDanceHookErrorEvent): void | Promise<void>;
 }
 
-/**
- * Everything `AuthDanceApi` needs to run the dance.
- *
- * The five required options declare the policy. The four optional groups tune the durations, the rate limits,
- * the token issuer and the lifecycle hooks.
- */
+/** Everything `AuthDanceApi` needs to run the dance. */
 export interface AuthDanceApiOptions {
 	/** Where the library delivers a message, keyed by the channel name a component asks for. */
 	channels: Record<string, AuthDanceChannel>;
-	/** The one declaration the sign-in, the sign-up, the recover and the unenroll flow read. `peek` picks the next step from it. */
+	/** The declaration the sign-in, the sign-up, the recover and the unenroll flow read. */
 	choreography: AuthDanceChoreography;
 	/** What each step does, keyed by the name the choreography and the prompts use. */
 	components: Record<string, AuthDanceComponent>;
@@ -275,12 +197,7 @@ export interface AuthDanceApiOptions {
 	secret: string;
 	/** Where identities, sessions, one-time codes and rate limit counters live. */
 	storage: AuthDanceStorage;
-	/**
-	 * How long a flow, a token and the elevated window last, in seconds.
-	 *
-	 * There is one key per flow. A recovery can get more room than a sign-in, and a confirmation-only flow such
-	 * as `unenroll` can get less.
-	 */
+	/** How long a flow, a token and the elevated window last, in seconds. */
 	durations?: {
 		/** How long a sign-in state stays valid. @defaultValue 300 */
 		sign_in?: number;
@@ -307,7 +224,7 @@ export interface AuthDanceApiOptions {
 		/**
 		 * The window after a sign-in in which a session may still run a sensitive flow. Past this window `enroll`,
 		 * `unenroll`, `rotate`, `subscribe`, `unsubscribe` and `delete` raise `FreshSignInRequiredError`. A sign-out
-		 * needs no fresh sign-in. A refresh keeps `auth_time` unchanged, so it never re-opens the window either.
+		 * needs no fresh sign-in. A refresh keeps `auth_time` unchanged and never re-opens the window.
 		 * @defaultValue 300
 		 */
 		elevated?: number;
@@ -322,27 +239,20 @@ export interface AuthDanceApiOptions {
 	/** How the minted tokens present themselves. */
 	tokens?: {
 		/**
-		 * The `iss` claim of every minted token. The encrypted state carries the same claim, and the library
-		 * checks that claim every time it reads a state back.
-		 *
-		 * The default applies to the minted tokens only. Omit this option and the state carries no issuer, and
-		 * the library checks none.
+		 * The `iss` claim of every minted token. The encrypted state carries the same claim, and the library checks
+		 * that claim every time it reads a state back. If you omit this option, the state carries no issuer.
 		 * @defaultValue "acme"
 		 */
 		issuer?: string;
 	};
 	/**
 	 * The listeners the library calls after it changes an identity or a session. Any hook you omit reports nothing.
-	 *
-	 * @defaultValue No listener. The library changes an identity and a session exactly the same way without them.
+	 * @defaultValue No listener.
 	 */
 	hooks?: AuthDanceApiHooks;
 }
 
-/**
- * The buckets `AuthDanceApi` uses when `limits.identity` omits one. They are tight, because each one applies
- * to a single identity or to a single session.
- */
+/** The buckets `AuthDanceApi` uses when `limits.identity` omits one. */
 export const IdentityRateLimits: Required<AuthDanceIdentityRateLimits> = {
 	verify: { limit: 10, window: 5 * 60 },
 	send: { limit: 5, window: 5 * 60 },
@@ -350,9 +260,6 @@ export const IdentityRateLimits: Required<AuthDanceIdentityRateLimits> = {
 	refresh: { limit: 60, window: 5 * 60 },
 };
 
-// What #advance needs to finish a step: the flow, the identity it acts on, and how it reports the change. Both
-// branches of a submit start from #advanceBag and override only the keys their own flow decides, so the shape lives
-// in one place instead of being restated on each side of the dispatch.
 interface AuthDanceAdvance {
 	state: AuthDanceState;
 	path: string[];
@@ -366,24 +273,16 @@ interface AuthDanceAdvance {
 }
 
 /**
- * The state machine of the library. It performs the dance the choreography declares.
+ * The state machine of the library. It performs the dance the choreography declares. It covers nine flows:
+ * sign-in, sign-up, enroll, unenroll, rotate, recover, subscribe, unsubscribe and delete.
  *
- * It covers nine flows: sign-in, sign-up, enroll, unenroll, rotate, recover, subscribe, unsubscribe and delete.
- * A flow method returns the first prompt together with the state. The state is a JWE the client keeps and
- * returns with every later call. The client then calls `submitPrompt` until the answer carries the tokens or a
- * plain success result.
- *
- * One method answers every prompt. A prompt that collects a value and a prompt that asks for proof of control of a
- * value the flow already collected both go to `submitPrompt`, and the state tells the library which of the two it
- * reads. `sendPrompt` delivers either one over its channel. A client therefore keeps no record of the phase a flow
- * runs in.
+ * A flow method returns the first prompt together with the state. The state is a JWE the client keeps and returns
+ * with every later call. The client then calls `submitPrompt` until the answer carries the tokens or a plain
+ * success result.
  *
  * Each method raises an `AuthDanceError` for a failure the caller can act on. Any other failure escapes as
- * `AuthDanceUnknownError` and carries the original failure in `cause`. `accessTokenIdentity` is the one
- * exception, because it lets an unexpected failure escape as it stands.
- *
- * A flow that changes an identity or a session reports the change to `options.hooks` after it saves it. A hook
- * that rejects never fails the flow. Read `AuthDanceApiHooks` about what each one reports.
+ * `AuthDanceUnknownError` and carries the original failure in `cause`. `accessTokenIdentity` lets an unexpected
+ * failure escape as it stands.
  *
  * @example
  * ```ts
@@ -395,30 +294,18 @@ export class AuthDanceApi {
 	#options: AuthDanceApiOptions;
 	#decodedSecret: Uint8Array;
 
-	/**
-	 * Builds the state machine from a policy. It decodes `options.secret` one time and keeps the raw key.
-	 *
-	 * `createAuthDanceApi` calls this constructor. `createAuthDance` reaches it through `createAuthDanceApi`.
-	 */
+	/** Builds the state machine from a policy. It decodes `options.secret` one time and keeps the raw key. */
 	constructor(options: AuthDanceApiOptions) {
 		this.#options = options;
 		this.#decodedSecret = decode(this.#options.secret);
 	}
 
-	/**
-	 * The storage this instance reads and writes.
-	 *
-	 * The HTTP layer needs it for the read-only routes that follow `accessTokenIdentity`, and for the
-	 * per-address rate limit counters it keeps.
-	 */
+	/** The storage this instance reads and writes. */
 	get storage(): AuthDanceStorage {
 		return this.#options.storage;
 	}
 
-	// The single boundary between "this failed in a way the caller was told about" and "this should never
-	// have happened". Internals — including every private helper below — signal failure by throwing an
-	// AuthDanceError, which passes through untouched. Anything else (jose, valibot, a storage provider, a bug)
-	// is wrapped in AuthDanceUnknownError, so an unhandled case can never masquerade as a business rule.
+	// An AuthDanceError passes through. Any other failure becomes an AuthDanceUnknownError.
 	async #guard<T>(method: string, fn: () => Promise<T>): Promise<T> {
 		try {
 			return await fn();
@@ -430,17 +317,10 @@ export class AuthDanceApi {
 		}
 	}
 
-	// The deliberate hole in #guard above. A hook reports a write that has already happened, so a listener that
-	// rejects must not turn a completed flow into a failure: a sign-in whose audit queue is down still signed in,
-	// and surfacing that as UNKNOWN would tell the caller their tokens are worthless when they are not. The
-	// rejection goes to onError instead, the one place a deployment sees a broken listener. A rejecting onError
-	// has nowhere left to report to.
 	async #emit<TKey extends Exclude<keyof AuthDanceApiHooks, "onError">>(
 		hook: TKey,
 		event: Parameters<NonNullable<AuthDanceApiHooks[TKey]>>[0],
 	): Promise<void> {
-		// One key of a union of listener types, each narrower than the union of their events — hence the cast.
-		// The generic keeps every call site honest, which is where it matters.
 		const listener = this.#options.hooks?.[hook] as ((event: unknown) => void | Promise<void>) | undefined;
 		if (!listener) {
 			return;
@@ -466,9 +346,6 @@ export class AuthDanceApi {
 
 	/**
 	 * Sends a message to one identity over a channel it subscribes to.
-	 *
-	 * No flow calls this. It serves the deployment around the library, which knows the identity it wants to
-	 * reach but not the recipient data the channel needs. This method resolves that recipient.
 	 *
 	 * @param identityId The id of the identity to reach.
 	 * @param channel The name of the channel, as `options.channels` declares it.
@@ -501,10 +378,7 @@ export class AuthDanceApi {
 	}
 
 	/**
-	 * Sends a message that already names its recipient.
-	 *
-	 * The recipient is a channel component. A caller that already holds one, from a previous
-	 * `accessTokenIdentity` read for example, skips the identity lookup `sendMessageTo` does.
+	 * Sends a message that already names its recipient. The recipient is a channel component.
 	 *
 	 * @throws UnknownChannelError when `options.channels` declares no channel the recipient names.
 	 */
@@ -515,10 +389,7 @@ export class AuthDanceApi {
 		});
 	}
 
-	// `auth_time` (OIDC's claim for "when the sign-in itself happened") is minted with the very first
-	// pair and then carried verbatim through every refresh: refreshing extends how long the session may
-	// be used, never how recently its holder proved who they are. Sensitive actions gate on it — see
-	// #requireFreshSignIn.
+	// `auth_time` comes from the first pair and stays unchanged through every refresh. See #requireFreshSignIn.
 	async #generateTokens(
 		options: { identity: AuthDanceIdentity; scopes: string[]; session: AuthDanceSession; authTime?: number },
 	): Promise<AuthDanceResponseTokens> {
@@ -562,9 +433,8 @@ export class AuthDanceApi {
 		};
 	}
 
-	// A tampered, expired, subject-less or auth_time-less token all mean the same thing to the caller, and
-	// saying which would only help someone probing. jose's own failure is therefore expected here, not
-	// unknown. Every token this class mints carries both claims, so a token missing either is not one of ours.
+	// Every failure reads the same to the caller. Every token this class mints carries `sub` and `auth_time`,
+	// so a token that misses either one is invalid.
 	async #verifiedClaims(token: string, invalid: () => AuthDanceError): Promise<{ sub: string; authTime: number }> {
 		const payload = await jwtVerify(token, this.#decodedSecret, {
 			issuer: this.#options.tokens?.issuer ?? "acme",
@@ -575,9 +445,8 @@ export class AuthDanceApi {
 		return { sub: payload.sub, authTime: payload.auth_time };
 	}
 
-	// Sensitive management actions (enroll, rotate, unsubscribe, …) are not satisfied by a merely valid
-	// session: the caller must have proven who they are recently. A refresh carries auth_time forward
-	// untouched, so it can never be used to walk out of this window.
+	// A valid session is not enough for a management action. A refresh carries `auth_time` forward unchanged,
+	// so it cannot extend this window.
 	#requireFreshSignIn(authTime: number): void {
 		const elevated = (this.#options.durations?.elevated ?? 5 * 60) * 1000;
 		if (Date.now() - authTime * 1000 > elevated) {
@@ -585,10 +454,8 @@ export class AuthDanceApi {
 		}
 	}
 
-	// Buckets are keyed on the subject a call is attributable to, never on the request: the session behind
-	// an access token, or the identity a flow's state has already resolved. A call attributable to neither
-	// — signing in before the identification has been answered, starting a sign-up or a recovery — is left
-	// to the per-address buckets at the edge, the only layer that can bucket it at all.
+	// A bucket keys on the subject of the call: the session behind an access token, or the identity the state
+	// resolved. A call with neither one keys on nothing here. The per-address buckets at the edge cover it.
 	async #consumeRateLimit(bucket: keyof AuthDanceIdentityRateLimits, subject: string | undefined): Promise<void> {
 		if (!subject) {
 			return;
@@ -600,8 +467,7 @@ export class AuthDanceApi {
 		}
 	}
 
-	// Which subject a state is attributable to. Sign-up is the one flow with none: it mints its own identity
-	// id and a caller can always start another, so there is nothing durable to bucket on.
+	// The subject of a state. A sign-up has none, because it mints its own identity id.
 	#stateSubject(state: AuthDanceState): string | undefined {
 		if (state.kind === "sign-in" || state.kind === "recover") {
 			return state.identityId && `identity:${state.identityId}`;
@@ -612,9 +478,8 @@ export class AuthDanceApi {
 		return `session:${state.sessionId}`;
 	}
 
-	// Which phase the flow waits in. Both step methods dispatch on it: a state that already holds a value nobody
-	// proved control of yet takes the validation branch, and every other state takes the prompt branch. The state
-	// settles it, so a client never has to track which of the two comes next. A sign-in has no validation phase, and
+	// The phase the flow waits in. Both step methods dispatch on it. A state that holds an unproven value takes
+	// the validation branch. Every other state takes the prompt branch. A sign-in has no validation phase, and
 	// a confirmation-only flow — unenroll, unsubscribe, delete — has none either.
 	#awaitsValidation(state: AuthDanceState): boolean {
 		switch (state.kind) {
@@ -636,19 +501,14 @@ export class AuthDanceApi {
 		}
 	}
 
-	// The one record a validation covers: the identification or challenge the flow names, collected and still
-	// unproven. The name has to match, because a component contributes more than the record the flow acts on — the
-	// email component also yields the channel it is reachable at and the one-time code challenge that rides on that
-	// channel — and neither of those is what the owner proves. Reading `confirmed` rather than the length of the list
-	// is also what keeps a replayed state of a finished flow on the collect branch, where it still answers
-	// COMPONENT_ALREADY_COLLECTED.
+	// The record a validation covers: the identification or challenge the flow names, collected and unproven.
+	// One component can contribute more than one record, so the name has to match. A replayed state of a
+	// finished flow stays on the collect branch and answers COMPONENT_ALREADY_COLLECTED.
 	#isPending(components: AuthDanceIdentityComponent[], name: string): boolean {
 		return components.some((c) => c.kind !== "channel" && c.component === name && !c.confirmed);
 	}
 
-	// A sign-up names no component of its own — the choreography does, one step at a time. That step waits for a
-	// proof once it has collected its value and that value is still unconfirmed. #signUpPath counts confirmed
-	// components only, so the walk stays on the same step until the proof lands.
+	// #signUpPath counts confirmed components only. The walk stays on the same step until the proof lands.
 	#signUpStepPending(state: AuthDanceStateSignUp): boolean {
 		const nextMove = peek(this.#options.choreography, this.#signUpPath(state));
 		if (nextMove === null) {
@@ -661,10 +521,7 @@ export class AuthDanceApi {
 	/**
 	 * Exchanges a refresh token for a new set of tokens on the same session.
 	 *
-	 * The new tokens carry the `auth_time` of the original sign-in unchanged. A refresh therefore extends how
-	 * long the client may use the session, and never how recently its holder proved who they are. It cannot
-	 * re-open the elevated window, so it needs no fresh sign-in and grants none.
-	 *
+	 * The new tokens keep the `auth_time` of the sign-in. A refresh needs no fresh sign-in and re-opens no window.
 	 * A completed exchange fires `onSessionRefreshed`.
 	 *
 	 * @returns A new access token, id token and refresh token, plus the session and the scoped identity data.
@@ -694,9 +551,7 @@ export class AuthDanceApi {
 	/**
 	 * Destroys the session the access token names, or every session of its identity.
 	 *
-	 * A sign-out needs no fresh sign-in. It only removes access, so an old session is enough to ask for it.
-	 *
-	 * The call fires `onSessionDeleted` one time for each session it destroys.
+	 * A sign-out needs no fresh sign-in. It fires `onSessionDeleted` one time for each session it destroys.
 	 *
 	 * @param access_token The access token of the session to destroy.
 	 * @param others Pass `true` to destroy every session of the identity, this one included.
@@ -711,9 +566,6 @@ export class AuthDanceApi {
 			try {
 				const { session, identity } = await this.accessTokenIdentity(access_token);
 				await this.#consumeRateLimit("manage", `session:${session.id}`);
-				// The hook fires one time for each session the call destroyed, and only after the store agrees it is
-				// gone. A sign-out that takes them all reports each one rather than the sweep, so a listener sees the
-				// same event whichever way a session ended.
 				const deleted = others ? await this.#options.storage.listSession(session.identityId) : [session];
 				await Promise.all(deleted.map((s) => this.#options.storage.deleteSession(s.id)));
 				for (const s of deleted) {
@@ -787,22 +639,14 @@ export class AuthDanceApi {
 	}
 
 	async #advance(options: AuthDanceAdvance): Promise<AuthDanceResponse> {
-		// Only the authentication flows walk the choreography and mint tokens; every other flow — a recovery
-		// included — acts on the one component it names and completes with a plain success result. Proving
-		// control of a single component is not a sign-in.
 		const authFlow = options.flow === "sign-in" || options.flow === "sign-up";
 		const nextMove = authFlow ? peek(this.#options.choreography, options.path) : null;
 		if (nextMove === null) {
-			// Every identity hook fires from this one place, so a hook reports a change the store already holds and
-			// never one a later step could still reject.
 			if (options.persist) {
 				await this.#options.storage.setIdentity(options.identity);
 				if (options.flow === "sign-up") {
 					await this.#emit("onIdentityCreated", { flow: options.flow, identity: options.identity });
 				} else {
-					// A flow reaches this line only through a branch of #submitPromptStep or #submitValidationStep,
-					// and each one of those sets a flow AuthDanceIdentityEventFlow names. The bag they share types
-					// it as a plain string, hence the cast.
 					await this.#emit("onIdentityUpdated", {
 						flow: options.flow as Exclude<AuthDanceIdentityEventFlow, "sign-up" | "delete">,
 						identity: options.identity,
@@ -891,11 +735,8 @@ export class AuthDanceApi {
 	/**
 	 * Resolves the session and the identity of an access token, and returns its `auth_time`.
 	 *
-	 * An already authenticated caller runs a management flow such as enroll or subscribe. Such a flow starts
-	 * from the access token, not from a step through the choreography.
-	 *
-	 * This method is public because the read-only routes — list the sessions, list the components — are this
-	 * call plus one storage read. A method here for each of them adds a layer that decides nothing.
+	 * A management flow such as enroll or subscribe starts from the access token, not from a step through the
+	 * choreography.
 	 *
 	 * @returns The session, the identity behind it, and the `auth_time` claim of the token in seconds.
 	 * @throws InvalidAccessTokenError when the token is tampered with, expired, or missing a claim.
@@ -907,9 +748,7 @@ export class AuthDanceApi {
 		return { ...await this.#sessionIdentity(sub), authTime };
 	}
 
-	// Like #enrollContext, the pending channel comes before the identity's own components, so the code that
-	// confirms the subscription goes to the recipient being subscribed (e.g. the new phone number) and the
-	// validation proves control of that recipient, not of a channel the identity already trusts.
+	// The pending channel comes before the components of the identity. The one-time code goes to the new recipient.
 	#subscribeContext(state: AuthDanceStateSubscribe, identity: AuthDanceIdentity): AuthDanceComponentContext {
 		return {
 			storage: this.#options.storage,
@@ -920,9 +759,7 @@ export class AuthDanceApi {
 		};
 	}
 
-	// Like #signUpContext, the component sees the components collected during this enrollment first,
-	// so its verification targets the value being enrolled (e.g. the OTP goes to the new email
-	// address) while the identity's existing components stay available as a fallback.
+	// The components this enrollment collected come first. The verification targets the new value.
 	#enrollContext(state: AuthDanceStateEnroll, identity: AuthDanceIdentity): AuthDanceComponentContext {
 		return {
 			storage: this.#options.storage,
@@ -953,8 +790,7 @@ export class AuthDanceApi {
 		return { identity, identityComponent, ctx, verificationAuthDanceComponent };
 	}
 
-	// The component being enrolled, rotated or reset is the identification/challenge it produced; any channel
-	// it also yielded (e.g. the email address it can be reached at) rides along but is not the subject.
+	// The subject is the identification or the challenge the component produced, never a channel it also yields.
 	#collectedIdentityComponent(
 		components: AuthDanceIdentityComponent[],
 		component: string,
@@ -968,10 +804,7 @@ export class AuthDanceApi {
 		return identityComponent;
 	}
 
-	// Same layering as #enrollContext: the replacement value shadows the currently enrolled one, so its
-	// verification targets the new value (e.g. the OTP goes to the new email address). While the
-	// replacement has not been collected yet, state.components is empty and the identity is seen as it
-	// stands, which is exactly what proving control of the enrolled component needs.
+	// The replacement shadows the enrolled value, so the verification targets the new value.
 	#rotateContext(state: AuthDanceStateRotate, identity: AuthDanceIdentity): AuthDanceComponentContext {
 		return {
 			storage: this.#options.storage,
@@ -1001,12 +834,8 @@ export class AuthDanceApi {
 		return { identity, ctx, authComponent, verificationAuthDanceComponent };
 	}
 
-	// Rotation and recovery both swap components in place: the previously enrolled identification/challenge
-	// is dropped in favour of the freshly validated one carrying the same name. Channels are keyed by name,
-	// so a channel a component re-emits ("email" now pointing at the new address) supersedes the previous
-	// entry instead of duplicating it — while keeping the links other components hold on that channel.
-	// Replacing by name makes this idempotent, so a flow that collects several components can re-apply the
-	// whole set on every step.
+	// A rotation and a recovery replace a component by name. A channel the component emits again supersedes the
+	// previous entry and keeps the links that entry held. Replacement by name is idempotent.
 	#applyReplacement(identity: AuthDanceIdentity, components: AuthDanceIdentityComponent[]): void {
 		const replaced = new Set(components.filter((c) => c.kind !== "channel").map((c) => c.component));
 		identity.components = identity.components.filter((previous) => {
@@ -1024,9 +853,7 @@ export class AuthDanceApi {
 		identity.components.push(...components);
 	}
 
-	// Which components of the choreography a recovery can be proven through: one that resolves an identity on
-	// its own, as an identification does, and proves control of it, as a verification does. The component being
-	// recovered is never one of them — the value the caller no longer has cannot be the value they prove.
+	// A recovery is proven through a verifiable identification, never through the component under recovery.
 	#recoverIdentifications(recovering: string): string[] {
 		const names: string[] = [];
 		for (const { component } of walk(this.#options.choreography)) {
@@ -1050,10 +877,7 @@ export class AuthDanceApi {
 		return false;
 	}
 
-	// Same layering as #rotateContext: a replacement collected during the reset shadows the value it replaces,
-	// so its verification targets the new one. While control of the picked component is still being proven
-	// nothing has been collected and the identity is seen as it stands — which is what proving control needs.
-	// The identity itself is unknown until the identification has been submitted.
+	// A replacement collected in the reset shadows the value it replaces. The identity is unknown before that.
 	#recoverContext(state: AuthDanceStateRecover, component: string, identity: AuthDanceIdentity | undefined): AuthDanceComponentContext {
 		return {
 			storage: this.#options.storage,
@@ -1075,7 +899,7 @@ export class AuthDanceApi {
 		return identity;
 	}
 
-	// First phase: prove control of the component the caller picked to identify with.
+	// First phase: prove control of the component the owner picked to identify with.
 	async #resolveRecoverControl(state: AuthDanceStateRecover, identity: AuthDanceIdentity): Promise<{
 		ctx: AuthDanceComponentContext;
 		verificationAuthDanceComponent: AuthDanceComponent;
@@ -1094,7 +918,7 @@ export class AuthDanceApi {
 		return { ctx, verificationAuthDanceComponent: await authComponent.verificationComponent(ctx) };
 	}
 
-	// Second phase: the component being recovered. It collects the replacement, exactly as an enroll does.
+	// Second phase: the recovered component collects the replacement.
 	#resolveRecoverReset(
 		state: AuthDanceStateRecover,
 		identity: AuthDanceIdentity,
@@ -1106,7 +930,7 @@ export class AuthDanceApi {
 		return { authComponent, ctx: this.#recoverContext(state, state.component, identity) };
 	}
 
-	// Second phase again: validate the replacement the recovered component asked to prove control of.
+	// Second phase: validate the replacement.
 	async #resolveRecoverResetVerification(state: AuthDanceStateRecover, identity: AuthDanceIdentity): Promise<{
 		identityComponent: AuthDanceIdentityIdentification | AuthDanceIdentityChallenge;
 		ctx: AuthDanceComponentContext;
@@ -1123,17 +947,9 @@ export class AuthDanceApi {
 		};
 	}
 
-	// What a removal takes down, beyond the record the caller named. A record exists for the components its
-	// linkedTo names — the email component names its identification on both the channel and the one-time code
-	// challenge it contributes — so removing one of them orphans the record that names it, and removing that
-	// record leaves every other component it names with no way to work: no channel to reach its owner, or no
-	// address the code it proves belongs to. The removal therefore follows the links both ways — component to the
-	// records that name it, record back to the components it names — until nothing new joins. `unenroll` and
-	// `unsubscribe` both read it, so a channel and a component come down as one set whichever end the caller
-	// pulled from.
-	// The two sets stay apart because the names live in two namespaces: the email component contributes an "email"
-	// channel beside its "email" identification, and those are not the same record. A linkedTo entry always names
-	// the component namespace, because no record ever links to a channel.
+	// What a removal takes down, beyond the record the flow names. The removal follows the `linkedTo` links both
+	// ways, until nothing new joins. A component and a channel of the same name are two records, and a `linkedTo`
+	// entry always names a component.
 	#removalCollateral(
 		identity: AuthDanceIdentity,
 		name: string,
@@ -1141,14 +957,11 @@ export class AuthDanceApi {
 	): { components: Set<string>; channels: Set<string> } {
 		const components = new Set<string>(namespace === "channel" ? [] : [name]);
 		const channels = new Set<string>(namespace === "channel" ? [name] : []);
-		// Each pass that changes anything claims at least one more record, and an identity holds a finite number
-		// of them, so the walk reaches its fixed point.
 		for (let grew = true; grew;) {
 			grew = false;
 			for (const c of identity.components) {
 				const claimed = c.kind === "channel" ? channels : components;
-				// A record joins when something it serves is going, and once it is in, everything it serves goes
-				// with it. The seed channel of an unsubscribe enters through the second half alone.
+				// The seed channel of an unsubscribe joins through the second half alone.
 				if (!claimed.has(c.component)) {
 					if (!(c.linkedTo ?? []).some((linked) => components.has(linked))) {
 						continue;
@@ -1167,12 +980,7 @@ export class AuthDanceApi {
 		return { components, channels };
 	}
 
-	// Removing a component or a channel must not lock the identity out of its own account: walk the choreography
-	// and keep the removal only if at least one path to an end is still fully covered by the surviving confirmed
-	// components. With choice(sequence("email", "password"), "facebook"), dropping "facebook" is fine
-	// because the email + password path survives; dropping "password" would not be. `removed` is the whole
-	// collateral #removalCollateral produced, never the single name the caller gave: a component that falls
-	// with a channel stops covering the paths it used to cover, and the check has to see that.
+	// A removal must not lock the identity out. Pass the whole collateral set of #removalCollateral, never one name.
 	#isChoreographyCompletableWithout(identity: AuthDanceIdentity, removed: ReadonlySet<string>): boolean {
 		const surviving = identity.components
 			.filter((c): c is AuthDanceIdentityIdentification | AuthDanceIdentityChallenge =>
@@ -1208,9 +1016,7 @@ export class AuthDanceApi {
 		return { path, choreographyComponent, identityComponent, ctx, verificationAuthDanceComponent };
 	}
 
-	// The issuer travels as the `iss` claim, the way the minted tokens carry it. #decryptState hands the
-	// configured issuer to jose, and jose checks it against the claim: an issuer in the protected header instead
-	// left that claim unset, so every state of a deployment that configured one failed to decrypt.
+	// The issuer must travel as the `iss` claim. #decryptState checks that claim.
 	#encryptState(state: AuthDanceState, expireAt: Date): Promise<string> {
 		const issuer = this.#options.tokens?.issuer;
 		const jwt = new EncryptJWT({ state })
@@ -1220,9 +1026,6 @@ export class AuthDanceApi {
 		return (issuer === undefined ? jwt : jwt.setIssuer(issuer)).encrypt(this.#decodedSecret);
 	}
 
-	// A state that fails to decrypt, carries no expiry, or no longer matches the schema is a stale or forged
-	// value coming from the client — expected input, not a server fault. jose and valibot both fail by
-	// throwing, so they are converted here rather than escaping as unknown.
 	async #decryptState(value: string): Promise<{ state: AuthDanceState; expireAt: Date }> {
 		const payload = await jwtDecrypt(value, this.#decodedSecret, { issuer: this.#options.tokens?.issuer })
 			.then(({ payload }) => payload, () => undefined);
@@ -1239,9 +1042,7 @@ export class AuthDanceApi {
 	/**
 	 * Starts an authentication and returns the first prompt of the choreography.
 	 *
-	 * The state holds no identity yet. A component resolves one during the dance, so no per-identity bucket can
-	 * key on anything before that step. Until then, only the per-address buckets of the HTTP layer guard this flow.
-	 * This flow needs no access token and no fresh sign-in.
+	 * This flow needs no access token and no fresh sign-in. No per-identity bucket guards it.
 	 *
 	 * @returns The encrypted state, the first prompt, and the moment the state expires.
 	 * @throws ChoreographyEmptyError when the choreography is already over at its first step.
@@ -1256,7 +1057,6 @@ export class AuthDanceApi {
 				path: [],
 			};
 			const nextMove = peek(this.#options.choreography, []);
-			// A choreography that is already over at its first step has nothing to authenticate against.
 			if (nextMove === null) {
 				throw new ChoreographyEmptyError();
 			}
@@ -1267,12 +1067,8 @@ export class AuthDanceApi {
 	/**
 	 * Starts a registration and returns the first prompt of the choreography.
 	 *
-	 * Sign-up walks the same steps sign-in verifies, so the two flows cannot differ. The state carries the
-	 * new identity id from the start, but storage keeps nothing until the choreography completes.
-	 *
-	 * Sign-up is the one flow with no per-identity bucket. It mints its own identity id and a caller can always
-	 * start another one, so there is nothing durable to key a bucket on. This flow needs no access token and no
-	 * fresh sign-in.
+	 * The state carries the new identity id from the start. Storage keeps nothing until the choreography
+	 * completes. This flow needs no access token and no fresh sign-in, and no per-identity bucket guards it.
 	 *
 	 * @returns The encrypted state, the first prompt, and the moment the state expires.
 	 * @throws ChoreographyEmptyError when the choreography is already over at its first step.
@@ -1298,11 +1094,8 @@ export class AuthDanceApi {
 	/**
 	 * Starts the enrollment of a new component on the identity behind the access token.
 	 *
-	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
-	 *
-	 * The prompt collects the new value. The component sees the values this enrollment collected first, so a
-	 * validation targets the new value and not the ones the identity already carries. Answer that validation
-	 * with `sendPrompt` and `submitPrompt`, the same two methods every other step uses.
+	 * The prompt collects the new value. A validation targets the new value, never a value the identity already
+	 * carries. Answer that validation with `sendPrompt` and `submitPrompt`.
 	 *
 	 * @param options `name` is the component to enroll, as `options.components` declares it.
 	 * @returns The encrypted state, the prompt of the component, and the moment the state expires.
@@ -1340,16 +1133,10 @@ export class AuthDanceApi {
 	/**
 	 * Starts the removal of a component from the identity behind the access token.
 	 *
-	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
-	 *
 	 * The removal takes the linked records with it. A channel that names the component in its `linkedTo` goes
-	 * too, and so does every other component that channel names, because a component a channel carries has no
-	 * way to reach its owner once that channel is gone. The library follows those links to their end, and it
-	 * removes the whole set at the confirmation.
-	 *
-	 * The library then walks the choreography and refuses a removal that leaves no completable path. It counts
-	 * that whole set, never the one component the caller named. It answers with a confirmation prompt. Submit
-	 * the boolean `true` to it through `submitPrompt`.
+	 * too, and so does every other component that channel names. The library removes the whole set at the
+	 * confirmation, and it refuses a removal that leaves no completable path through the choreography. Submit
+	 * the boolean `true` to the confirmation prompt through `submitPrompt`.
 	 *
 	 * @param options `name` is the component to remove.
 	 * @returns The encrypted state, a confirmation prompt, and the moment the state expires.
@@ -1358,8 +1145,7 @@ export class AuthDanceApi {
 	 * @throws ComponentNotEnrolledError when the identity carries no such component.
 	 * @throws UnknownComponentError when `options.components` declares no component of that name.
 	 * @throws FreshSignInRequiredError when the sign-in is older than the elevated window.
-	 * @throws WouldLockOutError when no path through the choreography stays completable without the component
-	 * and the linked records that go with it.
+	 * @throws WouldLockOutError when no path through the choreography stays completable without that whole set.
 	 */
 	unenroll(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("unenroll", async () => {
@@ -1393,11 +1179,8 @@ export class AuthDanceApi {
 	/**
 	 * Starts the replacement of an enrolled component on the identity behind the access token.
 	 *
-	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
-	 *
 	 * A component that can verify itself proves control of the current value first, so the flow has two
-	 * validation rounds. A component that cannot, a password for example, is proven from the start. Its first
-	 * prompt already collects the replacement.
+	 * validation rounds. A component that cannot is proven from the start and collects the replacement at once.
 	 *
 	 * @param options `name` is the component to replace.
 	 * @returns The encrypted state, the first prompt, and the moment the state expires.
@@ -1425,15 +1208,10 @@ export class AuthDanceApi {
 				kind: "rotate",
 				sessionId: session.id,
 				component: options.name,
-				// Proving control of the currently enrolled value is only meaningful for a component that can
-				// verify itself: receiving an OTP at the current email address proves something, re-typing a
-				// password proves nothing the access token has not already established. Components without a
-				// verification component therefore start out proven and go straight to the replacement.
+				// A component with no verification component starts out proven and goes to the replacement.
 				verified: !authComponent.verificationComponent,
 				components: [],
 			};
-			// Once control is proven, the flow continues exactly like enroll — collect the replacement, then
-			// validate it.
 			const ctx = this.#rotateContext(state, identity);
 			const promptWith = authComponent.verificationComponent ? await authComponent.verificationComponent(ctx) : authComponent;
 			const prompt = await promptWith.getPrompt(ctx);
@@ -1442,20 +1220,13 @@ export class AuthDanceApi {
 	}
 
 	/**
-	 * Starts the recovery of one component, for a caller who can no longer provide it.
+	 * Starts the recovery of one component, for an owner who can no longer provide it.
 	 *
-	 * Apart from a sign-in and a sign-up, this is the only flow a caller with no session can start. The caller
-	 * therefore has to identify themselves and prove control through another component, and one component has to do
-	 * both jobs on its own. It resolves an identity, as an identification does, and it proves control of that
-	 * identity, as a verification does. The first prompt is a choice between every such component of the
-	 * choreography, or that component's own prompt when the choreography holds exactly one. This flow needs no
-	 * access token and no fresh sign-in.
-	 *
-	 * The choice is one between components, never between values, so the response discloses nothing about the
-	 * identity. Which identity the flow recovers stays unknown until `submitPrompt` answers that choice. Once
-	 * control of the picked component is proven, the flow collects the replacement of the recovered component and
-	 * validates it, exactly as an enroll does. It completes with a plain success result, never with tokens. Proof
-	 * of control of a single component is not a sign-in.
+	 * This flow needs no access token and no fresh sign-in. The owner identifies themselves through another
+	 * component that both resolves an identity and proves control of it. The first prompt is a choice between
+	 * every such component of the choreography, or the prompt of that component when only one qualifies. The
+	 * choice names components, never values, so the response discloses nothing about the identity. The flow then
+	 * collects the replacement and validates it. It completes with a success result, never with tokens.
 	 *
 	 * @param options `name` is the component the recovery resets.
 	 * @returns The encrypted state, the choice of components to identify with, and the moment the state expires.
@@ -1480,8 +1251,6 @@ export class AuthDanceApi {
 				verified: false,
 				components: [],
 			};
-			// Which identity is being recovered is unknown until the choice is answered, so every prompt of it is
-			// the component's own and nothing about the identity is disclosed.
 			const prompt = await this.#getPromptFromChoreography({
 				choreography: simplify(choice(...identifications.map(component))) as
 					| AuthDanceChoreographyComponent
@@ -1545,15 +1314,13 @@ export class AuthDanceApi {
 	/**
 	 * Starts the removal of a channel from the identity behind the access token.
 	 *
-	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
+	 * This flow needs a fresh sign-in.
 	 *
-	 * The removal takes the linked records with it, the way an unenroll does. Every component the channel names in
-	 * its `linkedTo` goes too, because a component a channel carries has no way to reach its owner once that
-	 * channel is gone, and so does every record linked to those. The library follows those links to their end.
+	 * The removal also deletes every component the channel names in its `linkedTo`, and every record linked to
+	 * those. The library refuses a removal that leaves no completable path through the choreography. It counts the
+	 * whole set, not the one channel the caller named.
 	 *
-	 * The library then walks the choreography and refuses a removal that leaves no completable path. It counts
-	 * that whole set, never the one channel the caller named. It answers with a confirmation prompt. Submit the
-	 * boolean `true` to it through `submitPrompt`.
+	 * Submit the boolean `true` to the confirmation prompt through `submitPrompt`.
 	 *
 	 * @param options `name` is the channel to remove.
 	 * @returns The encrypted state, a confirmation prompt, and the moment the state expires.
@@ -1597,12 +1364,7 @@ export class AuthDanceApi {
 	/**
 	 * Starts the deletion of the identity behind the access token.
 	 *
-	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
-	 *
-	 * A delete is the one management flow with nothing left to protect afterwards. The library gates it exactly
-	 * like the other destructive flows — a recent sign-in, then an explicit confirmation — and nothing more.
-	 * There is no component to keep the choreography completable with, and no lock-out to avoid. A lock-out of
-	 * the identity is exactly what the caller wants.
+	 * This flow needs a fresh sign-in. There is no lock-out check.
 	 *
 	 * `submitPrompt` takes the confirmation. It then deletes every session of the identity together with the
 	 * identity itself, so no token outlives it.
@@ -1632,19 +1394,15 @@ export class AuthDanceApi {
 	}
 
 	/**
-	 * Delivers the current prompt over its channel, for a component the owner cannot simply type — a one-time
-	 * code, for example.
+	 * Delivers the current prompt over its channel, for a component the owner cannot type — a one-time code, for
+	 * example.
 	 *
-	 * The state names the flow and the phase it runs in, so this one method delivers both kinds of prompt. A
-	 * sign-in and a sign-up deliver the prompt of the step itself. A sign-up, an enroll, a rotate, a recover and a
-	 * subscribe deliver the validation that proves control of a value the flow already collected. A rotate and a
-	 * recover deliver one in each of their two rounds: first the proof of the current value — of the component the
-	 * owner identified through, for a recovery — then the proof of the replacement.
+	 * A sign-in and a sign-up deliver the prompt of the step itself. A sign-up, an enroll, a rotate, a recover and
+	 * a subscribe deliver the validation that proves control of a value the flow already collected. A rotate and a
+	 * recover deliver one in each of their two rounds: first the current value, then the replacement.
 	 *
-	 * For a subscribe the code goes over the channel being subscribed, to the recipient the flow collected, so
-	 * `name` does not select it. A recovery names one component in each of its rounds, so `name` does not select
-	 * there either. This method needs no access token and no fresh sign-in, because the state carries whatever the
-	 * flow has established.
+	 * A subscribe and a recover name the component themselves, so `name` selects nothing there. This method needs
+	 * no access token and no fresh sign-in.
 	 *
 	 * @param options `name` selects which component to deliver when the current step is a choice. `locale` picks
 	 * the language of the message. `state` is the opaque string the previous call returned.
@@ -1668,8 +1426,6 @@ export class AuthDanceApi {
 	async #sendPrompt(options: { name: string; locale: string; state: string }): Promise<AuthDanceResponseResult> {
 		const { state } = await this.#decryptState(options.state);
 		await this.#consumeRateLimit("send", this.#stateSubject(state));
-		// Both branches only resolve. Asking the component for the message and putting it on the channel is the same
-		// work either way, so it is written once, below.
 		const { authComponent, ctx } = this.#awaitsValidation(state)
 			? await this.#resolveValidationSend(state, options.name)
 			: await this.#resolvePromptSend(state, options.name);
@@ -1684,9 +1440,7 @@ export class AuthDanceApi {
 		return { success: true };
 	}
 
-	// The prompt of the step itself. Only a sign-in and a sign-up hold one the library can deliver: every other
-	// flow collects its value from an authenticated caller and has nothing to put on a channel before it does. The
-	// two flows that do have a more precise answer than "wrong flow" keep it.
+	// The prompt of the step itself. Only a sign-in and a sign-up hold one the library can deliver.
 	async #resolvePromptSend(
 		state: AuthDanceState,
 		name: string,
@@ -1701,12 +1455,9 @@ export class AuthDanceApi {
 			const { choreographyComponent, authComponent } = this.#resolveStep(path, name);
 			return { authComponent, ctx: this.#signUpContext(state, choreographyComponent.component) };
 		}
-		// The code goes to the recipient this flow collects, so before the recipient there is nothing to deliver to.
 		if (state.kind === "subscribe") {
 			throw new ComponentNotCollectedError(state.channel.component);
 		}
-		// Which identity a recovery acts on stays unknown until the choice is answered, and the choice itself is a
-		// prompt the owner types.
 		if (state.kind === "recover") {
 			throw new RecoveryNotIdentifiedError(state.component);
 		}
@@ -1716,19 +1467,16 @@ export class AuthDanceApi {
 	/**
 	 * Answers the current prompt of any flow and moves the dance one step.
 	 *
-	 * The state names the flow, so this one method serves all nine of them. A sign-in verifies the value against
-	 * the choreography. A sign-up, an enroll and a rotate collect the value. A recover answers the choice of
-	 * components to identify with, and later collects the replacement of the component it resets. An unenroll, an
-	 * unsubscribe and a delete take the boolean `true` as their confirmation. A subscribe stores the recipient
-	 * and moves to its one-time code.
+	 * This one method serves all nine flows. A sign-in verifies the value against the choreography. A sign-up, an
+	 * enroll and a rotate collect the value. A recover answers the choice of components to identify with, and later
+	 * collects the replacement of the component it resets. An unenroll, an unsubscribe and a delete take the boolean
+	 * `true` as their confirmation. A subscribe stores the recipient and moves to its one-time code.
 	 *
-	 * When the collected value still needs proof of control, the answer is a validation prompt instead of the next
-	 * step. Answer that prompt with this same method: the state names the phase, so the library reads the value as
-	 * the proof it asked for and the dance continues. On success the value becomes confirmed. A rotate and a recover
-	 * answer twice, the first time for the current value and the second for the replacement.
+	 * When the collected value still needs proof of control, the answer is a validation prompt. Answer that prompt
+	 * with this same method. On success the value becomes confirmed. A rotate and a recover answer twice, the first
+	 * time for the current value and the second for the replacement.
 	 *
-	 * The library checks the elevated window when a flow starts, so this method does not check it again. It needs no
-	 * access token either, because the state carries the session the flow started from.
+	 * This method does not check the elevated window, and it needs no access token.
 	 *
 	 * A step that completes a flow reports it to `options.hooks`. A sign-in fires `onSessionCreated`. A sign-up
 	 * fires `onIdentityCreated` and then `onSessionCreated`. A delete fires `onSessionDeleted` for each session and
@@ -1762,24 +1510,18 @@ export class AuthDanceApi {
 		return this.#guard("submitPrompt", () => this.#submitPrompt(options));
 	}
 
-	// The long flows below stay in private methods rather than inside the #guard closure: the error boundary reads
-	// as one line, and the body keeps signalling failure exactly the way every private helper does — by throwing —
-	// instead of being re-indented into a callback.
 	async #submitPrompt(
 		options: { name: string; value: unknown; state: string; address?: string; userAgent?: string },
 	): Promise<AuthDanceResponse> {
 		const { state, expireAt } = await this.#decryptState(options.state);
-		// Before the value is looked at, so a wrong password costs a bucket slot rather than being free. In a
-		// sign-in the subject is whatever an earlier step resolved, which is exactly the step that matters:
-		// guessing a password happens once the identification is behind us. One bucket covers both phases, because
-		// a guess at a one-time code and a guess at a password are the same kind of attempt.
+		// The method consumes the bucket before it reads the value, so a wrong value costs a slot.
 		await this.#consumeRateLimit("verify", this.#stateSubject(state));
 		return this.#awaitsValidation(state)
 			? this.#submitValidationStep(state, expireAt, options)
 			: this.#submitPromptStep(state, expireAt, options);
 	}
 
-	// The bag both branches hand to #advance. Each one overrides the keys its own flow decides.
+	// The bag both branches hand to #advance. Each branch overrides the keys its own flow decides.
 	#advanceBag(
 		state: AuthDanceState,
 		expireAt: Date,
@@ -1798,7 +1540,7 @@ export class AuthDanceApi {
 		};
 	}
 
-	// The value answers the prompt of the step: it collects what the flow asked for, or it confirms a removal.
+	// The value answers the prompt of the step. It collects what the flow asked for, or it confirms a removal.
 	async #submitPromptStep(
 		state: AuthDanceState,
 		expireAt: Date,
@@ -1810,17 +1552,14 @@ export class AuthDanceApi {
 			let identity = state.identityId ? await this.#options.storage.getIdentity(state.identityId) : undefined;
 			const ctx = this.#signInContext(state, choreographyComponent.component, identity!);
 			const identityId = await authComponent.verifyPrompt(options.value, ctx);
-			// Verification failed: never advance the choreography. This has to be checked on its own, because
-			// once an earlier step has put an identityId in the state the guard below no longer fires and a
-			// rejected value (e.g. a wrong password) would otherwise walk straight to the tokens.
+			// Verification failed. Keep this check on its own. The guard below no longer fires once an earlier step
+			// put an identityId in the state, and a rejected value would walk straight to the tokens.
 			if (identityId === false) {
 				throw new InvalidPromptValueError(choreographyComponent.component);
 			}
-			// Prompt did not yield an identity and state does not have an identityId, so we cannot proceed
 			if (!identity && identityId === true) {
 				throw new IdentityNotResolvedError(choreographyComponent.component);
 			}
-			// Prompt yielded an identityId, but state already has an identityId that does not match, so we cannot proceed
 			if (identity && typeof identityId === "string" && identityId !== identity.id) {
 				throw new IdentityMismatchError(choreographyComponent.component);
 			}
@@ -1870,8 +1609,7 @@ export class AuthDanceApi {
 				persist: true,
 			};
 		} else if (state.kind === "enroll") {
-			// The enrolled value is collected exactly once. An unconfirmed value would have taken the validation
-			// branch instead, so a value here is a confirmed one and the state is a replay of a finished enrollment.
+			// The enrolled value is collected exactly once. A value here means a replay of a finished enrollment.
 			if (state.components.length > 0) {
 				throw new ComponentAlreadyCollectedError(state.component);
 			}
@@ -1880,9 +1618,8 @@ export class AuthDanceApi {
 			if (!authComponent) {
 				throw new UnknownComponentError(state.component);
 			}
-			// Collection sees the identity as it stands; the verification context below is rebuilt after the
-			// value has been collected, because #enrollContext snapshots state.components and verification has
-			// to target the value being enrolled rather than the one it replaces.
+			// #enrollContext snapshots state.components. Build the verification context below only after the
+			// collection, so the verification targets the new value.
 			state.components.push(
 				...await authComponent.getIdentityComponent(state.component, options.value, false, this.#enrollContext(state, identity)),
 			);
@@ -1903,9 +1640,8 @@ export class AuthDanceApi {
 				persist: true,
 			};
 		} else if (state.kind === "rotate") {
-			// Control of the enrolled value is proven on the validation branch, which is where the prompt rotate()
-			// handed out goes. Only the replacement value is collected here, and exactly once: an unconfirmed
-			// replacement would have taken that branch too.
+			// Only the replacement value is collected here, exactly once. The validation branch proves control of
+			// the current value.
 			if (state.components.length > 0) {
 				throw new ComponentAlreadyCollectedError(state.component);
 			}
@@ -1914,8 +1650,8 @@ export class AuthDanceApi {
 			if (!authComponent) {
 				throw new UnknownComponentError(state.component);
 			}
-			// Same layering as enroll: the replacement is collected against the identity as it stands, which is
-			// what lets a component refuse a value identical to the one being replaced.
+			// The collection sees the identity as it stands, so a component can refuse a value identical to the
+			// current one.
 			state.components.push(
 				...await authComponent.getIdentityComponent(state.component, options.value, false, this.#rotateContext(state, identity)),
 			);
@@ -1937,9 +1673,7 @@ export class AuthDanceApi {
 			};
 		} else if (state.kind === "recover") {
 			if (!state.identification) {
-				// Which identity is being recovered is established here and only here: the caller picks one of the
-				// components that can identify them, that component resolves the submitted value to an identity,
-				// then its verification takes over to prove control of it.
+				// This step, and only this step, resolves which identity the recovery acts on.
 				if (!this.#recoverIdentifications(state.component).includes(options.name)) {
 					throw new ComponentNotInChoreographyError(options.name);
 				}
@@ -1961,10 +1695,9 @@ export class AuthDanceApi {
 					expireAt,
 				};
 			}
-			// Control of the picked component is proven on the validation branch, which is where the prompt handed
-			// out above goes. A recovery reaches this line only once that branch marked the state verified.
+			// A recovery reaches this line only after the validation branch marked the state verified.
 			const identity = await this.#recoverIdentity(state);
-			// The replacement is collected exactly once; anything further belongs to its validation round.
+			// The replacement is collected exactly once.
 			if (state.components.length > 0) {
 				throw new ComponentAlreadyCollectedError(state.component);
 			}
@@ -1989,8 +1722,7 @@ export class AuthDanceApi {
 				...advanceOptions,
 				identity,
 				flow: "recover",
-				// The component the recovery reset, which is what a listener acts on. Which component the caller
-				// proved control through is not what changed.
+				// The component the recovery reset, not the one the owner proved control through.
 				name: state.component,
 				persist: true,
 			};
@@ -1999,9 +1731,8 @@ export class AuthDanceApi {
 				throw new ConfirmationRequiredError(state.component);
 			}
 			const { identity } = await this.#sessionIdentity(state.sessionId);
-			// The collateral is resolved again here, against the identity as it stands now: another flow may have
-			// moved a component or a channel while this confirmation was outstanding, and the set that survives the
-			// removal is what the lock-out check has to run against.
+			// Resolve the collateral again against the identity as it stands now. Another flow can change the
+			// identity while the confirmation is outstanding.
 			const collateral = this.#removalCollateral(identity, state.component, "component");
 			if (!this.#isChoreographyCompletableWithout(identity, collateral.components)) {
 				throw new WouldLockOutError(state.component);
@@ -2017,11 +1748,9 @@ export class AuthDanceApi {
 				persist: true,
 			};
 		} else if (state.kind === "subscribe") {
-			// Only the recipient (e.g. phone number) is collected here. Once it is in, the state is validating and
-			// the one-time code that confirms it goes to the validation branch instead.
+			// Only the recipient is collected here. The one-time code that confirms it goes to the validation
+			// branch.
 			const { identity } = await this.#sessionIdentity(state.sessionId);
-			// Stash the submitted recipient on the pending channel, keyed by the channel name (mirrors how the
-			// email component stores its address), then move to OTP validation.
 			state.channel.data = { ...(state.channel.data ?? {}), [state.channel.component]: options.value };
 			state.validating = true;
 			const prompt = await new OtpAuthDanceComponent({ channel: state.channel.component }).getPrompt(
@@ -2029,16 +1758,12 @@ export class AuthDanceApi {
 			);
 			return { state: await this.#encryptState(state, expireAt), prompt, expireAt };
 		} else if (state.kind === "unsubscribe") {
-			// A single confirmation gate: the authenticated caller must explicitly confirm (value === true)
-			// before the channel is detached.
 			if (options.value !== true) {
 				throw new ConfirmationRequiredError(state.channel);
 			}
 			const { identity } = await this.#sessionIdentity(state.sessionId);
-			// Resolved again here, against the identity as it stands now, for the same reason the unenroll branch
-			// above resolves it again: another flow may have moved a component or a channel while this
-			// confirmation was outstanding, and the set that survives the removal is what the lock-out check has
-			// to run against.
+			// Resolve the collateral again against the identity as it stands now, the same way the unenroll branch
+			// above does.
 			const collateral = this.#removalCollateral(identity, state.channel, "channel");
 			if (!this.#isChoreographyCompletableWithout(identity, collateral.components)) {
 				throw new WouldLockOutError(state.channel);
@@ -2054,10 +1779,7 @@ export class AuthDanceApi {
 				persist: true,
 			};
 		} else if (state.kind === "delete") {
-			// Same confirmation gate as unenroll and unsubscribe, but the flow returns here instead of going
-			// through #advance: persisting is what every other flow ends with, and the identity being gone is the
-			// one outcome that must not be written back. Its sessions go with it, so no token outlives the
-			// identity it was minted for and resolves to a session pointing at nothing.
+			// This flow returns here and never calls #advance. Never write the deleted identity back.
 			if (options.value !== true) {
 				throw new ConfirmationRequiredError("identity");
 			}
@@ -2065,26 +1787,21 @@ export class AuthDanceApi {
 			const sessions = await this.#options.storage.listSession(identity.id);
 			await Promise.all(sessions.map((s) => this.#options.storage.deleteSession(s.id)));
 			await this.#options.storage.deleteIdentity(identity.id);
-			// The hooks follow the same order as the two writes above, so a listener never reads an identity that
-			// still holds a session the store already dropped. This is also the one identity a hook receives that
-			// the store no longer holds: the event carries it as it stood one moment before the delete.
+			// A hook gets the identity as it stood before the delete. The store no longer holds it.
 			for (const session of sessions) {
 				await this.#emit("onSessionDeleted", { flow: "delete", session, identity });
 			}
 			await this.#emit("onIdentityDeleted", { flow: "delete", identity });
 			return { success: true };
 		} else {
-			// Every AuthDanceState kind is handled above, so `state` narrows to `never` here — hence the cast. The
-			// branch is kept as a runtime guard: the state comes from the client, and a kind the schema does
-			// not know about should fail loudly rather than fall through to #advance with an empty flow.
+			// A runtime guard. The state comes from the client and can carry a kind the schema does not know.
 			throw new InvalidStateForFlowError((state as AuthDanceState).kind);
 		}
 		return this.#advance(advanceOptions);
 	}
 
 	// The verification that proves control of a value the flow already collected — the one-time code that confirms
-	// the address the owner just gave, for example. #awaitsValidation has already established that the state holds
-	// one, so every branch here resolves rather than guards.
+	// the address the owner just gave, for example.
 	async #resolveValidationSend(
 		state: AuthDanceState,
 		name: string,
@@ -2098,14 +1815,12 @@ export class AuthDanceApi {
 			return { authComponent: verificationAuthDanceComponent, ctx };
 		}
 		if (state.kind === "rotate") {
-			// Serves both rounds: before the replacement is collected the context still resolves to the
-			// enrolled value (proving control), afterwards it resolves to the replacement (validating it).
+			// Serves both rounds: the enrolled value before the collection of the replacement, then the replacement.
 			const { ctx, verificationAuthDanceComponent } = await this.#resolveRotateVerification(state);
 			return { authComponent: verificationAuthDanceComponent, ctx };
 		}
 		if (state.kind === "recover") {
-			// Serves both rounds too: proving control of the component the owner picked to identify with, then
-			// validating the replacement collected for the recovered component.
+			// Serves both rounds: the component the owner identified with, then the replacement.
 			const identity = await this.#recoverIdentity(state);
 			const { ctx, verificationAuthDanceComponent } = state.verified
 				? await this.#resolveRecoverResetVerification(state, identity)
@@ -2119,14 +1834,12 @@ export class AuthDanceApi {
 				ctx: this.#subscribeContext(state, identity),
 			};
 		}
-		// #awaitsValidation returns false for every other kind, so `state` narrows to `never` here — hence the cast.
-		// The branch is kept as a runtime guard, the way #submitPromptStep keeps its own.
+		// A runtime guard for a kind #awaitsValidation does not accept.
 		throw new InvalidStateForFlowError((state as AuthDanceState).kind);
 	}
 
-	// The value answers the validation the flow asked for. On success the collected value becomes confirmed and the
-	// dance continues: a rotate and a recover reply with the prompt that collects the replacement, and every other
-	// flow advances.
+	// The value answers the validation the flow asked for. On success the collected value becomes confirmed. A
+	// rotate and a recover reply with the prompt that collects the replacement. Every other flow advances.
 	async #submitValidationStep(
 		state: AuthDanceState,
 		expireAt: Date,
@@ -2173,7 +1886,6 @@ export class AuthDanceApi {
 			}
 			if (!state.verified) {
 				state.verified = true;
-				// Control established, now collect the replacement value.
 				return { state: await this.#encryptState(state, expireAt), prompt: await authComponent.getPrompt(ctx), expireAt };
 			}
 			const identityComponent = this.#collectedIdentityComponent(state.components, state.component);
@@ -2195,8 +1907,6 @@ export class AuthDanceApi {
 					throw new InvalidValidationValueError(state.identification!);
 				}
 				state.verified = true;
-				// Control established, now collect the replacement of the recovered component — the same second
-				// phase a rotation reaches once the current value is proven.
 				const { authComponent, ctx: resetCtx } = this.#resolveRecoverReset(state, identity);
 				return { state: await this.#encryptState(state, expireAt), prompt: await authComponent.getPrompt(resetCtx), expireAt };
 			}
@@ -2215,8 +1925,6 @@ export class AuthDanceApi {
 				persist: true,
 			};
 		} else if (state.kind === "subscribe") {
-			// The state is validating, so the recipient is in and the code was deliverable. #awaitsValidation is what
-			// establishes that; before the recipient the same value would have been read as the recipient itself.
 			const { identity } = await this.#sessionIdentity(state.sessionId);
 			const verified = await new OtpAuthDanceComponent({ channel: state.channel.component }).verifyPrompt(
 				options.value,
@@ -2235,8 +1943,7 @@ export class AuthDanceApi {
 				persist: true,
 			};
 		} else {
-			// #awaitsValidation returns false for every other kind, so `state` narrows to `never` here. The branch is
-			// kept as a runtime guard, the way #submitPromptStep keeps its own.
+			// A runtime guard for a kind #awaitsValidation does not accept.
 			throw new InvalidStateForFlowError((state as AuthDanceState).kind);
 		}
 		return this.#advance(advanceOptions);
@@ -2246,8 +1953,7 @@ export class AuthDanceApi {
 /**
  * Builds an `AuthDanceApi` from a policy.
  *
- * `createAuthDance` calls this with its own `api` option group and returns the result as `api`. Call it directly
- * when you want the state machine without the HTTP layer around it.
+ * Call it directly when you want the state machine without the HTTP layer.
  */
 export function createAuthDanceApi(options: AuthDanceApiOptions): AuthDanceApi {
 	return new AuthDanceApi(options);

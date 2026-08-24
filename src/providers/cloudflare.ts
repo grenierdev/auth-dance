@@ -120,8 +120,7 @@ export class CloudflareKvKvProvider implements AuthDanceKvProvider {
 		offset?: number,
 		limit?: number,
 	): Promise<string[]> {
-		// KV takes an opaque cursor, never a count of keys to skip, so the page it returns starts at the first
-		// key of the prefix. The skip happens here, and `limit` therefore asks KV for the skipped keys too.
+		// KV takes an opaque cursor, not a count of keys to skip. The skip happens here, so `limit` includes the skipped keys.
 		const start = offset ?? 0;
 		const result = await this.#kv.list({
 			prefix,
@@ -162,12 +161,8 @@ export class CloudflareRateLimiterProvider implements AuthDanceRateLimiterProvid
 }
 
 /**
- * Durable Object that tracks the request count for a single rate-limit key
- * over a sliding window.
- *
- * State is loaded once at construction and kept in memory; writes back to
- * storage are deferred via `ctx.waitUntil` so that `limit` returns as soon as
- * the in-memory counter has been updated.
+ * Durable Object that counts the hits of one rate-limit key over a window. The constructor loads the state once and
+ * keeps it in memory. Writes back to storage go through `ctx.waitUntil`.
  */
 export class RateLimiterDurableObject extends DurableObject {
 	#meta: KeyMetadata;
@@ -185,13 +180,9 @@ export class RateLimiterDurableObject extends DurableObject {
 	}
 
 	/**
-	 * Increments the in-memory counter for this key's current window and
-	 * reports whether the request is still within the allowed limit. The
-	 * updated counter is flushed to storage asynchronously via
-	 * `ctx.waitUntil`.
-	 * @param limit Maximum number of requests allowed within `period`.
-	 * @param period Sliding-window duration in milliseconds.
-	 * @returns `true` if the request is allowed, `false` if the limit is exceeded.
+	 * Counts one hit against the current window and reports whether the caller may continue.
+	 * @param limit Number of hits that one window allows.
+	 * @param period Length of the window in milliseconds.
 	 */
 	limit(limit: number, period: number): Promise<AuthDanceRateLimiterResult> {
 		const now = Date.now();
@@ -211,10 +202,7 @@ export class RateLimiterDurableObject extends DurableObject {
 		return Promise.resolve(result);
 	}
 
-	/**
-	 * Alarm handler that purges the counter once the current window has
-	 * elapsed, allowing the Durable Object to be evicted.
-	 */
+	/** Alarm handler that removes the counter after the current window ends. */
 	override async alarm(): Promise<void> {
 		if (this.#meta.expireAt <= Date.now()) {
 			this.#meta = { count: 0, expireAt: 0 };

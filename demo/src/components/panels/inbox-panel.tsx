@@ -1,13 +1,8 @@
 /**
  * @module
  *
- * The inbox slideout: every message a channel took, newest first.
- *
- * The channels of this demo never leave the browser. Instead of handing a message to a mail server or a gateway they
- * keep it, which is the only reason a one-time code the library sends is readable at all. The panel is that pile, and
- * the one control it offers carries a code back into the form so the owner never has to retype it.
- *
- * Nothing here ever leaves the machine, which is what makes the whole demo safe to hand around.
+ * The inbox slideout: every message a channel took, newest first. A channel of this demo keeps its messages in the
+ * browser and delivers nothing, which is why a one-time code is readable here.
  */
 
 import { InboxIcon } from "lucide-react";
@@ -23,19 +18,14 @@ import { clock } from "@/lib/format.ts";
 
 /** What the inbox asks of whoever hosts it. */
 export interface InboxPanelProps {
-	/** Called once a code has left the inbox for the form, so the host can close the slideout on the way out. */
+	/** Called after a code goes from the inbox to the form, so the host can close the slideout. */
 	onUsed: () => void;
 }
 
-/**
- * The body of the inbox slideout.
- *
- * It owns no state. `messages` is the only thing it reads and `useCode` the only thing it calls, and neither of them
- * touches the flow in progress beyond filling one field.
- */
+/** The body of the inbox slideout. It owns no state. */
 export function InboxPanel({ onUsed }: InboxPanelProps) {
 	const { messages } = useDance();
-	// `useCode` is not a react hook despite the name, so it travels under one that will not upset the linter.
+	// `useCode` is not a react hook despite the name.
 	const { useCode: fillCode } = useDanceActions();
 
 	if (messages.length === 0) {
@@ -60,7 +50,7 @@ export function InboxPanel({ onUsed }: InboxPanelProps) {
 		<ScrollArea className="min-h-0 flex-1">
 			<ItemGroup className="gap-2 px-6 pb-6">
 				{messages.map((message) => {
-					// Only the otp component files a bare code under `text/x-code`, so every other message shows its subject instead.
+					// Only the otp component files a bare code. Every other message shows its subject.
 					const code = message.code;
 					return (
 						<Item key={message.id} variant="outline" size="sm">

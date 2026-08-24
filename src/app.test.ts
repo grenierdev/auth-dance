@@ -13,7 +13,7 @@ import { AuthDanceStorage } from "./storage.ts";
 import type { AuthDanceKvProvider } from "./provider.ts";
 import { type AuthDance, createAuthDance } from "./mod.ts";
 
-// Same reasoning as api.test.ts: the cheapest hash the algorithm allows.
+// One PBKDF2 pass, to keep the suites fast.
 const TEST_PASSWORD_HASHER = pbkdf2PasswordHasher(1);
 
 // Every response is JSON, failures included, so a call only ever yields a status and a parsed body.
@@ -25,9 +25,7 @@ type Post = (
 	headers?: Record<string, string>,
 ) => Promise<[number, Json]>;
 
-// This mirrors api.test.ts case for case, exercising the same flows through the HTTP edge instead of
-// through AuthDanceApi directly. Where api.test.ts asserts on a rejected AuthDanceError, the equivalent here is
-// a 500 carrying `{ error: <code> }`; where it reads the identity back out of storage, so does this.
+// These cases run the flows of api.test.ts through the HTTP edge. A rejected AuthDanceError arrives as a 500 with `{ error: <code> }`.
 describe("App", () => {
 	let storage: AuthDanceStorage;
 	let apiOptions: AuthDanceApiOptions;
@@ -41,9 +39,7 @@ describe("App", () => {
 	let otp2: OtpAuthDanceComponent;
 	let password: PasswordAuthDanceComponent;
 
-	// Seeding an identity outside a flow. The password record is salted with the id of the identity, so the id
-	// comes first and the components are built against it, the way a sign-up mints one before its first step.
-	// Hence `setIdentity` rather than `createIdentity`, which mints an id of its own after the fact.
+	// Seeds an identity outside a flow. The password record is salted with the id, so the id comes first.
 	async function seedIdentity(
 		data: Record<string, unknown>,
 		build: (seed: (name: string) => AuthDanceComponentContext) => Promise<AuthDanceIdentityComponent[]>,
@@ -99,9 +95,7 @@ describe("App", () => {
 		return { authorization: `Bearer ${access_token}` };
 	}
 
-	// The management flows all start from an authenticated caller, so they each replay the same
-	// sequence("email", "password") sign-in first. api.test.ts spells it out every time; here it is a
-	// helper, since over HTTP it is three round-trips rather than three calls.
+	// The management flows all start from an authenticated caller, so each one replays this sign-in first.
 	async function signIn(): Promise<Json> {
 		const [, result1] = await post("/sign-in");
 		const [, result2] = await post("/submit-prompt", {
@@ -167,8 +161,6 @@ describe("App", () => {
 			state: result1.state,
 		});
 		assert(result2.state);
-		// The email step already put the identityId in the state; a rejected password must still stop the
-		// choreography instead of walking to the end of it and minting tokens.
 		const [status, rejected] = await post("/submit-prompt", {
 			name: "password",
 			value: "bar",
@@ -186,8 +178,7 @@ describe("App", () => {
 			state: result1.state,
 		});
 		assertEquals(status, 500);
-		// Deliberately the same code as a wrong password above: telling the two apart would let a caller
-		// enumerate which addresses have an account.
+		// The same code as a wrong password. A different code would let a caller enumerate accounts.
 		assertEquals(rejected.error, "INVALID_PROMPT_VALUE");
 	});
 
@@ -212,8 +203,7 @@ describe("App", () => {
 			listed.sessions.map((s: Json) => s.id).sort(),
 			[first.session.id, second.session.id].sort(),
 		);
-		// Which of the listed sessions is the caller's own, so a client can mark "this device" without having
-		// to decode the token it is holding.
+		// `current` names the caller's own session.
 		assertEquals(listed.current, second.session.id);
 		// A session that has been signed out stops being listed.
 		await post(
@@ -251,9 +241,7 @@ describe("App", () => {
 			bearer(session.tokens.access_token),
 		);
 		assertEquals(status, 200);
-		// EmailAuthDanceComponent contributes the identification, the channel it is delivered over and the
-		// one-time code that proves the address, so the list is what the identity actually holds rather than one
-		// entry per configured component.
+		// EmailAuthDanceComponent contributes the identification, the channel and the one-time code challenge.
 		assertEquals(listed.components, [
 			{
 				kind: "identification",
@@ -275,7 +263,7 @@ describe("App", () => {
 			},
 			{ kind: "challenge", component: "password", confirmed: true },
 		]);
-		// The component's private store never crosses the edge: the password hash is in there.
+		// The component's private store never crosses the edge. The password hash is in there.
 		assert(!listed.components.some((c: Json) => "data" in c));
 		// The route is authenticated, like every other management route.
 		const [rejectedStatus, rejected] = await post("/list-components");
@@ -400,7 +388,7 @@ describe("App", () => {
 			...await password.getIdentityComponent("password", "foo", true, seed("password")),
 		]);
 		const result3 = await signIn();
-		// The email component emits its own "email" channel, so the identity is already subscribed to it.
+		// The email component emits its own "email" channel.
 		const [status, rejected] = await post(
 			"/subscribe",
 			{ name: "email" },
@@ -453,9 +441,7 @@ describe("App", () => {
 			...await password.getIdentityComponent("password", "foo", true, seed("password")),
 		]);
 		const result3 = await signIn();
-		// The "email" channel carries linkedTo: ["email"], so dropping it drops that identification and the code
-		// challenge linked to it. sequence("email", "password") is the only path, and it has just lost its first
-		// step.
+		// The "email" channel carries linkedTo: ["email"], so dropping it drops the only path.
 		const [status, rejected] = await post(
 			"/unsubscribe",
 			{ name: "email" },
@@ -586,7 +572,7 @@ describe("App", () => {
 			),
 		]);
 		const result3 = await signIn();
-		// sequence("email", "password") has no path to an end without "password", enrolled "email2" or not.
+		// sequence("email", "password") has no path to an end without "password".
 		const [status, rejected] = await post(
 			"/unenroll",
 			{ name: "password" },
@@ -655,7 +641,7 @@ describe("App", () => {
 			...await password.getIdentityComponent("password", "foo", true, seed("password")),
 		]);
 		const result3 = await signIn();
-		// A second session, to show the deletion takes every session with it and not just the calling one.
+		// A second session, to show the deletion takes every session with it.
 		const other = await signIn();
 		const [, result4] = await post(
 			"/delete",
@@ -674,8 +660,7 @@ describe("App", () => {
 		assert(result5.success);
 		assertEquals(await storage.getIdentity(result3.identity.id), undefined);
 		assertEquals(await storage.listSession(result3.identity.id), []);
-		// No token outlives the identity it was minted for, the other session's included. A key that holds
-		// nothing resolves `undefined`, so the refusal carries the code of a session that is gone.
+		// No token outlives the identity, the other session's included.
 		const [rejectedStatus, rejected] = await post(
 			"/list-sessions",
 			undefined,
@@ -700,8 +685,7 @@ describe("App", () => {
 			undefined,
 			bearer(result3.tokens.access_token),
 		);
-		// Anything other than an outright `true` leaves the identity where it is — the gate is a confirmation,
-		// not a truthiness check.
+		// The gate is a confirmation, not a truthiness check.
 		const [status, rejected] = await post("/submit-prompt", {
 			name: "identity",
 			value: "yes",
@@ -820,8 +804,7 @@ describe("App", () => {
 			),
 			...await password.getIdentityComponent("password", "foo", true, seed("password")),
 		]);
-		// The body names what the owner lost. "email" is the only component of sequence("email", "password") that
-		// both resolves an identity and proves control of it, so the choice of one collapses to its own prompt.
+		// "email" is the only component that resolves an identity and proves control of it. The choice collapses to one prompt.
 		const [, result1] = await post("/recover", { name: "password" });
 		assertEquals(result1.prompt.kind, "input");
 		assertEquals(result1.prompt.name, "email");
@@ -866,8 +849,7 @@ describe("App", () => {
 	});
 
 	it("should not recover a component the caller has nothing left to identify through", async () => {
-		// "email" is the only component of sequence("email", "password") that identifies and verifies on its own,
-		// and it is the one being recovered — so nobody is left to prove they own the account.
+		// "email" is the only component that identifies and verifies on its own, and it is the one being recovered.
 		const [status, rejected] = await post("/recover", { name: "email" });
 		assertEquals(status, 500);
 		assertEquals(rejected.error, "COMPONENT_NOT_RECOVERABLE");
@@ -884,8 +866,7 @@ describe("App", () => {
 	});
 
 	it("should surface an unexpected failure as UNKNOWN, not as a business error", async () => {
-		// A provider blowing up is not a business rule: it must come out with no business error code so the
-		// caller maps it to a 500 instead of quietly treating it as a rejected credential.
+		// A provider failure is not a business rule. It must carry no business error code.
 		const boom = new TypeError("kv is down");
 		const brokenKv: AuthDanceKvProvider = {
 			get: () => Promise.reject(boom),
@@ -910,8 +891,7 @@ describe("App", () => {
 			state: result1.state,
 		});
 		assert(result2.state);
-		// OtpAuthDanceComponent.sendPrompt writes the code to KV and does not catch — unlike EmailAuthDanceComponent,
-		// which swallows storage faults into a plain "not verified" and so surfaces as a business error.
+		// OtpAuthDanceComponent.sendPrompt writes the code to KV and does not catch.
 		const [status, thrown] = await brokenPost("/send-prompt", {
 			name: "email",
 			locale: "en",
@@ -919,13 +899,11 @@ describe("App", () => {
 		});
 		assertEquals(status, 500);
 		assertEquals(thrown.error, "UNKNOWN");
-		// api.test.ts also asserts `thrown.cause === boom`. Over HTTP that is precisely what must NOT travel:
-		// AuthDanceError keeps `code` as its only own-enumerable property, so the body carries nothing else.
+		// The cause must not travel. AuthDanceError keeps `code` as its only own-enumerable property.
 		assertEquals(Object.keys(thrown), ["error"]);
 	});
 
-	// No counterpart in api.test.ts: these cover what the edge itself adds on top of AuthDanceApi — reading the
-	// access token off the AuthDanceorization header, the caller off the connection, and body validation.
+	// These cases cover what the edge adds on top of AuthDanceApi: the access token, the caller address, and the body validation.
 	describe("http", () => {
 		it("should refuse an authenticated route with no bearer token", async () => {
 			const [status, rejected] = await post("/enroll", { name: "email2" });
@@ -933,16 +911,13 @@ describe("App", () => {
 			assertEquals(rejected.error, "INVALID_ACCESS_TOKEN");
 		});
 
-		// Spelled out for the most destructive route of all rather than relying on the case above covering
-		// every authenticated route by family resemblance.
 		it("should refuse a deletion with no bearer token", async () => {
 			const [status, rejected] = await post("/delete");
 			assertEquals(status, 500);
 			assertEquals(rejected.error, "INVALID_ACCESS_TOKEN");
 		});
 
-		// A malformed header and a rejected token report the same code: from the caller's side both mean
-		// "this request carried no usable access token", and saying which would only help someone probing.
+		// A malformed header and a rejected token report the same code.
 		it("should refuse a malformed authorization header", async () => {
 			const [status, rejected] = await post("/enroll", { name: "email2" }, {
 				authorization: "Basic aGk6dGhlcmU=",
@@ -957,16 +932,14 @@ describe("App", () => {
 			assertEquals(rejected.error, "BAD_REQUEST");
 		});
 
-		// AuthDanceResponseState carries a Date; what reaches the client is the ISO string c.json produces, which
-		// is what the documented response schema describes.
+		// AuthDanceResponseState carries a Date. The client gets the ISO string.
 		it("should serialise expireAt as an ISO timestamp", async () => {
 			const [, result] = await post("/sign-in");
 			assertEquals(typeof result.expireAt, "string");
 			assert(!isNaN(Date.parse(result.expireAt)));
 		});
 
-		// address and userAgent describe the caller, so they are read from the connection and never from the
-		// body — a client must not be able to choose what gets recorded against its own session.
+		// The library reads address and userAgent from the connection, never from the body.
 		it("should record the caller from the request headers", async () => {
 			await seedIdentity({ name: "John Doe" }, async (seed) => [
 				...await email.getIdentityComponent(
@@ -1020,8 +993,7 @@ describe("App", () => {
 			assertEquals(response.status, 404);
 		});
 
-		// The per-address counterpart to the per-identity buckets api.test.ts covers: those stop one identity
-		// from being hammered, these stop one origin from spreading the same abuse across many identities.
+		// The per-address counterpart to the per-identity buckets of api.test.ts.
 		describe("rate limit", () => {
 			function limitedPost(
 				address_rate_limit: NonNullable<
@@ -1054,7 +1026,7 @@ describe("App", () => {
 				);
 				assertEquals(status, 429);
 				assertEquals(rejected.error, "RATE_LIMITED");
-				// The bucket is on the address, not on the route: a different flow shares the same allowance.
+				// The bucket is on the address, not on the route. A different flow shares the same allowance.
 				assertEquals(
 					(await post("/recover", { name: "password" }, from("203.0.113.7")))[0],
 					429,
@@ -1077,8 +1049,7 @@ describe("App", () => {
 				);
 			});
 
-			// An address the connection did not give us is not bucketed rather than lumped into a shared
-			// "unknown" key, which any one caller could exhaust on everybody else's behalf.
+			// The library does not bucket a request that carries no address.
 			it("should not bucket a request that carries no address", async () => {
 				const post = limitedPost({ request: { limit: 1, window: 60 } });
 				for (let attempt = 0; attempt < 3; attempt++) {
@@ -1112,8 +1083,7 @@ describe("App", () => {
 				}, from("203.0.113.7"));
 				assertEquals(sentStatus, 200);
 				assertEquals(channelEmail.messages.length, 1);
-				// Refused before anything reaches a channel: the whole point of a bucket on the routes that cost
-				// money is that the message is never sent.
+				// The refusal comes before anything reaches a channel.
 				const [status, rejected] = await post("/send-prompt", {
 					name: "email",
 					state: result2.state,
@@ -1128,9 +1098,7 @@ describe("App", () => {
 				);
 			});
 
-			// The send bucket is mounted on the route, so the router applies it under a prefix as well. A comparison
-			// against the request path missed it here, and a deployment behind a basePath then paid for every message
-			// it was asked to send.
+			// The send bucket is mounted on the route, so the router applies it under a prefix as well.
 			it("should bucket the sending route under a basePath", async () => {
 				const post = client(createAuthDance({
 					api: {

@@ -1,19 +1,16 @@
 /**
  * @module
  *
- * The progress trail of a running flow.
- *
- * A choreography is a tree, so the number of steps is not known when the flow starts. The trail is therefore a record of
- * what has been answered rather than a plan: every name the store collected, plus the one on screen. A name that had to
- * prove control of itself already carries its check mark, so this only lays them out.
+ * The progress trail of a running flow. A choreography is a tree, so the count of steps is not known at the start. The
+ * trail shows every name the store collected, plus the one on screen.
  */
 
 import type { Step } from "@/lib/dance/index.ts";
 import { cn } from "@/lib/utils.ts";
 
-/** One row of small pills, the answered names muted and the pending one accented. Scrolls sideways when the flow is long. */
+/** One row of small pills. The answered names are muted and the pending one is accented. */
 export function FlowTrail({ step }: { step: Step }) {
-	// A choice has no name of its own until a branch is answered, so the pending pill says what it is instead.
+	// A choice has no name of its own until a branch is answered.
 	const pending = step.prompt.kind === "input" ? step.prompt.name : "choice";
 
 	return (

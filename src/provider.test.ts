@@ -59,8 +59,7 @@ export function testIdentityProvider(factory: () => AuthDanceIdentityProvider | 
 		assertEquals(retrieved.data, identity.data);
 	});
 
-	// `limit` is a count of identities, not the end index of a range: a page that starts at the cursor and asks
-	// for one identity holds that one identity, wherever the cursor sits.
+	// `limit` is a count of identities, not the end index of a range.
 	it("should return at most limit identities from the cursor", async () => {
 		for (const id of ["id_a1", "id_a2", "id_a3"]) {
 			await provider.set({ id, data: {}, components: [] } satisfies AuthDanceIdentity);
@@ -120,8 +119,7 @@ export function testKvProvider(factory: () => AuthDanceKvProvider | Promise<Auth
 		assert(!keys.includes("other_key"));
 	});
 
-	// `offset` counts the keys to skip and `limit` counts the keys to return, so the two together describe a page
-	// of the matching keys rather than a range of indexes.
+	// `offset` counts the keys to skip. `limit` counts the keys to return.
 	it("should return at most limit keys from the offset", async () => {
 		await provider.set("page_1", "a");
 		await provider.set("page_2", "b");

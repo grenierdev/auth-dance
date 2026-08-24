@@ -1,15 +1,8 @@
 /**
  * @module
  *
- * The body of the options slideout: the choreography the instance dances, the durations it counts with, and whether a
- * rebuild seeds an identity to sign in as.
- *
- * A choreography is inert data, so this panel is the whole of the policy editor. It edits a draft of its own and
- * commits nothing until Apply, because every one of these fields costs a rebuild, and a rebuild takes every identity,
- * session and message of the running instance with it.
- *
- * The draft holds its durations as the text of their inputs rather than as numbers. A field a reader is halfway
- * through retyping is briefly empty, and a draft of numbers would snap it back to a default under the caret.
+ * The body of the options slideout: the choreography, the durations, and whether a rebuild seeds an identity. The panel
+ * edits a local draft and commits nothing until Apply. A rebuild loses every identity, session and message.
  */
 
 import { useMemo, useState } from "react";
@@ -26,12 +19,11 @@ import { type Config, DEFAULT_DURATIONS, DURATION_FIELDS, PRESETS, useDance, use
 import { resolvedTree } from "@/lib/format.ts";
 import { cn } from "@/lib/utils.ts";
 
-/** What `SelectValue` reads the label of the picked preset from, since it never sees the item elements itself. */
+/** The label and value of every preset, which is what `SelectValue` reads. */
 const PRESET_ITEMS = PRESETS.map((preset) => ({ label: preset.label, value: preset.id }));
 
 /** The edit in progress. It mirrors a config, except that every duration is the text of its input. */
 interface Draft {
-	/** The id of the picked preset. */
 	preset: string;
 	/** The custom tree, as JSON. It survives a trip through another preset. */
 	custom: string;
@@ -62,21 +54,16 @@ function toConfig(draft: Draft): Config {
 
 /** What the options slideout needs from whoever opened it. */
 export interface OptionsPanelProps {
-	/** Called once the draft is on its way to the store, so the slideout can step out of the way of the rebuilt page. */
+	/** Called once the draft is on its way to the store, so the slideout can close. */
 	onApplied: () => void;
 }
 
-/**
- * The options slideout, from the warning at the top to the two buttons at the bottom.
- *
- * Nothing here reaches for the store directly: the draft is local, and `applyConfig` is the single door it leaves by.
- */
+/** The options slideout, from the warning at the top to the two buttons at the bottom. */
 export function OptionsPanel({ onApplied }: OptionsPanelProps) {
 	const { config, busy } = useDance();
 	const { applyConfig, restoreDefaults } = useDanceActions();
 
-	// The draft follows the config whenever the store hands out a new one: the first load, an apply, a restore. This is
-	// the render-time adjustment React documents for derived state, and it costs one extra render of a panel this size.
+	// The draft follows the config whenever the store hands out a new one: the first load, an apply, a restore.
 	const [source, setSource] = useState(config);
 	const [draft, setDraft] = useState(() => toDraft(config));
 	if (source !== config) {
@@ -84,14 +71,10 @@ export function OptionsPanel({ onApplied }: OptionsPanelProps) {
 		setDraft(toDraft(config));
 	}
 
-	// The preview is also the error surface: a custom tree that does not parse says so here, in the words of the
-	// failure itself, instead of waiting for the rebuild to refuse it.
 	const resolved = useMemo(() => resolvedTree(toConfig(draft)), [draft]);
 
 	const hint = PRESETS.find((preset) => preset.id === draft.preset)?.hint ?? "";
 
-	// `applyConfig` reads the tree before it throws the running instance away, so a broken custom tree costs nothing but
-	// the refusal. The slideout stays open in that case, next to the preview naming the bad node.
 	const apply = (): void => {
 		void applyConfig(toConfig(draft));
 		if (resolved.ok) {

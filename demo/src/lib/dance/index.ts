@@ -1,10 +1,7 @@
 /**
  * @module
  *
- * The whole non-visual half of the demo, in one import.
- *
- * A panel takes its state from {@link useDance}, its controls from {@link useDanceActions}, and everything it needs to
- * read a prompt from the pure helpers of `flows.ts`. Nothing under this folder renders anything.
+ * The whole non-visual half of the demo, in one import. Nothing under this folder renders anything.
  */
 
 export {

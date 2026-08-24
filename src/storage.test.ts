@@ -97,8 +97,6 @@ describe("Storage", () => {
 		const keys = await storage.listKv("user/");
 		assertEquals(keys, ["user/1", "user/2"]);
 	});
-	// `listKv` and `AuthDanceKvProvider.list` take their three arguments in the same order, so a page asked of the
-	// storage is the page the adapter returns.
 	it("should page KV keys with an offset and a limit", async () => {
 		await storage.setKv("user/1", "a");
 		await storage.setKv("user/2", "b");
@@ -115,9 +113,7 @@ describe("Storage", () => {
 		assertEquals(await storage.listKv("greeting"), []);
 	});
 	it("should keep a KV value readable for the seconds its ttl counts", async () => {
-		// The ttl is a count of seconds, so a value given one of them is still there a fraction of a second on.
-		// A provider that added that count to a millisecond clock dropped it here instead, and with it every
-		// one-time code a caller took longer than a moment to type.
+		// The ttl is a count of seconds.
 		await storage.setKv("greeting", "hello", 1);
 		await new Promise((resolve) => setTimeout(resolve, 50));
 		assertEquals(await storage.getKv("greeting"), "hello");

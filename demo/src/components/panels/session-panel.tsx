@@ -1,14 +1,8 @@
 /**
  * @module
  *
- * The body of the session slideout.
- *
- * Signed out it says where the tokens will appear. Signed in it shows what the library minted: the identity and the
- * session behind the request, the three tokens, and whatever `/list-sessions` and `/list-components` last answered.
- * Nothing here holds state the store already owns; the only local state is which token the owner just copied, which
- * is a property of the button and of nothing else.
- *
- * Every value on screen was minted in the browser, by the same page that serves it.
+ * The body of the session slideout. Signed out it says where the tokens will appear. Signed in it shows the identity,
+ * the session, the three tokens, and whatever `/list-sessions` and `/list-components` last answered.
  */
 
 import { useEffect, useState } from "react";
@@ -24,21 +18,18 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { useDance, useDanceActions } from "@/lib/dance/index.ts";
 import { stamp } from "@/lib/format.ts";
 
-/** The three tokens, in the order the library mints them and the reference listed them. */
+/** The three tokens, in the order the library mints them. */
 const TOKEN_NAMES = ["access_token", "id_token", "refresh_token"] as const;
 
-/** How long the copy button stays acknowledged before it goes back to its idle icon. */
+/** How long the copy button stays acknowledged, in milliseconds. */
 const COPIED_MS = 1200;
 
-/** A token is far too long to read, and its middle carries nothing an owner can check. Keep both ends. */
+/** Shortens a value. It keeps both ends and replaces the middle. */
 function middle(value: string, keep = 12): string {
 	return value.length <= keep * 2 + 1 ? value : `${value.slice(0, keep)}…${value.slice(-keep)}`;
 }
 
-/**
- * The session slideout: what the running instance knows about the caller, and the two lists it will answer with when
- * asked. Takes no props, reads everything from the store, and scrolls on its own so the sheet never grows a scrollbar.
- */
+/** The session slideout: what the running instance knows about the caller, and the two lists it can answer with. */
 export function SessionPanel() {
 	const { ready, tokens, session, sessions, enrolled, busy } = useDance();
 	const { listSessions, listComponents } = useDanceActions();
@@ -135,7 +126,6 @@ export function SessionPanel() {
 										<Item key={entry.id} variant="muted" size="xs">
 											<ItemContent>
 												<ItemTitle className="w-full font-mono text-xs break-all">{entry.id}</ItemTitle>
-												{/* A session lives as long as its refresh token, a day by default, so the date belongs beside the clock. */}
 												<ItemDescription className="text-xs">
 													expires {stamp(entry.expireAt)}
 													{entry.scopes.length > 0 && ` · ${entry.scopes.join(" ")}`}

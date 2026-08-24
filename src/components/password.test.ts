@@ -6,7 +6,7 @@ import { MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } f
 import { AuthDanceStorage } from "../storage.ts";
 import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "./password.ts";
 
-// One PBKDF2 pass: these cases assert on the shape and the decisions, never on the cost.
+// One PBKDF2 pass.
 const hasher = pbkdf2PasswordHasher(1);
 
 function context(components: AuthDanceIdentityComponent[] = [], flow = "sign-up", id = "id_test"): AuthDanceComponentContext {
@@ -48,7 +48,7 @@ Deno.test("PasswordAuthDanceComponent", async (t) => {
 		const password = new PasswordAuthDanceComponent("pepper", hasher);
 		const first = hashOf(await password.getIdentityComponent("password", "correct horse", true, context([], "sign-up", "id_first")));
 		const second = hashOf(await password.getIdentityComponent("password", "correct horse", true, context([], "sign-up", "id_second")));
-		// Two identities sharing a password must not share a record, or the store discloses that they share one.
+		// Two identities sharing a password must not share a record.
 		assert(first !== second);
 	});
 
@@ -78,8 +78,7 @@ Deno.test("PasswordAuthDanceComponent", async (t) => {
 
 	await t.step("should verify across NFKC-equivalent spellings", async () => {
 		const password = new PasswordAuthDanceComponent("pepper", hasher);
-		// Enrolled as e + combining acute (what a macOS client hands over), submitted as a composed \u00e9.
-		// Annotated, or the compiler narrows both to literal types and calls the comparison below unintentional.
+		// Enrolled as e + combining acute, submitted as a composed \u00e9.
 		const decomposed: string = "cafe\u0301 latte";
 		const composed: string = "caf\u00e9 latte";
 		assert(decomposed !== composed);
@@ -96,7 +95,7 @@ Deno.test("PasswordAuthDanceComponent", async (t) => {
 
 	await t.step("should reject a record it cannot have written instead of throwing", async () => {
 		const password = new PasswordAuthDanceComponent("pepper", hasher);
-		// What an older component stored: base64(SHA-512("salty:foo")), which no hasher here answers.
+		// A record no hasher here answers: base64(SHA-512("salty:foo")).
 		const legacy: AuthDanceIdentityComponent[] = [{
 			kind: "challenge",
 			component: "password",
@@ -126,7 +125,6 @@ Deno.test("PasswordAuthDanceComponent", async (t) => {
 			() => password.getIdentityComponent("password", "correct horse", false, context(stored, "rotate")),
 			InvalidPromptValueError,
 		);
-		// A different one goes through, which is the whole point of the check.
 		const rotated = await password.getIdentityComponent("password", "battery staple", false, context(stored, "rotate"));
 		assert(hashOf(rotated) !== hashOf(stored));
 	});

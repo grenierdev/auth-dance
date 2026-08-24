@@ -1,42 +1,22 @@
 import { AuthDanceIdentityChannel, AuthDanceIdentityComponent } from "./identity.ts";
 import * as v from "valibot";
 
-/**
- * The in-progress dance of a caller who signs in to an identity that already exists.
- *
- * The state carries no submitted value. It carries the path the dance walked so far, and the library asks the
- * choreography what comes next.
- */
+/** The in-progress dance of an owner who signs in to an identity that already exists. */
 export interface AuthDanceStateSignIn {
-	/**
-	 * The id of this dance, a ksuid with an `st_` prefix.
-	 *
-	 * A component keys its own per-dance storage under this id, for example the pending one-time code.
-	 */
+	/** The id of this dance, a ksuid with an `st_` prefix. */
 	id: string;
-	/** The discriminator that tells the library this dance is a sign-in. */
+	/** The discriminator for a sign-in dance. */
 	kind: "sign-in";
-	/**
-	 * The names of the components the caller already answered, oldest first.
-	 *
-	 * The library appends one name for every value it accepts, then reads the path to get the next prompt. An empty
-	 * path means the dance stays at its first step.
-	 */
+	/** The names of the components the owner already answered, oldest first. */
 	path: string[];
 	/**
 	 * The identity a component resolved, absent until one step resolves it.
-	 *
-	 * A later step that resolves a different identity fails with `IDENTITY_MISMATCH`. The per-identity rate limit
-	 * buckets also key on this id, so a wrong password costs a slot on the identity behind the attempt.
+	 * A later step that resolves a different identity fails with `IDENTITY_MISMATCH`.
 	 */
 	identityId?: string;
 }
 
-/**
- * Parses and validates a sign-in state.
- *
- * The library runs it as one member of the `AuthDanceState` union every time it decrypts the opaque state string.
- */
+/** Parses and validates a sign-in state. */
 export const AuthDanceStateSignIn: v.GenericSchema<AuthDanceStateSignIn> = v.pipe(
 	v.object({
 		id: v.string(),
@@ -50,36 +30,19 @@ export const AuthDanceStateSignIn: v.GenericSchema<AuthDanceStateSignIn> = v.pip
 	),
 );
 
-/**
- * The in-progress dance of a caller who creates a new identity.
- *
- * Sign-up collects the components that sign-in verifies, so the two flows always match. The identity reaches
- * storage only at the last step, so an abandoned sign-up leaves no identity record.
- */
+/** The in-progress dance of an owner who creates a new identity. The identity reaches storage only at the last step. */
 export interface AuthDanceStateSignUp {
 	/** The id of this dance, a ksuid with an `st_` prefix. */
 	id: string;
-	/** The discriminator that tells the library this dance is a sign-up. */
+	/** The discriminator for a sign-up dance. */
 	kind: "sign-up";
-	/**
-	 * The id of the identity this dance builds, a ksuid with an `id_` prefix.
-	 *
-	 * The library mints the id when the dance starts, so a component already sees the identity it contributes to. The
-	 * identity itself reaches storage only when the dance completes. No rate limit bucket keys on this id, because
-	 * a caller can always start another sign-up.
-	 */
+	/** The id of the identity this dance builds, a ksuid with an `id_` prefix. The library mints it when the dance starts. */
 	identityId: string;
-	/**
-	 * The identity components collected so far, each with the private data it holds.
-	 *
-	 * The confirmed identifications and challenges make the path the dance walked so far. A component that waits for a
-	 * validation therefore does not advance the choreography. A channel a component also yields never counts as a
-	 * step.
-	 */
+	/** The identity components collected so far. A component that waits for a validation does not advance the choreography. */
 	components: AuthDanceIdentityComponent[];
 }
 
-/** Parses and validates a sign-up state, as one member of the `AuthDanceState` union. */
+/** Parses and validates a sign-up state. */
 export const AuthDanceStateSignUp: v.GenericSchema<AuthDanceStateSignUp> = v.pipe(
 	v.object({
 		id: v.string(),
@@ -94,36 +57,23 @@ export const AuthDanceStateSignUp: v.GenericSchema<AuthDanceStateSignUp> = v.pip
 );
 
 /**
- * The in-progress dance of an authenticated caller who adds one component to the identity.
- *
- * The flow starts from an access token instead of the first step of the choreography, and it demands a recent
- * sign-in. Past the elevated window the library answers `FRESH_SIGN_IN_REQUIRED`.
+ * The in-progress dance of an authenticated owner who adds one component to the identity.
+ * The flow needs a recent sign-in. Past the elevated window the library answers `FRESH_SIGN_IN_REQUIRED`.
  */
 export interface AuthDanceStateEnroll {
 	/** The id of this dance, a ksuid with an `st_` prefix. */
 	id: string;
-	/** The discriminator that tells the library this dance is an enrollment. */
+	/** The discriminator for an enrollment dance. */
 	kind: "enroll";
-	/**
-	 * The session the caller started the enrollment from.
-	 *
-	 * The library resolves the identity to change through this session, and the rate limit buckets key on it.
-	 */
+	/** The session the owner started the enrollment from, and the subject the rate limit buckets key on. */
 	sessionId: string;
-	/** The name of the component the caller enrolls. */
+	/** The name of the component the owner enrolls. */
 	component: string;
-	/**
-	 * What the component produced for the submitted value: the identification or challenge itself, plus any channel
-	 * it also yields.
-	 *
-	 * An empty list means the library has not collected the value yet. The library accepts the value once. A second
-	 * value fails with `COMPONENT_ALREADY_COLLECTED`, because everything after the first belongs to the validation
-	 * round.
-	 */
+	/** What the component produced, plus any channel it also yields. A second value fails with `COMPONENT_ALREADY_COLLECTED`. */
 	components: AuthDanceIdentityComponent[];
 }
 
-/** Parses and validates an enrollment state, as one member of the `AuthDanceState` union. */
+/** Parses and validates an enrollment state. */
 export const AuthDanceStateEnroll: v.GenericSchema<AuthDanceStateEnroll> = v.pipe(
 	v.object({
 		id: v.string(),
@@ -139,23 +89,21 @@ export const AuthDanceStateEnroll: v.GenericSchema<AuthDanceStateEnroll> = v.pip
 );
 
 /**
- * The in-progress dance of an authenticated caller who removes one component from the identity.
- *
+ * The in-progress dance of an authenticated owner who removes one component from the identity.
  * The library refuses the removal with `WOULD_LOCK_OUT` when no path through the choreography stays completable.
- * The caller answers one confirmation prompt, so this state holds no collected value.
  */
 export interface AuthDanceStateUnenroll {
 	/** The id of this dance, a ksuid with an `st_` prefix. */
 	id: string;
-	/** The discriminator that tells the library this dance is an unenrollment. */
+	/** The discriminator for an unenrollment dance. */
 	kind: "unenroll";
-	/** The session the caller started the removal from, and the subject the rate limit buckets key on. */
+	/** The session the owner started the removal from, and the subject the rate limit buckets key on. */
 	sessionId: string;
-	/** The name of the component the caller removes. */
+	/** The name of the component the owner removes. */
 	component: string;
 }
 
-/** Parses and validates an unenrollment state, as one member of the `AuthDanceState` union. */
+/** Parses and validates an unenrollment state. */
 export const AuthDanceStateUnenroll: v.GenericSchema<AuthDanceStateUnenroll> = v.pipe(
 	v.object({
 		id: v.string(),
@@ -169,40 +117,26 @@ export const AuthDanceStateUnenroll: v.GenericSchema<AuthDanceStateUnenroll> = v
 	),
 );
 
-/**
- * The in-progress dance of an authenticated caller who replaces the value of one enrolled component.
- *
- * The flow runs in two phases. First the caller proves control of the current value. Then the library collects
- * the replacement and validates it.
- */
+/** The in-progress dance of an authenticated owner who replaces the value of one enrolled component. */
 export interface AuthDanceStateRotate {
 	/** The id of this dance, a ksuid with an `st_` prefix. */
 	id: string;
-	/** The discriminator that tells the library this dance is a rotation. */
+	/** The discriminator for a rotation dance. */
 	kind: "rotate";
-	/** The session the caller started the rotation from, and the subject the rate limit buckets key on. */
+	/** The session the owner started the rotation from, and the subject the rate limit buckets key on. */
 	sessionId: string;
-	/** The name of the component the caller rotates. */
+	/** The name of the component the owner rotates. */
 	component: string;
 	/**
-	 * True once the caller proves control of the current value.
-	 *
-	 * For a component that offers no verification, the library sets this flag true from the start. A code the library
-	 * sends to the current email address proves control. A password typed again proves nothing the access token does
-	 * not already establish. While this flag stays false, `submitPrompt` reads the value it gets as that proof
-	 * rather than as the replacement.
+	 * True once the owner proves control of the current value. The library sets it true from the start for a component
+	 * with no verification step. While this flag stays false, `submitPrompt` reads the value it gets as that proof.
 	 */
 	verified: boolean;
-	/**
-	 * The replacement the component produced, plus any channel it also yields.
-	 *
-	 * An empty list means the library has not collected the replacement yet. The library writes the replacement to
-	 * the identity by name, so it supersedes the value it replaces instead of joining it.
-	 */
+	/** The replacement the component produced, plus any channel it also yields. The library writes it to the identity by name. */
 	components: AuthDanceIdentityComponent[];
 }
 
-/** Parses and validates a rotation state, as one member of the `AuthDanceState` union. */
+/** Parses and validates a rotation state. */
 export const AuthDanceStateRotate: v.GenericSchema<AuthDanceStateRotate> = v.pipe(
 	v.object({
 		id: v.string(),
@@ -219,57 +153,30 @@ export const AuthDanceStateRotate: v.GenericSchema<AuthDanceStateRotate> = v.pip
 );
 
 /**
- * The in-progress dance of a caller with no session who recovers one component of an identity.
- *
- * The caller names the component they can no longer provide. The library answers with the components of the
- * choreography that can resolve an identity and prove control of it, the caller picks one of them and proves
- * control of it, and the library then resets the named component. The flow completes with a success result, never
- * with tokens.
+ * The in-progress dance of an owner with no session who recovers one component of an identity.
+ * The owner picks another component to prove control through. The flow completes with a success result, never with tokens.
  */
 export interface AuthDanceStateRecover {
 	/** The id of this dance, a ksuid with an `st_` prefix. */
 	id: string;
-	/** The discriminator that tells the library this dance is a recovery. */
+	/** The discriminator for a recovery dance. */
 	kind: "recover";
 	/**
-	 * The name of the component the recovery resets, as the caller named it.
-	 *
-	 * A step of the choreography has to carry that name, and at least one other step has to be able to identify
-	 * the owner and prove control on its own. Otherwise the library answers `COMPONENT_NOT_RECOVERABLE`.
+	 * The name of the component the recovery resets, as the owner named it.
+	 * The library answers `COMPONENT_NOT_RECOVERABLE` when no other step can identify the owner and prove control on its own.
 	 */
 	component: string;
-	/**
-	 * The name of the component the caller proves control through, absent until the caller picks one.
-	 *
-	 * The first prompt of the flow is a choice between every component of the choreography that resolves an
-	 * identity and proves control of it, the component being recovered excluded. The answer to that choice lands
-	 * here.
-	 */
+	/** The name of the component the owner proves control through, absent until the owner picks one. */
 	identification?: string;
-	/**
-	 * The identity the picked component resolved, absent until the caller answers the choice above.
-	 *
-	 * The first prompt belongs to the components themselves, so nothing about the identity reaches the caller
-	 * before that step. A validation call before that step fails with `RECOVERY_NOT_IDENTIFIED`.
-	 */
+	/** The identity the picked component resolved. A validation call before that step fails with `RECOVERY_NOT_IDENTIFIED`. */
 	identityId?: string;
-	/**
-	 * True once the owner proves control of the component they picked to identify with.
-	 *
-	 * The library resets nothing before then. While this flag stays false, `submitPrompt` reads the value it gets as
-	 * that proof rather than as the replacement of the recovered component.
-	 */
+	/** True once the owner proves control of the picked component. Before that, `submitPrompt` reads a value as the proof. */
 	verified: boolean;
-	/**
-	 * The replacement the recovered component produced, plus any channel it also yields.
-	 *
-	 * An empty list means the library has not collected the replacement yet. The library writes the replacement to
-	 * the identity by name, so it supersedes the value the caller lost instead of joining it.
-	 */
+	/** The replacement the recovered component produced, plus any channel it also yields. The library writes it by name. */
 	components: AuthDanceIdentityComponent[];
 }
 
-/** Parses and validates a recovery state, as one member of the `AuthDanceState` union. */
+/** Parses and validates a recovery state. */
 export const AuthDanceStateRecover: v.GenericSchema<AuthDanceStateRecover> = v.pipe(
 	v.object({
 		id: v.string(),
@@ -287,36 +194,26 @@ export const AuthDanceStateRecover: v.GenericSchema<AuthDanceStateRecover> = v.p
 );
 
 /**
- * The in-progress dance of an authenticated caller who adds a channel to the identity.
- *
- * The library delivers the confirming code over the new channel itself, to the recipient this dance collects.
- * The code that comes back proves control of that recipient, the same proof an enrollment asks of the value it
- * enrolls.
+ * The in-progress dance of an authenticated owner who adds a channel to the identity.
+ * The library delivers the one-time code over the new channel itself, to the recipient this dance collects.
  */
 export interface AuthDanceStateSubscribe {
 	/** The id of this dance, a ksuid with an `st_` prefix. */
 	id: string;
-	/** The discriminator that tells the library this dance is a subscription. */
+	/** The discriminator for a subscription dance. */
 	kind: "subscribe";
-	/** The session the caller started the subscription from, and the subject the rate limit buckets key on. */
+	/** The session the owner started the subscription from, and the subject the rate limit buckets key on. */
 	sessionId: string;
 	/**
-	 * The pending channel record, unconfirmed for as long as the dance runs.
-	 *
-	 * The library stores the submitted recipient in the private `data` of the record, keyed by the channel name. The
-	 * record joins the components of the identity only after the code validates it.
+	 * The pending channel record, unconfirmed for as long as the dance runs. The library stores the submitted recipient in
+	 * the private `data` of the record, keyed by the channel name.
 	 */
 	channel: AuthDanceIdentityChannel;
-	/**
-	 * False while the library still collects the recipient, true once the library accepts it.
-	 *
-	 * The library sets this flag when it returns the one-time code prompt. After that, `submitPrompt` reads the value
-	 * it gets as that code, so a second recipient no longer reaches the channel record.
-	 */
+	/** True once the library accepts the recipient. After that, `submitPrompt` reads the value it gets as the one-time code. */
 	validating: boolean;
 }
 
-/** Parses and validates a subscription state, as one member of the `AuthDanceState` union. */
+/** Parses and validates a subscription state. */
 export const AuthDanceStateSubscribe: v.GenericSchema<AuthDanceStateSubscribe> = v.pipe(
 	v.object({
 		id: v.string(),
@@ -332,24 +229,22 @@ export const AuthDanceStateSubscribe: v.GenericSchema<AuthDanceStateSubscribe> =
 );
 
 /**
- * The in-progress dance of an authenticated caller who removes a channel from the identity.
- *
- * The removal takes every component the channel links to with it, and the library refuses it with
- * `WOULD_LOCK_OUT` when no path through the choreography survives that set. The caller answers one confirmation
- * prompt, so this state carries no collected value.
+ * The in-progress dance of an authenticated owner who removes a channel from the identity.
+ * The removal takes every component the channel links to with it. The library refuses it with `WOULD_LOCK_OUT` when no
+ * path through the choreography survives that set.
  */
 export interface AuthDanceStateUnsubscribe {
 	/** The id of this dance, a ksuid with an `st_` prefix. */
 	id: string;
-	/** The discriminator that tells the library this dance is an unsubscription. */
+	/** The discriminator for an unsubscription dance. */
 	kind: "unsubscribe";
-	/** The session the caller started the removal from, and the subject the rate limit buckets key on. */
+	/** The session the owner started the removal from, and the subject the rate limit buckets key on. */
 	sessionId: string;
-	/** The name of the channel the caller removes. */
+	/** The name of the channel the owner removes. */
 	channel: string;
 }
 
-/** Parses and validates an unsubscription state, as one member of the `AuthDanceState` union. */
+/** Parses and validates an unsubscription state. */
 export const AuthDanceStateUnsubscribe: v.GenericSchema<AuthDanceStateUnsubscribe> = v.pipe(
 	v.object({
 		id: v.string(),
@@ -363,26 +258,17 @@ export const AuthDanceStateUnsubscribe: v.GenericSchema<AuthDanceStateUnsubscrib
 	),
 );
 
-/**
- * The in-progress dance of an authenticated caller who deletes the whole identity.
- *
- * The flow needs a recent sign-in and one explicit confirmation, and nothing more. No component has to keep the
- * choreography completable, because the caller asked for the lock out.
- */
+/** The in-progress dance of an authenticated owner who deletes the whole identity. It needs a recent sign-in and one confirmation. */
 export interface AuthDanceStateDelete {
 	/** The id of this dance, a ksuid with an `st_` prefix. */
 	id: string;
-	/** The discriminator that tells the library this dance is a deletion. */
+	/** The discriminator for a deletion dance. */
 	kind: "delete";
-	/**
-	 * The session the caller started the deletion from.
-	 *
-	 * The library resolves the identity to delete through this session, then deletes every session of that identity.
-	 */
+	/** The session the owner started the deletion from. The library deletes every session of that identity. */
 	sessionId: string;
 }
 
-/** Parses and validates a deletion state, as one member of the `AuthDanceState` union. */
+/** Parses and validates a deletion state. */
 export const AuthDanceStateDelete: v.GenericSchema<AuthDanceStateDelete> = v.pipe(
 	v.object({
 		id: v.string(),
@@ -397,9 +283,7 @@ export const AuthDanceStateDelete: v.GenericSchema<AuthDanceStateDelete> = v.pip
 
 /**
  * Every shape the in-progress dance can take, one per flow. The `kind` field picks the member.
- *
  * The client holds this payload as an encrypted JWE (A256GCM) and passes it as an opaque string to every step.
- * A half-finished dance therefore needs no server-side table and no garbage collection.
  */
 export type AuthDanceState =
 	| AuthDanceStateSignIn
@@ -412,12 +296,7 @@ export type AuthDanceState =
 	| AuthDanceStateUnsubscribe
 	| AuthDanceStateDelete;
 
-/**
- * Parses and validates the payload the library reads from a decrypted state.
- *
- * The state comes from the client, so a payload that no longer matches this union is stale or forged. The library
- * answers `INVALID_STATE` for such a payload instead of a server fault.
- */
+/** Parses and validates a decrypted state payload. A payload that does not match this union answers `INVALID_STATE`. */
 export const AuthDanceState: v.GenericSchema<AuthDanceState> = v.pipe(
 	v.union([
 		AuthDanceStateSignIn,

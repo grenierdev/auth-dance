@@ -1,52 +1,34 @@
 import * as v from "valibot";
 
-// Every component record splits in two: what the identity store holds, and what a client may see. The
-// difference is the private `data` bag that each component owns. PasswordAuthDanceComponent keeps the
-// password hash there, and OtpAuthDanceComponent keeps the value the owner submitted. So the `…Public` half
-// of each pair is the stored shape without that one field, and the stored shape extends the public half.
-// This const declares that one field one time, and each stored schema spreads it.
+// The private `data` bag, declared one time. Each stored schema spreads it over its public half.
 const AuthDanceIdentityDataField = { data: v.optional(v.record(v.string(), v.unknown())) };
 
 /**
- * An identification enrolled on an identity, as a client may see it.
- *
- * An identification resolves an identity on its own, so `AuthDanceIdentityProvider.getByIdentification`
- * finds the owner from `component` plus `identification`. The `/list-components` route returns this shape.
+ * An identification enrolled on an identity, as a client may see it. It resolves an identity on its own, so
+ * `AuthDanceIdentityProvider.getByIdentification` finds the owner from `component` plus `identification`.
  */
 export interface AuthDanceIdentityIdentificationPublic {
-	/** Tags the record as an identification, so the library selects it when it resolves the owner. */
+	/** Tags the record as an identification. */
 	kind: "identification";
 	/** Name of the component that produced the record. The choreography and `/enroll` use the same name. */
 	component: string;
 	/** The value that names the owner, for example the address `EmailAuthDanceComponent` collected. */
 	identification: string;
 	/**
-	 * Whether the owner has proven control of `identification`.
-	 *
-	 * `submitPrompt` sets it to `true` after the verification component accepts the value. When a component
-	 * offers no verification of its own, `submitPrompt` sets it as soon as the owner submits the value.
-	 * `EmailAuthDanceComponent` refuses to resolve an identity from an unconfirmed record, and the lock-out
-	 * check counts only confirmed components.
+	 * Whether the owner has proven control of `identification`. `EmailAuthDanceComponent` refuses an unconfirmed
+	 * record. The lock-out check counts only confirmed components.
 	 */
 	confirmed: boolean;
 	/**
-	 * Names of the components that depend on this identification. Every name is an identification or a challenge,
-	 * never a channel: a channel serves the components that name it and depends on none of them.
-	 *
-	 * `unenroll` and `unsubscribe` read the list both ways. Removing this record removes every component named
-	 * here, and removing any of them removes this record, so a removal never leaves half of what one component
-	 * contributed behind.
+	 * Names of the components that depend on this identification, each an identification or a challenge, never
+	 * a channel. Removal applies both ways: with this record, and with any component named here.
 	 */
 	linkedTo?: string[];
 }
 
-/** An identification as the identity store holds it: the disclosed shape plus the private `data` bag. */
+/** An identification as the identity store holds it, with the private `data` bag. */
 export interface AuthDanceIdentityIdentification extends AuthDanceIdentityIdentificationPublic {
-	/**
-	 * The private `data` bag this component owns on the record. `EmailAuthDanceComponent` leaves it unset and
-	 * writes the address to the channel record it emits beside this one. No component of this library writes to
-	 * it. The `/list-components` route drops this field, so no client sees it.
-	 */
+	/** The private bag this component owns. No component of this library writes to it. `/list-components` drops it. */
 	data?: Record<string, unknown>;
 }
 
@@ -58,10 +40,7 @@ const AuthDanceIdentityIdentificationFields = {
 	linkedTo: v.optional(v.array(v.string())),
 } as const;
 
-/**
- * Parses a stored identification record, the private `data` bag included. The `AuthDanceIdentityComponent`
- * union composes it, and the flow states in `state.ts` parse the collected components through that union.
- */
+/** Parses a stored identification record, the private `data` bag included. */
 export const AuthDanceIdentityIdentification: v.GenericSchema<AuthDanceIdentityIdentification> = v.pipe(
 	v.object({ ...AuthDanceIdentityIdentificationFields, ...AuthDanceIdentityDataField }),
 	v.title("IdentityIdentification"),
@@ -70,10 +49,7 @@ export const AuthDanceIdentityIdentification: v.GenericSchema<AuthDanceIdentityI
 	),
 );
 
-/**
- * Parses an identification without its private `data` bag. The `AuthDanceIdentityComponentPublic` union composes
- * it, and that union describes the `/list-components` body in the generated OpenAPI document.
- */
+/** Parses an identification without its private `data` bag. */
 export const AuthDanceIdentityIdentificationPublic: v.GenericSchema<AuthDanceIdentityIdentificationPublic> = v.pipe(
 	v.object(AuthDanceIdentityIdentificationFields),
 	v.title("IdentityIdentificationPublic"),
@@ -83,41 +59,29 @@ export const AuthDanceIdentityIdentificationPublic: v.GenericSchema<AuthDanceIde
 );
 
 /**
- * A challenge enrolled on an identity, as a client may see it.
- *
- * A challenge only proves a claim against an identity another component resolved. It therefore carries no
- * value that resolves an owner. The `/list-components` route returns this shape.
+ * A challenge enrolled on an identity, as a client may see it. A challenge proves a claim against an identity
+ * another component resolved. It carries no value that resolves an owner.
  */
 export interface AuthDanceIdentityChallengePublic {
-	/** Tags the record as a challenge, so the library selects it when it checks a submitted secret. */
+	/** Tags the record as a challenge. */
 	kind: "challenge";
 	/** Name of the component that produced the record. The choreography and `/enroll` use the same name. */
 	component: string;
-	/**
-	 * Whether the owner has proven control of the secret the challenge checks.
-	 *
-	 * A password offers no verification of its own, so `submitPrompt` confirms it as soon as the owner submits
-	 * it. The sign-up path and the lock-out check count only confirmed components.
-	 */
+	/** Whether the owner has proven control of the secret. The sign-up path and the lock-out check count only confirmed components. */
 	confirmed: boolean;
 	/**
-	 * Names of the components that depend on this challenge. Every name is an identification or a challenge,
-	 * never a channel: a challenge reaches its owner through a channel, and the channel names the challenge
-	 * rather than the other way round.
-	 *
-	 * `EmailAuthDanceComponent` names its own identification here, on the one-time code challenge it contributes.
-	 * `unenroll` and `unsubscribe` read the list both ways, the way they read the list a channel carries.
+	 * Names of the components that depend on this challenge, each an identification or a challenge, never a
+	 * channel. `EmailAuthDanceComponent` names its own identification here. Removal applies both ways.
 	 */
 	linkedTo?: string[];
 }
 
-/** A challenge as the identity store holds it: the disclosed shape plus the private `data` bag. */
+/** A challenge as the identity store holds it, with the private `data` bag. */
 export interface AuthDanceIdentityChallenge extends AuthDanceIdentityChallengePublic {
 	/**
-	 * The private `data` bag this component owns on the record. `PasswordAuthDanceComponent` writes the password
-	 * hash to `data.hash`, and it verifies each submission against that string. `OtpAuthDanceComponent`
-	 * writes the submitted value to `data.recipient`, and it keeps the code itself in KV under
-	 * `otp/<stateId>/<name>`. The `/list-components` route drops this field, so no client sees it.
+	 * The private bag this component owns. `PasswordAuthDanceComponent` writes the password hash to `data.hash`.
+	 * `OtpAuthDanceComponent` writes the recipient to `data.recipient` and keeps the code in KV under
+	 * `otp/<stateId>/<name>`.
 	 */
 	data?: Record<string, unknown>;
 }
@@ -129,10 +93,7 @@ const AuthDanceIdentityChallengeFields = {
 	linkedTo: v.optional(v.array(v.string())),
 } as const;
 
-/**
- * Parses a stored challenge record, the private `data` bag included. The `AuthDanceIdentityComponent` union
- * composes it, and the flow states in `state.ts` parse the collected components through that union.
- */
+/** Parses a stored challenge record, the private `data` bag included. */
 export const AuthDanceIdentityChallenge: v.GenericSchema<AuthDanceIdentityChallenge> = v.pipe(
 	v.object({ ...AuthDanceIdentityChallengeFields, ...AuthDanceIdentityDataField }),
 	v.title("IdentityChallenge"),
@@ -141,10 +102,7 @@ export const AuthDanceIdentityChallenge: v.GenericSchema<AuthDanceIdentityChalle
 	),
 );
 
-/**
- * Parses a challenge without its private `data` bag, so the secret it verifies stays out of the parsed value. The
- * `AuthDanceIdentityComponentPublic` union composes it for the `/list-components` body.
- */
+/** Parses a challenge without its private `data` bag, so the secret stays out of the parsed value. */
 export const AuthDanceIdentityChallengePublic: v.GenericSchema<AuthDanceIdentityChallengePublic> = v.pipe(
 	v.object(AuthDanceIdentityChallengeFields),
 	v.title("IdentityChallengePublic"),
@@ -154,44 +112,32 @@ export const AuthDanceIdentityChallengePublic: v.GenericSchema<AuthDanceIdentity
 );
 
 /**
- * A channel subscribed on an identity, as a client may see it.
- *
- * A channel is where the library delivers a message, such as the one-time code that confirms another
- * component. The recipient stays in the private `data` bag, so this shape names the channel and never the
- * address behind it. The `/list-components` route returns it.
+ * A channel subscribed on an identity, as a client may see it. A channel is where the library delivers a
+ * message, such as a one-time code. The recipient stays in the private `data` bag.
  */
 export interface AuthDanceIdentityChannelPublic {
-	/** Tags the record as a channel, so the library selects it when it searches for a delivery target. */
+	/** Tags the record as a channel. */
 	kind: "channel";
-	/**
-	 * Name of the channel, the same key `api.channels` maps to a delivery adapter. An identity holds one
-	 * record per name, so a channel a component emits again replaces the record of that name.
-	 */
+	/** Name of the channel, the same key `api.channels` maps to a delivery adapter. One record per name, so a re-emit replaces it. */
 	component: string;
 	/**
 	 * Whether the owner has proven control of the recipient. The subscribe flow sets it to `true` after the
-	 * one-time code verifies. The library delivers that code over an already confirmed channel, never over
-	 * this one. `EmailAuthDanceComponent` is the exception. It emits its channel with `confirmed: true` at
-	 * collection time, because the identification beside it carries the same address.
+	 * one-time code verifies, and it delivers that code over an already confirmed channel.
+	 * `EmailAuthDanceComponent` emits its channel with `confirmed: true` at collection time.
 	 */
 	confirmed: boolean;
 	/**
-	 * Names of the components that depend on this channel. Every name is an identification or a challenge, never
-	 * a channel. `EmailAuthDanceComponent` names its identification here on the channel it contributes.
-	 *
-	 * `unenroll` and `unsubscribe` read the list both ways: removing this channel removes every component named
-	 * here, because a component a channel carries has no way to reach its owner once the channel is gone, and
-	 * removing one of those components removes the channel it left behind.
+	 * Names of the components that depend on this channel, each an identification or a challenge, never a
+	 * channel. `EmailAuthDanceComponent` names its identification here. Removal applies both ways.
 	 */
 	linkedTo?: string[];
 }
 
-/** A channel as the identity store holds it: the disclosed shape plus the private `data` bag. */
+/** A channel as the identity store holds it, with the private `data` bag. */
 export interface AuthDanceIdentityChannel extends AuthDanceIdentityChannelPublic {
 	/**
-	 * The recipient of every message over this channel, such as an address or a phone number.
-	 * `EmailAuthDanceComponent` writes the address under `email`, and the subscribe flow writes the submitted
-	 * recipient under the channel name. The `/list-components` route drops this field, so no client sees it.
+	 * The recipient of every message over this channel. `EmailAuthDanceComponent` writes the address under
+	 * `email`. The subscribe flow writes the recipient under the channel name.
 	 */
 	data?: Record<string, unknown>;
 }
@@ -203,11 +149,7 @@ const AuthDanceIdentityChannelFields = {
 	linkedTo: v.optional(v.array(v.string())),
 } as const;
 
-/**
- * Parses a stored channel record, the recipient in the private `data` bag included. `AuthDanceMessage` in
- * `message.ts` uses this shape as the recipient of a message, and `AuthDanceStateSubscribe` carries the
- * pending channel in it.
- */
+/** Parses a stored channel record, the recipient in the private `data` bag included. */
 export const AuthDanceIdentityChannel: v.GenericSchema<AuthDanceIdentityChannel> = v.pipe(
 	v.object({ ...AuthDanceIdentityChannelFields, ...AuthDanceIdentityDataField }),
 	v.title("IdentityChannel"),
@@ -216,10 +158,7 @@ export const AuthDanceIdentityChannel: v.GenericSchema<AuthDanceIdentityChannel>
 	),
 );
 
-/**
- * Parses a channel without its private `data` bag, so the recipient stays out of the parsed value. The
- * `AuthDanceIdentityComponentPublic` union composes it for the `/list-components` body.
- */
+/** Parses a channel without its private `data` bag, so the recipient stays out of the parsed value. */
 export const AuthDanceIdentityChannelPublic: v.GenericSchema<AuthDanceIdentityChannelPublic> = v.pipe(
 	v.object(AuthDanceIdentityChannelFields),
 	v.title("IdentityChannelPublic"),
@@ -230,16 +169,11 @@ export const AuthDanceIdentityChannelPublic: v.GenericSchema<AuthDanceIdentityCh
 
 /**
  * One step recorded on an identity: an identification, a challenge, or a channel. The `kind` field picks the
- * member. `getIdentityComponent` returns an array of these records, so one step may record more than one.
- * `EmailAuthDanceComponent` returns three: an identification, the channel that reaches the same address, and the
- * one-time code challenge that the library delivers over that channel.
+ * member. `getIdentityComponent` returns an array, so one step can record more than one.
  */
 export type AuthDanceIdentityComponent = AuthDanceIdentityIdentification | AuthDanceIdentityChallenge | AuthDanceIdentityChannel;
 
-/**
- * Parses one stored component record of any kind. `AuthDanceIdentity` uses it for the list an identity holds.
- * The flow states in `state.ts` use it for the components a flow collects before the library persists them.
- */
+/** Parses one stored component record of any kind. */
 export const AuthDanceIdentityComponent: v.GenericSchema<AuthDanceIdentityComponent> = v.pipe(
 	v.union([
 		AuthDanceIdentityIdentification,
@@ -252,19 +186,13 @@ export const AuthDanceIdentityComponent: v.GenericSchema<AuthDanceIdentityCompon
 	),
 );
 
-/**
- * One step recorded on an identity, without the private `data` bag. `app.ts` drops the whole `data` field
- * rather than filtering it, because no component declares which of its keys are safe to disclose.
- */
+/** One step recorded on an identity, without the private `data` bag. */
 export type AuthDanceIdentityComponentPublic =
 	| AuthDanceIdentityIdentificationPublic
 	| AuthDanceIdentityChallengePublic
 	| AuthDanceIdentityChannelPublic;
 
-/**
- * Parses one component as a client may see it. `AuthDanceResponseComponents` in `response.ts` puts an array
- * of it in the `/list-components` body, so the route and its documented schema describe one shape.
- */
+/** Parses one component as a client may see it. The `/list-components` body holds an array of it. */
 export const AuthDanceIdentityComponentPublic: v.GenericSchema<AuthDanceIdentityComponentPublic> = v.pipe(
 	v.union([
 		AuthDanceIdentityIdentificationPublic,
@@ -282,25 +210,18 @@ export interface AuthDanceIdentity {
 	/** The identity id, a ksuid with an `id_` prefix. `AuthDanceStorage.createIdentity` mints it. */
 	id: string;
 	/**
-	 * Free-form data about the owner, such as a display name. The library reads the keys as the scopes of a
-	 * new session. It then copies each key that session holds into the protected header of the `id_token`.
+	 * Free-form data about the owner, such as a display name. The library reads the keys as the scopes of a new
+	 * session, then copies each key that session holds into the protected header of the `id_token`.
 	 */
 	data?: Record<string, unknown>;
 	/**
-	 * Every component enrolled on the identity. A component reads this list from its context, which is how
-	 * `PasswordAuthDanceComponent` finds the record it verifies a submission against. The lock-out check reads
-	 * the list too. It refuses an unenroll when the confirmed entries that remain cover no complete path
-	 * through the choreography.
+	 * Every component enrolled on the identity. The lock-out check refuses an unenroll when the confirmed
+	 * entries that remain cover no complete path through the choreography.
 	 */
 	components: AuthDanceIdentityComponent[];
 }
 
-/**
- * Parses a whole identity record as an `AuthDanceIdentityProvider` stores it, the private `data` bags included.
- *
- * No code in this library parses with this schema. `mod.ts` exports it, so an identity provider can validate a
- * record it read from its own store.
- */
+/** Parses a whole identity record as an `AuthDanceIdentityProvider` stores it, the private `data` bags included. */
 export const AuthDanceIdentity: v.GenericSchema<AuthDanceIdentity> = v.pipe(
 	v.object({
 		id: v.string(),

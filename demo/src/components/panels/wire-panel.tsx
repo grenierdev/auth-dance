@@ -1,11 +1,7 @@
 /**
  * @module
  *
- * The wire slideout: every call into the library, and everything its hooks report, in the order they happened.
- *
- * The store already keeps the log newest first and already turns a failure into a line before it throws, so a red line
- * beside an alert is the normal shape of a refusal rather than a fault of the page. Nothing here derives state of its
- * own: the panel reads `log`, renders the newest forty, and hands the Clear button to `clearLog`.
+ * The wire slideout: every call into the library, and everything its hooks report, newest first.
  */
 
 import type { ComponentProps } from "react";
@@ -19,14 +15,10 @@ import { ScrollArea } from "@/components/ui/scroll-area.tsx";
 import { type LogEntry, useDance, useDanceActions } from "@/lib/dance/index.ts";
 import { clock } from "@/lib/format.ts";
 
-/** How many lines the panel renders. The log itself is unbounded; the reference showed the newest forty and so does this. */
+/** How many lines the panel renders. The log itself is unbounded. */
 const SHOWN = 40;
 
-/**
- * The body of the wire sheet.
- *
- * It fills whatever height the sheet gives it and scrolls on the inside, so a long line never pushes the slideout wider.
- */
+/** The body of the wire sheet. It fills the height of the sheet and scrolls on the inside. */
 export function WirePanel() {
 	const { log } = useDance();
 	const { clearLog } = useDanceActions();
@@ -89,7 +81,7 @@ function WireLine({ entry }: { entry: LogEntry }) {
 	);
 }
 
-/** One body, pretty-printed. It scrolls on its own axis so a long token never widens the sheet. */
+/** One body, pretty-printed. It scrolls on its own axis. */
 function WireBody({ label, body }: { label: string; body: unknown }) {
 	return (
 		<div className="flex min-w-0 flex-col gap-1">
@@ -99,12 +91,7 @@ function WireBody({ label, body }: { label: string; body: unknown }) {
 	);
 }
 
-/**
- * The tone of the badge.
- *
- * The theme carries one hue and it is `destructive`, so the three states the reference painted land on the three tones
- * the tokens actually offer: a hook stays quiet, an answered call takes the affirmative tone, everything else is a refusal.
- */
+/** The tone of the badge. A hook stays quiet, an answered call is affirmative, everything else is a refusal. */
 function tone(entry: LogEntry): ComponentProps<typeof Badge>["variant"] {
 	if (entry.kind === "hook") {
 		return "secondary";
@@ -112,7 +99,6 @@ function tone(entry: LogEntry): ComponentProps<typeof Badge>["variant"] {
 	return entry.status === 200 ? "default" : "destructive";
 }
 
-/** What the badge reads. A hook carries no status of its own, so it names itself instead. */
 function status(entry: LogEntry): string {
 	if (entry.kind === "hook") {
 		return "hook";
@@ -120,7 +106,6 @@ function status(entry: LogEntry): string {
 	return entry.status === undefined ? "—" : String(entry.status);
 }
 
-/** A body as JSON. Anything `JSON.stringify` refuses to describe falls back to its own string form. */
 function print(body: unknown): string {
 	return JSON.stringify(body, undefined, 2) ?? String(body);
 }

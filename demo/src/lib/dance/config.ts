@@ -2,21 +2,14 @@
  * @module
  *
  * What the options panel edits, and what a reload remembers.
- *
- * A choreography is inert data: a tree of component, choice and sequence nodes. Swapping that tree swaps the whole
- * authentication policy, and no line of flow logic changes with it. The presets below are the ready-made trees the
- * picker offers, and the custom entry lets the same picker take one written by hand as JSON.
- *
- * Nothing here builds an instance. This module reads and writes a plain config record, and it answers what tree that
- * record resolves to. The store rebuilds the library when the record changes.
  */
 
 import { type AuthDanceApiOptions, type AuthDanceChoreography, choice, sequence } from "auth-dance";
 
-/** The durations of `api.durations`, with every key required so an input always has a number to show. */
+/** The durations of `api.durations`, with every key required. */
 export type Durations = Required<NonNullable<AuthDanceApiOptions["durations"]>>;
 
-/** The defaults of the library, spelled out. */
+/** The default durations, in seconds. */
 export const DEFAULT_DURATIONS: Durations = {
 	sign_in: 300,
 	sign_up: 300,
@@ -32,15 +25,15 @@ export const DEFAULT_DURATIONS: Durations = {
 	elevated: 300,
 };
 
-/** One row of the durations grid: the key it edits, and the sentence under the input. */
+/** One row of the durations grid. */
 export interface DurationField {
-	/** The key of {@link Durations} this row writes. It is also the label, since the library name is the clearest one. */
+	/** The key of {@link Durations} this row writes. It is also the label. */
 	key: keyof Durations;
-	/** What the duration governs, in one clause. */
+	/** What the duration governs. */
 	hint: string;
 }
 
-/** The order and the wording of the duration inputs. */
+/** The order of the duration inputs. */
 export const DURATION_FIELDS: ReadonlyArray<DurationField> = [
 	{ key: "sign_in", hint: "A sign-in state" },
 	{ key: "sign_up", hint: "A sign-up state" },
@@ -56,24 +49,19 @@ export const DURATION_FIELDS: ReadonlyArray<DurationField> = [
 	{ key: "elevated", hint: "The window a sensitive flow needs" },
 ];
 
-/** One entry of the choreography picker. The entry without a tree is the custom one, which reads its tree from the config. */
+/** One entry of the choreography picker. The entry without a tree is the custom one. */
 export interface Preset {
 	/** The value the picker stores in `Config.preset`. */
 	id: string;
 	/** What the picker shows. */
 	label: string;
-	/** The same policy written as the call that builds it, so the label and the code stay tied together. */
+	/** The policy written as the call that builds it. */
 	hint: string;
-	/** The tree the preset resolves to. Absent on the custom entry, which parses `Config.custom` instead. */
+	/** The tree the preset resolves to. Absent on the custom entry. */
 	choreography?: AuthDanceChoreography;
 }
 
-/**
- * The choreographies the picker offers.
- *
- * Every name is a key of the components map of the running instance: `email`, `email2`, `password` and `otp`. The tree
- * is inert data, which is why one picker can swap the whole policy without touching a line of flow logic.
- */
+/** The choreographies the picker offers. Every name is a key of the components map. */
 export const PRESETS: ReadonlyArray<Preset> = [
 	{
 		id: "email-password",
@@ -112,11 +100,11 @@ export const PRESETS: ReadonlyArray<Preset> = [
 	},
 ];
 
-/** Everything the options panel edits. One record rebuilds the whole instance. */
+/** Everything the options panel edits. */
 export interface Config {
 	/** The id of the picked {@link Preset}. The custom entry sends the reader to `custom`. */
 	preset: string;
-	/** The custom tree, as the JSON the textarea holds. It stays in the config even while a preset is picked. */
+	/** The custom tree, as JSON. */
 	custom: string;
 	/** Every duration of `api.durations`, in seconds. */
 	durations: Durations;
@@ -127,7 +115,7 @@ export interface Config {
 /** Where a reload finds the config again. */
 export const CONFIG_KEY = "auth-dance-demo/config@1";
 
-/** The config a first visit gets: the first preset, the default durations, and the seeded identity. */
+/** The config a first visit gets. */
 export function defaultConfig(): Config {
 	return {
 		preset: PRESETS[0].id,
@@ -140,9 +128,7 @@ export function defaultConfig(): Config {
 /**
  * Reads the stored config, and falls back to the defaults for anything missing or broken.
  *
- * The check for a document is the only reliable way to tell a browser from the server pass. Deno carries a
- * disk-backed `localStorage` of its own, so the usual `typeof localStorage !== "undefined"` guard passes there and
- * quietly reads a store shared by every request.
+ * Deno has a `localStorage` shared by every request, so this checks for a document instead.
  */
 export function loadConfig(): Config {
 	const fallback = defaultConfig();
@@ -166,7 +152,7 @@ export function loadConfig(): Config {
 	}
 }
 
-/** Stores the config for the next reload. A browser that refuses storage keeps the running config in memory only. */
+/** Stores the config for the next reload. */
 export function saveConfig(config: Config): void {
 	if (typeof document === "undefined") {
 		return;
@@ -174,18 +160,17 @@ export function saveConfig(config: Config): void {
 	try {
 		localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
 	} catch {
-		// A browser that refuses storage keeps the running config in memory only.
+		// The browser refuses storage.
 	}
 }
 
 /**
- * Reads a choreography out of parsed JSON. The library ships a schema for this, and the demo keeps the check here so
- * the whole page depends on nothing but the library itself.
+ * Reads a choreography out of parsed JSON.
  *
  * @param node - The parsed JSON to read.
- * @param path - The position of `node` in the tree, which the message of a failure names.
+ * @param path - The position of `node` in the tree.
  * @returns The tree the JSON describes.
- * @throws {Error} When a node is not one of the three kinds. The message names the path of the bad node.
+ * @throws {Error} When a node is not one of the three kinds. The message names its path.
  */
 export function parseChoreography(node: unknown, path = "$"): AuthDanceChoreography {
 	const record = node as Record<string, unknown>;
@@ -204,8 +189,7 @@ export function parseChoreography(node: unknown, path = "$"): AuthDanceChoreogra
 /**
  * The tree the current config resolves to.
  *
- * @throws {Error} When the config picks the custom entry and its JSON is not a tree. Call this before a rebuild to
- * refuse a broken tree while the running instance is still worth keeping.
+ * @throws {Error} When the config picks the custom entry and its JSON is not a tree.
  */
 export function currentChoreography(config: Config): AuthDanceChoreography {
 	const preset = PRESETS.find((entry) => entry.id === config.preset);
@@ -215,7 +199,7 @@ export function currentChoreography(config: Config): AuthDanceChoreography {
 	return parseChoreography(JSON.parse(config.custom));
 }
 
-/** Renders a tree as indented text, for the preview under the picker. */
+/** Renders a tree as indented text. */
 export function formatChoreography(choreography: AuthDanceChoreography, indent = ""): string {
 	if (choreography.kind === "component") {
 		return `${indent}${choreography.component}`;
