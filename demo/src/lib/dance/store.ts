@@ -41,7 +41,7 @@ import {
 	type TokensBody,
 } from "./dance.ts";
 import { type Config, currentChoreography, defaultConfig, loadConfig, saveConfig } from "./config.ts";
-import { activePrompt, type FlowName, FLOWS, initialCall, nextCall, promptInputs, sendPath, type Step, submitPath } from "./flows.ts";
+import { activePrompt, type FlowName, FLOWS, promptInputs, type Step } from "./flows.ts";
 
 /** One message a channel took, as the inbox lists it. */
 export interface Message extends DeliveredMessage {
@@ -275,7 +275,6 @@ export class DanceStore implements DanceActions {
 				state: result.state,
 				prompt: result.prompt,
 				expireAt: result.expireAt,
-				call: initialCall(flow, result.prompt),
 				trail: [],
 			});
 		});
@@ -291,12 +290,14 @@ export class DanceStore implements DanceActions {
 				throw new Error("Pick which component to answer.");
 			}
 			const value = this.#state.values[target.name];
-			const result = await this.#post<StateBody | TokensBody | ResultBody>(submitPath(step.call), {
+			// One route for every step. A prompt that collects a value and a prompt that proves control of one both
+			// go here, and the state the library handed back says which of the two this answer is.
+			const result = await this.#post<StateBody | TokensBody | ResultBody>("/submit-prompt", {
 				name: target.name,
 				value,
 				state: step.state,
 			});
-			const trail = [...step.trail, `${target.name}${step.call === "validation" ? " ✓" : ""}`];
+			const trail = [...step.trail, target.name];
 			if ("tokens" in result) {
 				this.#leave({
 					tokens: result.tokens,
@@ -314,7 +315,6 @@ export class DanceStore implements DanceActions {
 				state: result.state,
 				prompt: result.prompt,
 				expireAt: result.expireAt,
-				call: nextCall(step, target.name, result.prompt),
 				trail,
 			});
 		});
@@ -329,7 +329,7 @@ export class DanceStore implements DanceActions {
 			if (!target) {
 				throw new Error("Pick which component to send.");
 			}
-			await this.#post<ResultBody>(sendPath(step.call), { name: target.name, locale: this.#locale(), state: step.state });
+			await this.#post<ResultBody>("/send-prompt", { name: target.name, locale: this.#locale(), state: step.state });
 			this.#patch({ notice: "Sent. The inbox holds it." });
 		});
 

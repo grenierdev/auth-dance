@@ -304,7 +304,7 @@ export const ERROR_HINTS: Record<string, string> = {
 	FRESH_SIGN_IN_REQUIRED: "The elevated window closed. Sign in again to run a sensitive flow.",
 	INVALID_ACCESS_TOKEN: "This route needs a valid access token.",
 	INVALID_STATE: "The state is gone or expired. Start the flow again.",
-	INVALID_STATE_FOR_FLOW: "This flow has nothing of that kind to answer or to send at this point.",
+	INVALID_STATE_FOR_FLOW: "This flow has nothing to deliver over a channel at this point.",
 	IDENTITY_NOT_RESOLVED: "No step of this dance has said who is dancing yet.",
 	RATE_LIMITED: "The bucket for this address or identity is empty for now.",
 };

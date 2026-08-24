@@ -47,21 +47,7 @@ export {
 	type TokensBody,
 } from "./dance.ts";
 
-export {
-	activePrompt,
-	type Call,
-	FLOW_NAMES,
-	type FlowDefinition,
-	type FlowName,
-	FLOWS,
-	initialCall,
-	isSendable,
-	nextCall,
-	promptInputs,
-	sendPath,
-	type Step,
-	submitPath,
-} from "./flows.ts";
+export { activePrompt, FLOW_NAMES, type FlowDefinition, type FlowName, FLOWS, isSendable, promptInputs, type Step } from "./flows.ts";
 
 export {
 	type DanceActions,

@@ -61,23 +61,14 @@ export class InvalidStateError extends AuthDanceError {
 	readonly code: "INVALID_STATE" = "INVALID_STATE";
 }
 /**
- * The step does not accept the flow the state carries. Three cases raise it. `sendPrompt` runs outside a
- * sign-in or a sign-up. `sendValidation` or `submitValidation` runs for a flow with no validation.
- * `submitPrompt` runs on a subscribe state that already collected its recipient. It also guards against a
- * state `kind` the schema does not know about.
+ * The step does not accept the flow the state carries. `sendPrompt` raises it for a flow that holds nothing to
+ * deliver over a channel: a confirmation-only flow such as unenroll, unsubscribe or delete, and a flow that has
+ * not collected the value a validation would prove. It also guards against a state `kind` the schema does not
+ * know about.
  */
 export class InvalidStateForFlowError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"INVALID_STATE_FOR_FLOW"}`. */
 	readonly code: "INVALID_STATE_FOR_FLOW" = "INVALID_STATE_FOR_FLOW";
-}
-/**
- * A rotate or a recover flow reached a replacement step before the caller proved control. A rotate proves
- * control of the value it replaces. A recovery proves control of the component it started from.
- * `submitValidation` marks the state as verified, and the flow collects nothing before that.
- */
-export class ControlNotProvenError extends AuthDanceError {
-	/** The app layer answers HTTP 500 with `{"error":"CONTROL_NOT_PROVEN"}`. */
-	readonly code: "CONTROL_NOT_PROVEN" = "CONTROL_NOT_PROVEN";
 }
 /**
  * The session is authentic, but its sign-in is older than the elevated window a sensitive action requires.
@@ -307,7 +298,6 @@ export const Errors = {
 	COMPONENT_NOT_SENDABLE: ComponentNotSendableError,
 	COMPONENT_NOT_VERIFIABLE: ComponentNotVerifiableError,
 	CONFIRMATION_REQUIRED: ConfirmationRequiredError,
-	CONTROL_NOT_PROVEN: ControlNotProvenError,
 	FRESH_SIGN_IN_REQUIRED: FreshSignInRequiredError,
 	IDENTITY_MISMATCH: IdentityMismatchError,
 	IDENTITY_NOT_FOUND: IdentityNotFoundError,

@@ -238,7 +238,7 @@ describe("Api", () => {
 		assert(result2.prompt.kind === "input");
 		assert(result2.prompt.type === "otp");
 		assert(result2.prompt.sendable);
-		const sent = await api.sendValidation({
+		const sent = await api.sendPrompt({
 			name: "email",
 			locale: "en",
 			state: result2.state,
@@ -247,7 +247,7 @@ describe("Api", () => {
 		assert(channelEmail.messages.length === 1);
 		const code = channelEmail.messages[0].content["text/x-code"];
 		assert(code);
-		const result3 = await api.submitValidation({
+		const result3 = await api.submitPrompt({
 			name: "email",
 			value: code,
 			state: result2.state,
@@ -268,7 +268,7 @@ describe("Api", () => {
 			state: result1.state,
 		});
 		assert("state" in result2);
-		await api.sendValidation({
+		await api.sendPrompt({
 			name: "email",
 			locale: "en",
 			state: result2.state,
@@ -276,7 +276,7 @@ describe("Api", () => {
 		const code = channelEmail.messages[0].content["text/x-code"];
 		assert(code);
 		const rejected = await assertRejects(() =>
-			api.submitValidation({
+			api.submitPrompt({
 				name: "email",
 				value: `${Number(code) + 1}`.padStart(code.length, "0"),
 				state: result2.state,
@@ -318,7 +318,7 @@ describe("Api", () => {
 		assert(result5.prompt.kind === "input");
 		assert(result5.prompt.type === "otp");
 		assert(result5.prompt.sendable);
-		const sent = await api.sendValidation({
+		const sent = await api.sendPrompt({
 			name: "sms",
 			locale: "en",
 			state: result5.state,
@@ -327,7 +327,7 @@ describe("Api", () => {
 		assert(channelSms.messages.length === 1);
 		const code = channelSms.messages[0].content["text/x-code"];
 		assert(code);
-		const result6 = await api.submitValidation({
+		const result6 = await api.submitPrompt({
 			name: "sms",
 			value: code,
 			state: result5.state,
@@ -528,7 +528,7 @@ describe("Api", () => {
 		assert(result5.prompt.kind === "input");
 		assert(result5.prompt.type === "otp");
 		assert(result5.prompt.sendable);
-		const sent = await api.sendValidation({
+		const sent = await api.sendPrompt({
 			name: "email2",
 			locale: "en",
 			state: result5.state,
@@ -537,7 +537,7 @@ describe("Api", () => {
 		assert(channelEmail2.messages.length === 1);
 		const code = channelEmail2.messages[0].content["text/x-code"];
 		assert(code);
-		const result6 = await api.submitValidation({
+		const result6 = await api.submitPrompt({
 			name: "email2",
 			value: code,
 			state: result5.state,
@@ -1004,7 +1004,7 @@ describe("Api", () => {
 		assert(result4.prompt.kind === "input");
 		assert(result4.prompt.type === "otp");
 		assert(result4.prompt.sendable);
-		const sent1 = await api.sendValidation({
+		const sent1 = await api.sendPrompt({
 			name: "email",
 			locale: "en",
 			state: result4.state,
@@ -1012,7 +1012,7 @@ describe("Api", () => {
 		assert(sent1.success);
 		const code1 = channelEmail.messages[0].content["text/x-code"];
 		assert(code1);
-		const result5 = await api.submitValidation({
+		const result5 = await api.submitPrompt({
 			name: "email",
 			value: code1,
 			state: result4.state,
@@ -1027,7 +1027,7 @@ describe("Api", () => {
 		assert(result6.prompt.kind === "input");
 		assert(result6.prompt.type === "otp");
 		assert(result6.prompt.sendable);
-		const sent2 = await api.sendValidation({
+		const sent2 = await api.sendPrompt({
 			name: "email",
 			locale: "en",
 			state: result6.state,
@@ -1035,7 +1035,7 @@ describe("Api", () => {
 		assert(sent2.success);
 		const code2 = channelEmail.messages[1].content["text/x-code"];
 		assert(code2);
-		const result7 = await api.submitValidation({
+		const result7 = await api.submitPrompt({
 			name: "email",
 			value: code2,
 			state: result6.state,
@@ -1049,6 +1049,135 @@ describe("Api", () => {
 				c.kind === "identification" && c.component === "email" &&
 				c.identification === "john.doe2@example.com"
 			),
+		);
+	});
+	it("should read the phase of a flow off the state, not off the method", async () => {
+		// The point of one submit method. A rotation of "email" takes three answers — the code that proves the
+		// current address, the new address, then the code that proves that one — and the caller names none of the
+		// three phases. The state names them.
+		await johnDoe();
+		const signedIn = await signInAsJohnDoe(api);
+		const rotating = await api.rotate({ name: "email", access_token: signedIn.tokens.access_token });
+		await api.sendPrompt({ name: "email", locale: "en", state: rotating.state });
+		const proven = await api.submitPrompt({
+			name: "email",
+			value: channelEmail.messages[0].content["text/x-code"],
+			state: rotating.state,
+		});
+		assert("state" in proven);
+		const collected = await api.submitPrompt({
+			name: "email",
+			value: "john.doe2@example.com",
+			state: proven.state,
+		});
+		assert("state" in collected);
+		await api.sendPrompt({ name: "email", locale: "en", state: collected.state });
+		const done = await api.submitPrompt({
+			name: "email",
+			value: channelEmail.messages[1].content["text/x-code"],
+			state: collected.state,
+		});
+		assert("success" in done);
+		assert(done.success);
+		const identity = await storage.getIdentity(signedIn.identity.id);
+		assert(
+			identity?.components.find((c) =>
+				c.kind === "identification" && c.component === "email" && c.identification === "john.doe2@example.com"
+			),
+		);
+	});
+	it("should read a value as the proof while a validation is outstanding", async () => {
+		// A sign-up whose email is collected but unproven stays on that step, so the next value is read as the code
+		// the step asked for. Naming the step after it does not skip the proof.
+		const started = await api.signUp();
+		const collected = await api.submitPrompt({
+			name: "email",
+			value: "john.doe@example.com",
+			state: started.state,
+		});
+		assert("state" in collected);
+		const rejected = await assertRejects(
+			() => api.submitPrompt({ name: "email", value: "000000", state: collected.state }),
+			AuthDanceError,
+		);
+		assertEquals(rejected.code, "INVALID_VALIDATION_VALUE");
+		const skipped = await assertRejects(
+			() => api.submitPrompt({ name: "password", value: "bar", state: collected.state }),
+			AuthDanceError,
+		);
+		assertEquals(skipped.code, "INVALID_VALIDATION_VALUE");
+	});
+	it("should keep reading a sign-in as a prompt, because it has no validation phase", async () => {
+		// The two branches never reach one another. A sign-in collects and verifies in one step, so a rejected value
+		// is a rejected prompt and never a failed proof.
+		await johnDoe();
+		const result1 = await api.signIn();
+		const result2 = await api.submitPrompt({
+			name: "email",
+			value: "john.doe@example.com",
+			state: result1.state,
+		});
+		assert("state" in result2);
+		const rejected = await assertRejects(
+			() => api.submitPrompt({ name: "password", value: "nope", state: result2.state }),
+			AuthDanceError,
+		);
+		assertEquals(rejected.code, "INVALID_PROMPT_VALUE");
+	});
+	it("should refuse to send what a flow holds nothing for", async () => {
+		await johnDoe();
+		const signedIn = await signInAsJohnDoe(api);
+		// A subscribe delivers its code to the recipient it collects, so before that recipient there is nobody to
+		// deliver to.
+		const subscribing = await api.subscribe({ name: "sms", access_token: signedIn.tokens.access_token });
+		const early = await assertRejects(
+			() => api.sendPrompt({ name: "sms", locale: "en", state: subscribing.state }),
+			AuthDanceError,
+		);
+		assertEquals(early.code, "COMPONENT_NOT_COLLECTED");
+		// A confirmation is typed, never delivered.
+		const deleting = await api.delete({ access_token: signedIn.tokens.access_token });
+		const nothing = await assertRejects(
+			() => api.sendPrompt({ name: "identity", locale: "en", state: deleting.state }),
+			AuthDanceError,
+		);
+		assertEquals(nothing.code, "INVALID_STATE_FOR_FLOW");
+		// A recovery discloses no identity before the choice is answered, so its first prompt is typed as well.
+		const recovering = await api.recover({ name: "password" });
+		const unidentified = await assertRejects(
+			() => api.sendPrompt({ name: "email", locale: "en", state: recovering.state }),
+			AuthDanceError,
+		);
+		assertEquals(unidentified.code, "RECOVERY_NOT_IDENTIFIED");
+	});
+	it("should read a replayed state of a finished enrollment as its outstanding proof", async () => {
+		await johnDoe();
+		const signedIn = await signInAsJohnDoe(api);
+		const enrolling = await api.enroll({ name: "email2", access_token: signedIn.tokens.access_token });
+		const collected = await api.submitPrompt({
+			name: "email2",
+			value: "john.doe2@example.com",
+			state: enrolling.state,
+		});
+		assert("state" in collected);
+		await api.sendPrompt({ name: "email2", locale: "en", state: collected.state });
+		const done = await api.submitPrompt({
+			name: "email2",
+			value: channelEmail2.messages[0].content["text/x-code"],
+			state: collected.state,
+		});
+		assert("success" in done);
+		// The state the client still holds says the value is collected and unproven, so a replay is read as the proof
+		// it is still waiting for. The code behind it is spent, so nothing gets enrolled a second time.
+		const replayed = await assertRejects(
+			() => api.submitPrompt({ name: "email2", value: "john.doe3@example.com", state: collected.state }),
+			AuthDanceError,
+		);
+		assertEquals(replayed.code, "INVALID_VALIDATION_VALUE");
+		const identity = await storage.getIdentity(signedIn.identity.id);
+		assertEquals(
+			identity?.components.filter((c) => c.kind === "identification" && c.component === "email2").length,
+			1,
 		);
 	});
 	it("should recover password", async () => {
@@ -1076,7 +1205,7 @@ describe("Api", () => {
 		assert(result2.prompt.kind === "input");
 		assert(result2.prompt.type === "otp");
 		assert(result2.prompt.sendable);
-		const sent = await api.sendValidation({
+		const sent = await api.sendPrompt({
 			name: "email",
 			locale: "en",
 			state: result2.state,
@@ -1085,7 +1214,7 @@ describe("Api", () => {
 		assert(channelEmail.messages.length === 1);
 		const code = channelEmail.messages[0].content["text/x-code"];
 		assert(code);
-		const result3 = await api.submitValidation({
+		const result3 = await api.submitPrompt({
 			name: "email",
 			value: code,
 			state: result2.state,
@@ -1140,13 +1269,13 @@ describe("Api", () => {
 		assert(result2.prompt.kind === "input");
 		assert(result2.prompt.type === "otp");
 		// The code goes to the channel of the component that was picked, and nothing reaches the other one.
-		const sent = await api.sendValidation({ name: "email2", locale: "en", state: result2.state });
+		const sent = await api.sendPrompt({ name: "email2", locale: "en", state: result2.state });
 		assert(sent.success);
 		assertEquals(channelEmail.messages.length, 0);
 		assertEquals(channelEmail2.messages.length, 1);
 		const code = channelEmail2.messages[0].content["text/x-code"];
 		assert(code);
-		const result3 = await api.submitValidation({
+		const result3 = await api.submitPrompt({
 			name: "email2",
 			value: code,
 			state: result2.state,
@@ -1405,7 +1534,7 @@ describe("Api", () => {
 		// which swallows storage faults into a plain "not verified" and so surfaces as a business error.
 		const thrown = await assertRejects(
 			() =>
-				brokenApi.sendValidation({
+				brokenApi.sendPrompt({
 					name: "email",
 					locale: "en",
 					state: result2.state,
@@ -1549,7 +1678,7 @@ describe("Api", () => {
 				name: "email",
 				access_token: result3.tokens.access_token,
 			});
-			const sent = await api.sendValidation({
+			const sent = await api.sendPrompt({
 				name: "email",
 				locale: "en",
 				state: rotating.state,
@@ -1558,7 +1687,7 @@ describe("Api", () => {
 			assertEquals(channelEmail.messages.length, 1);
 			const blocked = await assertRejects(
 				() =>
-					api.sendValidation({
+					api.sendPrompt({
 						name: "email",
 						locale: "en",
 						state: rotating.state,
@@ -1644,10 +1773,10 @@ describe("Api", () => {
 				state: result1.state,
 			});
 			assert("state" in result2);
-			await api.sendValidation({ name: "email", locale: "en", state: result2.state });
+			await api.sendPrompt({ name: "email", locale: "en", state: result2.state });
 			const code = channelEmail.messages[0].content["text/x-code"];
 			assert(code);
-			const result3 = await api.submitValidation({
+			const result3 = await api.submitPrompt({
 				name: "email",
 				value: code,
 				state: result2.state,
@@ -1724,10 +1853,10 @@ describe("Api", () => {
 				state: enrolling.state,
 			});
 			assert("state" in collected);
-			await api.sendValidation({ name: "email2", locale: "en", state: collected.state });
+			await api.sendPrompt({ name: "email2", locale: "en", state: collected.state });
 			const code = channelEmail2.messages[0].content["text/x-code"];
 			assert(code);
-			const done = await api.submitValidation({
+			const done = await api.submitPrompt({
 				name: "email2",
 				value: code,
 				state: collected.state,
@@ -1754,10 +1883,10 @@ describe("Api", () => {
 				state: subscribing.state,
 			});
 			assert("state" in collected);
-			await api.sendValidation({ name: "sms", locale: "en", state: collected.state });
+			await api.sendPrompt({ name: "sms", locale: "en", state: collected.state });
 			const code = channelSms.messages[0].content["text/x-code"];
 			assert(code);
-			const done = await api.submitValidation({
+			const done = await api.submitPrompt({
 				name: "sms",
 				value: code,
 				state: collected.state,
@@ -1812,10 +1941,10 @@ describe("Api", () => {
 				state: result1.state,
 			});
 			assert("state" in result2);
-			await api.sendValidation({ name: "email", locale: "en", state: result2.state });
+			await api.sendPrompt({ name: "email", locale: "en", state: result2.state });
 			const code = channelEmail.messages[0].content["text/x-code"];
 			assert(code);
-			const result3 = await api.submitValidation({
+			const result3 = await api.submitPrompt({
 				name: "email",
 				value: code,
 				state: result2.state,

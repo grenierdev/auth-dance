@@ -296,7 +296,7 @@ describe("App", () => {
 		assertEquals(result2.prompt.kind, "input");
 		assertEquals(result2.prompt.type, "otp");
 		assert(result2.prompt.sendable);
-		const [, sent] = await post("/send-validation", {
+		const [, sent] = await post("/send-prompt", {
 			name: "email",
 			locale: "en",
 			state: result2.state,
@@ -305,7 +305,7 @@ describe("App", () => {
 		assertEquals(channelEmail.messages.length, 1);
 		const code = channelEmail.messages[0].content["text/x-code"];
 		assert(code);
-		const [, result3] = await post("/submit-validation", {
+		const [, result3] = await post("/submit-prompt", {
 			name: "email",
 			value: code,
 			state: result2.state,
@@ -328,14 +328,14 @@ describe("App", () => {
 			state: result1.state,
 		});
 		assert(result2.state);
-		await post("/send-validation", {
+		await post("/send-prompt", {
 			name: "email",
 			locale: "en",
 			state: result2.state,
 		});
 		const code = channelEmail.messages[0].content["text/x-code"];
 		assert(code);
-		const [status, rejected] = await post("/submit-validation", {
+		const [status, rejected] = await post("/submit-prompt", {
 			name: "email",
 			value: `${Number(code) + 1}`.padStart(code.length, "0"),
 			state: result2.state,
@@ -368,7 +368,7 @@ describe("App", () => {
 		assertEquals(result5.prompt.kind, "input");
 		assertEquals(result5.prompt.type, "otp");
 		assert(result5.prompt.sendable);
-		const [, sent] = await post("/send-validation", {
+		const [, sent] = await post("/send-prompt", {
 			name: "sms",
 			locale: "en",
 			state: result5.state,
@@ -377,7 +377,7 @@ describe("App", () => {
 		assertEquals(channelSms.messages.length, 1);
 		const code = channelSms.messages[0].content["text/x-code"];
 		assert(code);
-		const [status, result6] = await post("/submit-validation", {
+		const [status, result6] = await post("/submit-prompt", {
 			name: "sms",
 			value: code,
 			state: result5.state,
@@ -492,7 +492,7 @@ describe("App", () => {
 		assertEquals(result5.prompt.kind, "input");
 		assertEquals(result5.prompt.type, "otp");
 		assert(result5.prompt.sendable);
-		const [, sent] = await post("/send-validation", {
+		const [, sent] = await post("/send-prompt", {
 			name: "email2",
 			locale: "en",
 			state: result5.state,
@@ -501,7 +501,7 @@ describe("App", () => {
 		assertEquals(channelEmail2.messages.length, 1);
 		const code = channelEmail2.messages[0].content["text/x-code"];
 		assert(code);
-		const [status, result6] = await post("/submit-validation", {
+		const [status, result6] = await post("/submit-prompt", {
 			name: "email2",
 			value: code,
 			state: result5.state,
@@ -763,7 +763,7 @@ describe("App", () => {
 		assertEquals(result4.prompt.kind, "input");
 		assertEquals(result4.prompt.type, "otp");
 		assert(result4.prompt.sendable);
-		const [, sent1] = await post("/send-validation", {
+		const [, sent1] = await post("/send-prompt", {
 			name: "email",
 			locale: "en",
 			state: result4.state,
@@ -771,7 +771,7 @@ describe("App", () => {
 		assert(sent1.success);
 		const code1 = channelEmail.messages[0].content["text/x-code"];
 		assert(code1);
-		const [, result5] = await post("/submit-validation", {
+		const [, result5] = await post("/submit-prompt", {
 			name: "email",
 			value: code1,
 			state: result4.state,
@@ -786,7 +786,7 @@ describe("App", () => {
 		assertEquals(result6.prompt.kind, "input");
 		assertEquals(result6.prompt.type, "otp");
 		assert(result6.prompt.sendable);
-		const [, sent2] = await post("/send-validation", {
+		const [, sent2] = await post("/send-prompt", {
 			name: "email",
 			locale: "en",
 			state: result6.state,
@@ -794,7 +794,7 @@ describe("App", () => {
 		assert(sent2.success);
 		const code2 = channelEmail.messages[1].content["text/x-code"];
 		assert(code2);
-		const [status, result7] = await post("/submit-validation", {
+		const [status, result7] = await post("/submit-prompt", {
 			name: "email",
 			value: code2,
 			state: result6.state,
@@ -835,7 +835,7 @@ describe("App", () => {
 		assertEquals(result2.prompt.kind, "input");
 		assertEquals(result2.prompt.type, "otp");
 		assert(result2.prompt.sendable);
-		const [, sent] = await post("/send-validation", {
+		const [, sent] = await post("/send-prompt", {
 			name: "email",
 			locale: "en",
 			state: result2.state,
@@ -844,7 +844,7 @@ describe("App", () => {
 		assertEquals(channelEmail.messages.length, 1);
 		const code = channelEmail.messages[0].content["text/x-code"];
 		assert(code);
-		const [, result3] = await post("/submit-validation", {
+		const [, result3] = await post("/submit-prompt", {
 			name: "email",
 			value: code,
 			state: result2.state,
@@ -912,7 +912,7 @@ describe("App", () => {
 		assert(result2.state);
 		// OtpAuthDanceComponent.sendPrompt writes the code to KV and does not catch — unlike EmailAuthDanceComponent,
 		// which swallows storage faults into a plain "not verified" and so surfaces as a business error.
-		const [status, thrown] = await brokenPost("/send-validation", {
+		const [status, thrown] = await brokenPost("/send-prompt", {
 			name: "email",
 			locale: "en",
 			state: result2.state,
@@ -1001,7 +1001,7 @@ describe("App", () => {
 				value: "john.doe@example.com",
 				state: result1.state,
 			});
-			const [status, sent] = await post("/send-validation", {
+			const [status, sent] = await post("/send-prompt", {
 				name: "email",
 				state: result2.state,
 			}, {
@@ -1086,7 +1086,7 @@ describe("App", () => {
 				}
 			});
 
-			it("should bucket the sending routes on top of the request bucket", async () => {
+			it("should bucket the sending route on top of the request bucket", async () => {
 				const post = limitedPost({
 					request: { limit: 100, window: 60 },
 					send: { limit: 1, window: 60 },
@@ -1106,7 +1106,7 @@ describe("App", () => {
 					from("203.0.113.7"),
 				);
 				assert(result2.state);
-				const [sentStatus] = await post("/send-validation", {
+				const [sentStatus] = await post("/send-prompt", {
 					name: "email",
 					state: result2.state,
 				}, from("203.0.113.7"));
@@ -1114,7 +1114,7 @@ describe("App", () => {
 				assertEquals(channelEmail.messages.length, 1);
 				// Refused before anything reaches a channel: the whole point of a bucket on the routes that cost
 				// money is that the message is never sent.
-				const [status, rejected] = await post("/send-validation", {
+				const [status, rejected] = await post("/send-prompt", {
 					name: "email",
 					state: result2.state,
 				}, from("203.0.113.7"));
@@ -1128,10 +1128,10 @@ describe("App", () => {
 				);
 			});
 
-			// The send bucket is mounted on the two routes, so the router applies it under a prefix as well. A
-			// comparison against the request path missed it here, and a deployment behind a basePath then paid for
-			// every message it was asked to send.
-			it("should bucket the sending routes under a basePath", async () => {
+			// The send bucket is mounted on the route, so the router applies it under a prefix as well. A comparison
+			// against the request path missed it here, and a deployment behind a basePath then paid for every message
+			// it was asked to send.
+			it("should bucket the sending route under a basePath", async () => {
 				const post = client(createAuthDance({
 					api: {
 						...apiOptions,
@@ -1146,13 +1146,13 @@ describe("App", () => {
 					from("203.0.113.7"),
 				);
 				assert(result2.state);
-				const [sentStatus] = await post("/auth/send-validation", {
+				const [sentStatus] = await post("/auth/send-prompt", {
 					name: "email",
 					state: result2.state,
 				}, from("203.0.113.7"));
 				assertEquals(sentStatus, 200);
 				assertEquals(channelEmail.messages.length, 1);
-				const [status, rejected] = await post("/auth/send-validation", {
+				const [status, rejected] = await post("/auth/send-prompt", {
 					name: "email",
 					state: result2.state,
 				}, from("203.0.113.7"));

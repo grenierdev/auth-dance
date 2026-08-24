@@ -23,7 +23,7 @@ export interface AuthDanceIdentityIdentificationPublic {
 	/**
 	 * Whether the owner has proven control of `identification`.
 	 *
-	 * `submitValidation` sets it to `true` after the verification component accepts the value. When a component
+	 * `submitPrompt` sets it to `true` after the verification component accepts the value. When a component
 	 * offers no verification of its own, `submitPrompt` sets it as soon as the owner submits the value.
 	 * `EmailAuthDanceComponent` refuses to resolve an identity from an unconfirmed record, and the lock-out
 	 * check counts only confirmed components.

@@ -189,7 +189,8 @@ export interface AuthDanceStateRotate {
 	 *
 	 * For a component that offers no verification, the library sets this flag true from the start. A code the library
 	 * sends to the current email address proves control. A password typed again proves nothing the access token does
-	 * not already establish. While this flag stays false, the library refuses a replacement with `CONTROL_NOT_PROVEN`.
+	 * not already establish. While this flag stays false, `submitPrompt` reads the value it gets as that proof
+	 * rather than as the replacement.
 	 */
 	verified: boolean;
 	/**
@@ -253,9 +254,10 @@ export interface AuthDanceStateRecover {
 	 */
 	identityId?: string;
 	/**
-	 * True once the caller proves control of the component they picked to identify with.
+	 * True once the owner proves control of the component they picked to identify with.
 	 *
-	 * The library resets nothing before then, and it answers `CONTROL_NOT_PROVEN` to a value the caller submits early.
+	 * The library resets nothing before then. While this flag stays false, `submitPrompt` reads the value it gets as
+	 * that proof rather than as the replacement of the recovered component.
 	 */
 	verified: boolean;
 	/**
@@ -308,8 +310,8 @@ export interface AuthDanceStateSubscribe {
 	/**
 	 * False while the library still collects the recipient, true once the library accepts it.
 	 *
-	 * The library sets this flag when it returns the one-time code prompt. After that, it rejects a second recipient
-	 * with `INVALID_STATE_FOR_FLOW`.
+	 * The library sets this flag when it returns the one-time code prompt. After that, `submitPrompt` reads the value
+	 * it gets as that code, so a second recipient no longer reaches the channel record.
 	 */
 	validating: boolean;
 }

@@ -125,8 +125,9 @@ const r3 = await post("/submit-prompt", { name: "password", value: "correct hors
 ```
 
 If a prompt is `sendable`, an OTP for example, call `/send-prompt` to deliver it before you submit. If a collected value needs proof of
-control, `submitPrompt` answers with a _validation_ prompt instead of an advance. Respond on `/send-validation` and `/submit-validation`.
-Then the dance continues.
+control, `submitPrompt` answers with a _validation_ prompt instead of an advance. Answer that prompt with `submitPrompt` too, and deliver it
+with `sendPrompt`: the state names the phase, so one pair of calls carries every step of every flow and the client keeps no record of which
+phase it is in. Then the dance continues.
 
 `prompt.kind` tells the client what to render. `"input"` is a single field. `"choice"` is a fork in the choreography where the user picks
 the branch to take.
@@ -299,8 +300,6 @@ which prefixes every one of them. 🔒 means the route needs `Authorization: Bea
 | `/delete` 🔒          | —                          | state (confirmation)                   |
 | `/send-prompt`        | `{ name, locale?, state }` | `{ success: true }`                    |
 | `/submit-prompt`      | `{ name, value, state }`   | state \| tokens \| `{ success: true }` |
-| `/send-validation`    | `{ name, locale?, state }` | `{ success: true }`                    |
-| `/submit-validation`  | `{ name, value, state }`   | state \| tokens \| `{ success: true }` |
 
 When you omit `locale`, the library reads `accept-language`, then uses `"en"`. The library takes the client address from `cf-connecting-ip`
 or from the first `x-forwarded-for` entry. It reads headers only, never the body.
@@ -322,8 +321,8 @@ Sign-in and sign-up are not special. Every management flow uses the same state-p
   choreography remains for what survives. `subscribe` / `unsubscribe` follow the same rule from the channel end: detaching a channel takes
   down the factors it carries, and the same lock-out check gates it.
 - **`rotate`** — replace a credential. For a _verifiable_ component, the first prompt proves control of the current value. The library then
-  collects the new value and validates it, so the flow has two validation rounds. A non-verifiable component such as a password needs one
-  `submit-prompt`.
+  collects the new value and validates it, so the flow has two validation rounds. Every round goes to `/submit-prompt`. A non-verifiable
+  component such as a password needs one call and no round at all.
 - **`recover`** — unauthenticated. `name` is the component the owner can no longer provide, a forgotten password for instance. The first
   prompt is a choice between the components of the choreography that are both `identification` and `verifiable`. Such a component resolves
   an identity and also proves control of it. The library excludes the component under recovery from that choice. Pick one and prove control
@@ -331,7 +330,8 @@ Sign-in and sign-up are not special. Every management flow uses the same state-p
   choreography carrying that name, the library answers `COMPONENT_NOT_RECOVERABLE`. The flow completes with `{ success: true }`, not with
   tokens.
 - **`subscribe` / `unsubscribe`** — manage channels. Note the asymmetry of a subscription. The library delivers the confirming code over an
-  _already-confirmed_ channel, so `send-validation` names that existing channel while `submit-validation` names the new one.
+  _already-confirmed_ channel, so `/send-prompt` names that existing channel while the `/submit-prompt` that collected the recipient named
+  the new one.
 - **`delete`** — wipes the identity.
 
 `unenroll`, `unsubscribe` and `delete` answer with a `confirmation` prompt. Submit the boolean `true` for it. Any other value is a

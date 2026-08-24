@@ -7,9 +7,9 @@ import { AuthDanceSession } from "./session.ts";
  * The next move of the dance, as the client receives it.
  *
  * `signIn`, `signUp`, `enroll`, `unenroll`, `rotate`, `recover`, `subscribe`, `unsubscribe` and `delete` all answer with
- * this shape. `submitPrompt` and `submitValidation` answer with it too while a step remains. The matching HTTP routes
+ * this shape. `submitPrompt` answers with it too while a step remains. The matching HTTP routes
  * are `/sign-in`, `/sign-up`, `/enroll`, `/unenroll`, `/rotate`, `/recover`, `/subscribe`, `/unsubscribe`, `/delete`,
- * `/submit-prompt` and `/submit-validation`.
+ * `/submit-prompt`.
  */
 export interface AuthDanceResponseState {
 	/**
@@ -52,9 +52,9 @@ export const AuthDanceResponseState: v.GenericSchema<AuthDanceResponseState> = v
 /**
  * What a completed sign-in or sign-up mints, and what a refresh returns again.
  *
- * `submitPrompt` answers with this shape on the last step of a sign-in or a sign-up. `submitValidation` answers with it
- * on the last step of a sign-up only, because a sign-in carries no validation step. `refreshToken` answers with it as
- * well. The matching HTTP routes are `/submit-prompt`, `/submit-validation` and `/refresh-token`.
+ * `submitPrompt` answers with this shape on the last step of a sign-in or a sign-up, whether that step collects a value
+ * or validates one only, because a sign-in carries no validation step. `refreshToken` answers with it as
+ * well. The matching HTTP routes are `/submit-prompt` and `/refresh-token`.
  */
 export interface AuthDanceResponseTokens {
 	/**
@@ -100,8 +100,8 @@ export interface AuthDanceResponseTokens {
 
 /**
  * Parses and validates an `AuthDanceResponseTokens` at runtime. `app.ts` uses it without a change to document the 200
- * body of `/refresh-token`, because this shape holds no `Date`. The union it documents for `/submit-prompt` and
- * `/submit-validation` holds this schema as well.
+ * body of `/refresh-token`, because this shape holds no `Date`. The union it documents for `/submit-prompt` holds this
+ * schema as well.
  */
 export const AuthDanceResponseTokens: v.GenericSchema<AuthDanceResponseTokens> = v.pipe(
 	v.object({
@@ -127,13 +127,12 @@ export const AuthDanceResponseTokens: v.GenericSchema<AuthDanceResponseTokens> =
 /**
  * A call that succeeded and returns nothing else.
  *
- * `signOut`, `sendPrompt`, `sendValidation`, `sendMessage` and `sendMessageTo` answer with this shape. `submitPrompt`
- * answers with it on the last step of `unenroll`, `unsubscribe` and `delete`. `submitValidation` answers with it on the
- * last step of `subscribe`. Both answer with it on the last step of `enroll`, `rotate` and `recover`. A component that
+ * `signOut`, `sendPrompt`, `sendMessage` and `sendMessageTo` answer with this shape. `submitPrompt` answers with it on
+ * the last step of `unenroll`, `unsubscribe`, `delete` and `subscribe`. Both answer with it on the last step of `enroll`, `rotate` and `recover`. A component that
  * verifies itself adds a validation step to those three flows.
  *
  * A recovery proves control of one component, which is not a sign-in, so it completes here instead of with tokens. The
- * matching HTTP routes are `/sign-out`, `/send-prompt`, `/send-validation`, `/submit-prompt` and `/submit-validation`.
+ * matching HTTP routes are `/sign-out`, `/send-prompt` and `/submit-prompt`.
  */
 export interface AuthDanceResponseResult {
 	/**
@@ -144,8 +143,7 @@ export interface AuthDanceResponseResult {
 
 /**
  * Parses and validates an `AuthDanceResponseResult` at runtime. `app.ts` uses it without a change to document the 200
- * body of `/sign-out`, `/send-prompt` and `/send-validation`. The union it documents for `/submit-prompt` and
- * `/submit-validation` holds this schema as well.
+ * body of `/sign-out` and `/send-prompt`. The union it documents for `/submit-prompt` holds this schema as well.
  */
 export const AuthDanceResponseResult: v.GenericSchema<AuthDanceResponseResult> = v.pipe(
 	v.object({
@@ -218,7 +216,7 @@ export const AuthDanceResponseComponents: v.GenericSchema<AuthDanceResponseCompo
 );
 
 /**
- * What `submitPrompt` and `submitValidation` return: the next prompt, the tokens of a completed authentication, or a
+ * What `submitPrompt` returns: the next prompt, the tokens of a completed authentication, or a
  * bare success for a completed management flow.
  *
  * The two list shapes are not members of the union, because only their own routes return them.
@@ -227,7 +225,7 @@ export type AuthDanceResponse = AuthDanceResponseState | AuthDanceResponseTokens
 
 /**
  * Parses and validates any of the three response shapes at runtime. `app.ts` mirrors the union with `expireAt` as an ISO
- * 8601 string, and documents the 200 body of `/submit-prompt` and `/submit-validation` with the copy.
+ * 8601 string, and documents the 200 body of `/submit-prompt` with the copy.
  */
 export const AuthDanceResponse: v.GenericSchema<AuthDanceResponse> = v.pipe(
 	v.union([AuthDanceResponseState, AuthDanceResponseTokens, AuthDanceResponseResult]),

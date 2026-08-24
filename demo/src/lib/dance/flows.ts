@@ -1,23 +1,20 @@
 /**
  * @module
  *
- * The nine flows, and the one thing the wire never says.
+ * The nine flows.
  *
- * A flow works the same way everywhere: the client starts one, receives a prompt, submits a value, receives the next
- * prompt, and repeats until the answer carries tokens or a plain success. The state between two calls is the opaque
- * string the library hands back, so the page keeps nothing else.
+ * A flow works the same way everywhere: the client starts one, receives a prompt, submits a value to
+ * `/submit-prompt`, receives the next prompt, and repeats until the answer carries tokens or a plain success. The
+ * state between two calls is the opaque string the library hands back, so the page keeps nothing else.
  *
- * What the answer never says is which endpoint takes the next value. `/submit-prompt` collects, `/submit-validation`
- * proves control of something already collected, and the two prompts look the same. The client tracks that itself,
- * which is what {@link initialCall} and {@link nextCall} do. Getting it wrong earns `INVALID_STATE_FOR_FLOW`.
+ * A prompt that collects a value and a prompt that proves control of a value already collected look the same, and
+ * they go to the same route. The state carries which of the two the flow is waiting for, so the client keeps no
+ * record of it.
  *
  * Everything here is a pure function of what came back. No React, no store, no library instance.
  */
 
 import type { AuthDancePrompt, AuthDancePromptInput } from "auth-dance";
-
-/** Which endpoint answers the current prompt: the collecting one, or the one that proves control. */
-export type Call = "prompt" | "validation";
 
 /** What a flow needs before it starts, and what it is called. */
 export interface FlowDefinition {
@@ -65,40 +62,8 @@ export interface Step {
 	prompt: AuthDancePrompt;
 	/** The moment the flow expires, as an ISO 8601 string. */
 	expireAt: string;
-	/** Which endpoint takes the answer. */
-	call: Call;
-	/** The names answered so far in this flow, for the progress trail. A validated name carries a check mark. */
+	/** The names answered so far in this flow, for the progress trail. */
 	trail: string[];
-}
-
-/**
- * Whether the first prompt of a flow already asks for proof.
- *
- * A rotation of a component that can verify itself opens by proving control of the current value, and that prompt is a
- * validation. Every other flow opens by collecting something.
- */
-export function initialCall(flow: FlowName, prompt: AuthDancePrompt): Call {
-	return flow === "rotate" && prompt.kind === "input" && prompt.sendable ? "validation" : "prompt";
-}
-
-/**
- * Whether the prompt that came back is a validation of what was just submitted.
- *
- * When a collected value still needs proof of control, the library answers with a prompt under the same name instead
- * of advancing. Two steps of one choreography never share a name, so the repeated name is the tell.
- */
-export function nextCall(step: Step, submitted: string, prompt: AuthDancePrompt): Call {
-	return step.call === "prompt" && prompt.kind === "input" && prompt.name === submitted ? "validation" : "prompt";
-}
-
-/** The route that takes the answer to the current prompt. */
-export function submitPath(call: Call): "/submit-prompt" | "/submit-validation" {
-	return call === "validation" ? "/submit-validation" : "/submit-prompt";
-}
-
-/** The route that asks the library to deliver the current prompt over its channel. */
-export function sendPath(call: Call): "/send-prompt" | "/send-validation" {
-	return call === "validation" ? "/send-validation" : "/send-prompt";
 }
 
 /**
@@ -132,9 +97,9 @@ export function activePrompt(prompt: AuthDancePrompt, branch?: string): AuthDanc
  *
  * `sendable` is advisory: the library never reads the flag, and it says the value can travel over a channel one day,
  * not that there is anything to deliver now. A prompt the library can deliver is one it already knows the recipient
- * of, which is a code it is about to mail. The recipient a subscribe collects is sendable too, in that sense, but
- * nothing can be sent there until the owner has given it.
+ * of, which is a one-time code it is about to mail. The recipient a subscribe collects is sendable too, in that
+ * sense, but nothing can be sent there until the owner has given it.
  */
 export function isSendable(step: Step): boolean {
-	return promptInputs(step.prompt).some((input) => input.sendable && (step.call === "validation" || input.type === "otp"));
+	return promptInputs(step.prompt).some((input) => input.sendable && input.type === "otp");
 }

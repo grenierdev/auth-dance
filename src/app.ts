@@ -138,14 +138,6 @@ const AddressRateLimits: Required<AuthDanceAddressRateLimits> = {
 };
 
 /**
- * The two routes that put a message on a channel. Each hit has a cost, so these routes get a bucket of their own.
- *
- * `createAuthDanceApp` mounts that bucket as a middleware on each of these two paths. The Hono router matches it, so
- * an `options.basePath` and a mount inside another app both keep the bucket in force.
- */
-const sendRoutes = ["/send-prompt", "/send-validation"];
-
-/**
  * The Hono app that serves the AuthDance routes, with the bindings every handler needs.
  *
  * A handler never holds an `AuthDanceApi` of its own. The caller passes one as `api` on each `fetch` call, together with
@@ -165,8 +157,8 @@ export interface AuthDanceAppOptions {
  *
  * Every route is a POST. The app mounts `/sign-in`, `/sign-up`, `/sign-out`, `/list-sessions`, `/list-components` and
  * `/refresh-token`. It then mounts `/enroll`, `/unenroll`, `/rotate`, `/recover`, `/subscribe`, `/unsubscribe` and
- * `/delete`. It ends with `/send-prompt`, `/submit-prompt`, `/send-validation` and `/submit-validation`.
- * `options.basePath` prefixes all 17 of them. Each handler calls the matching `AuthDanceApi` method on `c.env.api` and
+ * `/delete`. It ends with `/send-prompt` and `/submit-prompt`, the two routes that carry every step of every flow.
+ * `options.basePath` prefixes all 15 of them. Each handler calls the matching `AuthDanceApi` method on `c.env.api` and
  * answers with its JSON.
  *
  * `/list-sessions` and `/list-components` have no such method. Both resolve the identity with `accessTokenIdentity`, then
@@ -185,9 +177,9 @@ export interface AuthDanceAppOptions {
  * not choose what the library records against its own session.
  *
  * A middleware consumes the per-address buckets before anything parses a body, so a flood costs nothing but the counter.
- * `/send-prompt` and `/send-validation` consume a second, tighter bucket on top of that, because they put a message on a
- * channel. The Hono router matches that second bucket on the route itself, so an `options.basePath` and a mount inside
- * another app both keep it in force. Both middlewares leave a request with no caller address unbucketed.
+ * `/send-prompt` consumes a second, tighter bucket on top of that, because it puts a message on a channel. The Hono
+ * router matches that second bucket on the route itself, so an `options.basePath` and a mount inside another app both
+ * keep it in force. Both middlewares leave a request with no caller address unbucketed.
  */
 export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp {
 	let app = new Hono<{ Bindings: { api: AuthDanceApi; rate_limit?: AuthDanceAddressRateLimits } }>();
@@ -223,19 +215,13 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		await next();
 	});
 
-	// The tighter bucket of the two sending routes sits on the routes themselves, so the router decides what it
-	// covers. A comparison against `c.req.path` would miss both routes under an `options.basePath`, and again under
-	// a mount inside another app. These middlewares are registered before the routes, so they still run before the
-	// validator parses a body.
-	for (const route of sendRoutes) {
-		app.use(route, async (c, next) => {
-			const { address } = callerOf(c);
-			if (address) {
-				await consumeAddressRateLimit(c, `send:${address}`, c.env.rate_limit?.send ?? AddressRateLimits.send);
-			}
-			await next();
-		});
-	}
+	app.use("/send-prompt", async (c, next) => {
+		const { address } = callerOf(c);
+		if (address) {
+			await consumeAddressRateLimit(c, `send:${address}`, c.env.rate_limit?.send ?? AddressRateLimits.send);
+		}
+		await next();
+	});
 
 	async function consumeAddressRateLimit(
 		c: Context<{ Bindings: { api: AuthDanceApi } }>,
@@ -513,7 +499,7 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		describeRoute({
 			summary: "Send the current prompt",
 			description:
-				"Delivers the current prompt over its channel, for the components that can be sent rather than typed — mailing a one-time code, for instance. `locale` falls back to the Accept-Language header. `name` selects which component to send when the current step is a choice.",
+				"Delivers the current prompt over its channel, for the components that can be sent rather than typed — mailing a one-time code, for instance. The state names the phase, so one route delivers both the prompt of a step and the validation that proves control of a value the flow already collected. `locale` falls back to the Accept-Language header. `name` selects which component to send when the current step is a choice.",
 			tags: ["Auth"],
 			responses: {
 				200: {
@@ -535,7 +521,7 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		describeRoute({
 			summary: "Submit the current prompt",
 			description:
-				"Answers the current prompt and advances the flow. Returns the next prompt, the tokens once an authentication completes, or a bare success once a management flow completes. `name` selects which component is being answered when the current step is a choice.",
+				"Answers the current prompt and advances the flow. The state names the phase, so one route answers both a prompt that collects a value and a validation that proves control of a value the flow already collected. Returns the next prompt, the tokens once an authentication completes, or a bare success once a management flow completes. `name` selects which component is being answered when the current step is a choice.",
 			tags: ["Auth"],
 			responses: {
 				200: {
@@ -549,50 +535,6 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		async (c) => {
 			const { name, value, state } = c.req.valid("json");
 			return c.json(await c.env.api.submitPrompt({ name, value, state, ...callerOf(c) }));
-		},
-	);
-
-	app.post(
-		"/send-validation",
-		describeRoute({
-			summary: "Send the current validation",
-			description:
-				"Delivers the validation prompt that confirms a value already collected — the one-time code proving control of the address just given. `locale` falls back to the Accept-Language header.",
-			tags: ["Auth"],
-			responses: {
-				200: {
-					description: "The validation has been sent",
-					content: { "application/json": { schema: resolver(ResultResponse) } },
-				},
-				...withErrorResponses(),
-			},
-		}),
-		validator("json", v.object({ name: v.string(), locale: v.optional(v.string()), state: v.string() }), badRequest),
-		async (c) => {
-			const { name, locale, state } = c.req.valid("json");
-			return c.json(await c.env.api.sendValidation({ name, locale: localeOf(c, locale), state }));
-		},
-	);
-
-	app.post(
-		"/submit-validation",
-		describeRoute({
-			summary: "Submit the current validation",
-			description:
-				"Answers the validation prompt, confirming the value it covers and advancing the flow. Returns the next prompt, the tokens once an authentication completes, or a bare success once a management flow completes.",
-			tags: ["Auth"],
-			responses: {
-				200: {
-					description: "The next prompt, the minted tokens, or a bare success",
-					content: { "application/json": { schema: resolver(AnyResponse) } },
-				},
-				...withErrorResponses(),
-			},
-		}),
-		validator("json", v.object({ name: v.string(), value: v.unknown(), state: v.string() }), badRequest),
-		async (c) => {
-			const { name, value, state } = c.req.valid("json");
-			return c.json(await c.env.api.submitValidation({ name, value, state, ...callerOf(c) }));
 		},
 	);
 

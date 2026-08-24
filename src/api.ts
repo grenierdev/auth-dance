@@ -57,7 +57,6 @@ import {
 	ComponentNotSendableError,
 	ComponentNotVerifiableError,
 	ConfirmationRequiredError,
-	ControlNotProvenError,
 	FreshSignInRequiredError,
 	IdentityMismatchError,
 	IdentityNotFoundError,
@@ -351,13 +350,33 @@ export const IdentityRateLimits: Required<AuthDanceIdentityRateLimits> = {
 	refresh: { limit: 60, window: 5 * 60 },
 };
 
+// What #advance needs to finish a step: the flow, the identity it acts on, and how it reports the change. Both
+// branches of a submit start from #advanceBag and override only the keys their own flow decides, so the shape lives
+// in one place instead of being restated on each side of the dispatch.
+interface AuthDanceAdvance {
+	state: AuthDanceState;
+	path: string[];
+	identity: AuthDanceIdentity;
+	expireAt: Date;
+	flow: string;
+	name?: string;
+	persist?: boolean;
+	address?: string;
+	userAgent?: string;
+}
+
 /**
  * The state machine of the library. It performs the dance the choreography declares.
  *
  * It covers nine flows: sign-in, sign-up, enroll, unenroll, rotate, recover, subscribe, unsubscribe and delete.
  * A flow method returns the first prompt together with the state. The state is a JWE the client keeps and
  * returns with every later call. The client then calls `submitPrompt` until the answer carries the tokens or a
- * plain success result. When the library asks for proof of control, the client calls `submitValidation` instead.
+ * plain success result.
+ *
+ * One method answers every prompt. A prompt that collects a value and a prompt that asks for proof of control of a
+ * value the flow already collected both go to `submitPrompt`, and the state tells the library which of the two it
+ * reads. `sendPrompt` delivers either one over its channel. A client therefore keeps no record of the phase a flow
+ * runs in.
  *
  * Each method raises an `AuthDanceError` for a failure the caller can act on. Any other failure escapes as
  * `AuthDanceUnknownError` and carries the original failure in `cause`. `accessTokenIdentity` is the one
@@ -593,6 +612,52 @@ export class AuthDanceApi {
 		return `session:${state.sessionId}`;
 	}
 
+	// Which phase the flow waits in. Both step methods dispatch on it: a state that already holds a value nobody
+	// proved control of yet takes the validation branch, and every other state takes the prompt branch. The state
+	// settles it, so a client never has to track which of the two comes next. A sign-in has no validation phase, and
+	// a confirmation-only flow — unenroll, unsubscribe, delete — has none either.
+	#awaitsValidation(state: AuthDanceState): boolean {
+		switch (state.kind) {
+			case "sign-up":
+				return this.#signUpStepPending(state);
+			case "enroll":
+				return this.#isPending(state.components, state.component);
+			case "rotate":
+				// Two rounds: control of the enrolled value, then the replacement it collects once control is proven.
+				return !state.verified || this.#isPending(state.components, state.component);
+			case "recover":
+				// The same two rounds, behind the choice of the component the owner identifies through. Until that
+				// choice is answered there is nothing to prove control of.
+				return state.identification !== undefined && (!state.verified || this.#isPending(state.components, state.component));
+			case "subscribe":
+				return state.validating;
+			default:
+				return false;
+		}
+	}
+
+	// The one record a validation covers: the identification or challenge the flow names, collected and still
+	// unproven. The name has to match, because a component contributes more than the record the flow acts on — the
+	// email component also yields the channel it is reachable at and the one-time code challenge that rides on that
+	// channel — and neither of those is what the owner proves. Reading `confirmed` rather than the length of the list
+	// is also what keeps a replayed state of a finished flow on the collect branch, where it still answers
+	// COMPONENT_ALREADY_COLLECTED.
+	#isPending(components: AuthDanceIdentityComponent[], name: string): boolean {
+		return components.some((c) => c.kind !== "channel" && c.component === name && !c.confirmed);
+	}
+
+	// A sign-up names no component of its own — the choreography does, one step at a time. That step waits for a
+	// proof once it has collected its value and that value is still unconfirmed. #signUpPath counts confirmed
+	// components only, so the walk stays on the same step until the proof lands.
+	#signUpStepPending(state: AuthDanceStateSignUp): boolean {
+		const nextMove = peek(this.#options.choreography, this.#signUpPath(state));
+		if (nextMove === null) {
+			return false;
+		}
+		const offered = nextMove.kind === "component" ? [nextMove.component] : nextMove.components.map((c) => c.component);
+		return offered.some((name) => this.#isPending(state.components, name));
+	}
+
 	/**
 	 * Exchanges a refresh token for a new set of tokens on the same session.
 	 *
@@ -721,17 +786,7 @@ export class AuthDanceApi {
 		return this.#generateTokens({ identity, scopes, session });
 	}
 
-	async #advance(options: {
-		state: AuthDanceState;
-		path: string[];
-		identity: AuthDanceIdentity;
-		expireAt: Date;
-		flow: string;
-		name?: string;
-		persist?: boolean;
-		address?: string;
-		userAgent?: string;
-	}): Promise<AuthDanceResponse> {
+	async #advance(options: AuthDanceAdvance): Promise<AuthDanceResponse> {
 		// Only the authentication flows walk the choreography and mint tokens; every other flow — a recovery
 		// included — acts on the one component it names and completes with a plain success result. Proving
 		// control of a single component is not a sign-in.
@@ -745,9 +800,9 @@ export class AuthDanceApi {
 				if (options.flow === "sign-up") {
 					await this.#emit("onIdentityCreated", { flow: options.flow, identity: options.identity });
 				} else {
-					// A flow reaches this line only through a branch of #submitPrompt or #submitValidation, and each
-					// one of those sets a flow AuthDanceIdentityEventFlow names. The bag they share types it as a
-					// plain string, hence the cast.
+					// A flow reaches this line only through a branch of #submitPromptStep or #submitValidationStep,
+					// and each one of those sets a flow AuthDanceIdentityEventFlow names. The bag they share types
+					// it as a plain string, hence the cast.
 					await this.#emit("onIdentityUpdated", {
 						flow: options.flow as Exclude<AuthDanceIdentityEventFlow, "sign-up" | "delete">,
 						identity: options.identity,
@@ -1247,7 +1302,7 @@ export class AuthDanceApi {
 	 *
 	 * The prompt collects the new value. The component sees the values this enrollment collected first, so a
 	 * validation targets the new value and not the ones the identity already carries. Answer that validation
-	 * with `sendValidation` and `submitValidation`.
+	 * with `sendPrompt` and `submitPrompt`, the same two methods every other step uses.
 	 *
 	 * @param options `name` is the component to enroll, as `options.components` declares it.
 	 * @returns The encrypted state, the prompt of the component, and the moment the state expires.
@@ -1577,52 +1632,85 @@ export class AuthDanceApi {
 	}
 
 	/**
-	 * Delivers the current prompt over its channel, for a component the caller cannot simply type — a one-time
+	 * Delivers the current prompt over its channel, for a component the owner cannot simply type — a one-time
 	 * code, for example.
 	 *
-	 * Only a sign-in and a sign-up hold a prompt to deliver. Every other flow delivers a validation instead,
-	 * through `sendValidation`. This method needs no access token and no fresh sign-in, because the state carries
-	 * whatever the flow has established.
+	 * The state names the flow and the phase it runs in, so this one method delivers both kinds of prompt. A
+	 * sign-in and a sign-up deliver the prompt of the step itself. A sign-up, an enroll, a rotate, a recover and a
+	 * subscribe deliver the validation that proves control of a value the flow already collected. A rotate and a
+	 * recover deliver one in each of their two rounds: first the proof of the current value — of the component the
+	 * owner identified through, for a recovery — then the proof of the replacement.
+	 *
+	 * For a subscribe the code goes over the channel being subscribed, to the recipient the flow collected, so
+	 * `name` does not select it. A recovery names one component in each of its rounds, so `name` does not select
+	 * there either. This method needs no access token and no fresh sign-in, because the state carries whatever the
+	 * flow has established.
 	 *
 	 * @param options `name` selects which component to deliver when the current step is a choice. `locale` picks
 	 * the language of the message. `state` is the opaque string the previous call returned.
 	 * @throws InvalidStateError when the state does not decrypt, carries no expiry, or no longer matches the schema.
 	 * @throws RateLimitedError when the `send` bucket of the subject is empty.
-	 * @throws InvalidStateForFlowError when the state is neither a sign-in nor a sign-up.
+	 * @throws InvalidStateForFlowError when the flow holds nothing to deliver, for example a delete waiting on its
+	 * confirmation, or an enroll that has not collected its value yet.
 	 * @throws ComponentNotInChoreographyError when `name` is not a component the current step offers.
 	 * @throws UnknownComponentError when `options.components` declares no component of that name.
+	 * @throws ComponentNotVerifiableError when the component offers no verification.
+	 * @throws ComponentNotCollectedError when a subscribe has not collected its recipient yet.
 	 * @throws ComponentNotSendableError when the component delivers nothing over a channel.
+	 * @throws RecoveryNotIdentifiedError when a recovery has not resolved its identity yet.
+	 * @throws SessionNotFoundError or IdentityNotFoundError when the session or the identity the state names is gone.
 	 * @throws UnknownChannelError when `options.channels` declares no channel the message names.
 	 */
 	sendPrompt(options: { name: string; locale: string; state: string }): Promise<AuthDanceResponseResult> {
-		return this.#guard("sendPrompt", async () => {
-			const { state } = await this.#decryptState(options.state);
-			await this.#consumeRateLimit("send", this.#stateSubject(state));
-			let authComponent: AuthDanceComponent | undefined;
-			let ctx: AuthDanceComponentContext | undefined;
-			if (state.kind === "sign-in") {
-				const { choreographyComponent, authComponent: ac } = this.#resolveStep(state.path, options.name);
-				const identity = state.identityId ? await this.#options.storage.getIdentity(state.identityId) : undefined;
-				authComponent = ac;
-				ctx = this.#signInContext(state, choreographyComponent.component, identity!);
-			} else if (state.kind === "sign-up") {
-				const path = this.#signUpPath(state);
-				const { choreographyComponent, authComponent: ac } = this.#resolveStep(path, options.name);
-				authComponent = ac;
-				ctx = this.#signUpContext(state, choreographyComponent.component);
-			} else {
-				throw new InvalidStateForFlowError(state.kind);
-			}
-			if (!authComponent || !authComponent.sendPrompt || !ctx) {
-				throw new ComponentNotSendableError(options.name);
-			}
-			const message = await authComponent.sendPrompt(options.locale, ctx);
-			if (!message) {
-				throw new ComponentNotSendableError(options.name);
-			}
-			await this.#sendMessage(message);
-			return { success: true };
-		});
+		return this.#guard("sendPrompt", () => this.#sendPrompt(options));
+	}
+
+	async #sendPrompt(options: { name: string; locale: string; state: string }): Promise<AuthDanceResponseResult> {
+		const { state } = await this.#decryptState(options.state);
+		await this.#consumeRateLimit("send", this.#stateSubject(state));
+		// Both branches only resolve. Asking the component for the message and putting it on the channel is the same
+		// work either way, so it is written once, below.
+		const { authComponent, ctx } = this.#awaitsValidation(state)
+			? await this.#resolveValidationSend(state, options.name)
+			: await this.#resolvePromptSend(state, options.name);
+		if (!authComponent.sendPrompt) {
+			throw new ComponentNotSendableError(options.name);
+		}
+		const message = await authComponent.sendPrompt(options.locale, ctx);
+		if (!message) {
+			throw new ComponentNotSendableError(options.name);
+		}
+		await this.#sendMessage(message);
+		return { success: true };
+	}
+
+	// The prompt of the step itself. Only a sign-in and a sign-up hold one the library can deliver: every other
+	// flow collects its value from an authenticated caller and has nothing to put on a channel before it does. The
+	// two flows that do have a more precise answer than "wrong flow" keep it.
+	async #resolvePromptSend(
+		state: AuthDanceState,
+		name: string,
+	): Promise<{ authComponent: AuthDanceComponent; ctx: AuthDanceComponentContext }> {
+		if (state.kind === "sign-in") {
+			const { choreographyComponent, authComponent } = this.#resolveStep(state.path, name);
+			const identity = state.identityId ? await this.#options.storage.getIdentity(state.identityId) : undefined;
+			return { authComponent, ctx: this.#signInContext(state, choreographyComponent.component, identity!) };
+		}
+		if (state.kind === "sign-up") {
+			const path = this.#signUpPath(state);
+			const { choreographyComponent, authComponent } = this.#resolveStep(path, name);
+			return { authComponent, ctx: this.#signUpContext(state, choreographyComponent.component) };
+		}
+		// The code goes to the recipient this flow collects, so before the recipient there is nothing to deliver to.
+		if (state.kind === "subscribe") {
+			throw new ComponentNotCollectedError(state.channel.component);
+		}
+		// Which identity a recovery acts on stays unknown until the choice is answered, and the choice itself is a
+		// prompt the owner types.
+		if (state.kind === "recover") {
+			throw new RecoveryNotIdentifiedError(state.component);
+		}
+		throw new InvalidStateForFlowError(state.kind);
 	}
 
 	/**
@@ -1634,8 +1722,10 @@ export class AuthDanceApi {
 	 * unsubscribe and a delete take the boolean `true` as their confirmation. A subscribe stores the recipient
 	 * and moves to its one-time code.
 	 *
-	 * When the collected value still needs proof of control, the answer is a validation prompt instead of the
-	 * next step. Reply to it with `sendValidation` and `submitValidation`, then the dance continues.
+	 * When the collected value still needs proof of control, the answer is a validation prompt instead of the next
+	 * step. Answer that prompt with this same method: the state names the phase, so the library reads the value as
+	 * the proof it asked for and the dance continues. On success the value becomes confirmed. A rotate and a recover
+	 * answer twice, the first time for the current value and the second for the replacement.
 	 *
 	 * The library checks the elevated window when a flow starts, so this method does not check it again. It needs no
 	 * access token either, because the state carries the session the flow started from.
@@ -1652,17 +1742,17 @@ export class AuthDanceApi {
 	 * @throws InvalidStateError when the state does not decrypt, carries no expiry, or no longer matches the schema.
 	 * @throws RateLimitedError when the `verify` bucket of the subject is empty. The method consumes the bucket
 	 * before it reads the value, so a wrong password costs a slot.
-	 * @throws InvalidStateForFlowError when the state has no prompt left to answer, for example a subscribe that
-	 * already waits for its one-time code.
+	 * @throws InvalidStateForFlowError when the state carries a `kind` the schema does not know about.
 	 * @throws ComponentNotInChoreographyError or UnknownComponentError when `name` is not the step the flow expects.
 	 * @throws InvalidPromptValueError when a sign-in step rejects the value.
+	 * @throws InvalidValidationValueError when a verification rejects the value.
 	 * @throws IdentityNotResolvedError when no step has resolved an identity and the value resolves none either.
 	 * @throws IdentityMismatchError when two components of one dance resolve two different identities.
-	 * @throws ComponentAlreadyCollectedError when the step already holds a value.
+	 * @throws ComponentAlreadyCollectedError when the step already holds a confirmed value.
 	 * @throws ComponentNotCollectedError when the component yields no identification and no challenge.
-	 * @throws ControlNotProvenError when a rotate or a recover has not yet proven control of the current value.
-	 * @throws ComponentNotVerifiableError when the component a recovery identifies through offers no verification.
+	 * @throws ComponentNotVerifiableError when the component the flow validates through offers no verification.
 	 * @throws ConfirmationRequiredError when an unenroll, an unsubscribe or a delete gets a value other than `true`.
+	 * @throws RecoveryNotIdentifiedError when a recovery has not resolved its identity yet.
 	 * @throws WouldLockOutError when the unenroll or the unsubscribe leaves no completable path through the choreography.
 	 * @throws SessionNotFoundError or IdentityNotFoundError when the session or the identity the state names is gone.
 	 */
@@ -1672,28 +1762,49 @@ export class AuthDanceApi {
 		return this.#guard("submitPrompt", () => this.#submitPrompt(options));
 	}
 
-	// The three long flows below stay in private methods rather than inside the #guard closure: the error
-	// boundary reads as one line, and the body keeps signalling failure exactly the way every private helper
-	// does — by throwing — instead of being re-indented into a callback.
+	// The long flows below stay in private methods rather than inside the #guard closure: the error boundary reads
+	// as one line, and the body keeps signalling failure exactly the way every private helper does — by throwing —
+	// instead of being re-indented into a callback.
 	async #submitPrompt(
 		options: { name: string; value: unknown; state: string; address?: string; userAgent?: string },
 	): Promise<AuthDanceResponse> {
 		const { state, expireAt } = await this.#decryptState(options.state);
 		// Before the value is looked at, so a wrong password costs a bucket slot rather than being free. In a
 		// sign-in the subject is whatever an earlier step resolved, which is exactly the step that matters:
-		// guessing a password happens once the identification is behind us.
+		// guessing a password happens once the identification is behind us. One bucket covers both phases, because
+		// a guess at a one-time code and a guess at a password are the same kind of attempt.
 		await this.#consumeRateLimit("verify", this.#stateSubject(state));
-		let advanceOptions = {
+		return this.#awaitsValidation(state)
+			? this.#submitValidationStep(state, expireAt, options)
+			: this.#submitPromptStep(state, expireAt, options);
+	}
+
+	// The bag both branches hand to #advance. Each one overrides the keys its own flow decides.
+	#advanceBag(
+		state: AuthDanceState,
+		expireAt: Date,
+		options: { address?: string; userAgent?: string },
+	): AuthDanceAdvance {
+		return {
 			state,
-			path: [] as string[],
+			path: [],
 			identity: void 0 as unknown as AuthDanceIdentity,
 			expireAt,
 			flow: "",
-			name: undefined as string | undefined,
-			persist: undefined as boolean | undefined,
+			name: undefined,
+			persist: undefined,
 			address: options.address,
 			userAgent: options.userAgent,
 		};
+	}
+
+	// The value answers the prompt of the step: it collects what the flow asked for, or it confirms a removal.
+	async #submitPromptStep(
+		state: AuthDanceState,
+		expireAt: Date,
+		options: { name: string; value: unknown; address?: string; userAgent?: string },
+	): Promise<AuthDanceResponse> {
+		let advanceOptions = this.#advanceBag(state, expireAt, options);
 		if (state.kind === "sign-in") {
 			const { choreographyComponent, authComponent } = this.#resolveStep(state.path, options.name);
 			let identity = state.identityId ? await this.#options.storage.getIdentity(state.identityId) : undefined;
@@ -1759,8 +1870,8 @@ export class AuthDanceApi {
 				persist: true,
 			};
 		} else if (state.kind === "enroll") {
-			// The enrolled value is collected exactly once; anything further belongs to the verification
-			// phase (sendValidation/submitValidation).
+			// The enrolled value is collected exactly once. An unconfirmed value would have taken the validation
+			// branch instead, so a value here is a confirmed one and the state is a replay of a finished enrollment.
 			if (state.components.length > 0) {
 				throw new ComponentAlreadyCollectedError(state.component);
 			}
@@ -1792,11 +1903,9 @@ export class AuthDanceApi {
 				persist: true,
 			};
 		} else if (state.kind === "rotate") {
-			// Control of the enrolled value is proven through sendValidation/submitValidation, which is the
-			// prompt rotate() handed out; only the replacement value is collected here, exactly once.
-			if (!state.verified) {
-				throw new ControlNotProvenError(state.component);
-			}
+			// Control of the enrolled value is proven on the validation branch, which is where the prompt rotate()
+			// handed out goes. Only the replacement value is collected here, and exactly once: an unconfirmed
+			// replacement would have taken that branch too.
 			if (state.components.length > 0) {
 				throw new ComponentAlreadyCollectedError(state.component);
 			}
@@ -1852,11 +1961,8 @@ export class AuthDanceApi {
 					expireAt,
 				};
 			}
-			// Nothing is reset before control of the picked component has been proven, which is what
-			// sendValidation/submitValidation did with the prompt handed out above.
-			if (!state.verified) {
-				throw new ControlNotProvenError(state.identification);
-			}
+			// Control of the picked component is proven on the validation branch, which is where the prompt handed
+			// out above goes. A recovery reaches this line only once that branch marked the state verified.
 			const identity = await this.#recoverIdentity(state);
 			// The replacement is collected exactly once; anything further belongs to its validation round.
 			if (state.components.length > 0) {
@@ -1911,16 +2017,16 @@ export class AuthDanceApi {
 				persist: true,
 			};
 		} else if (state.kind === "subscribe") {
-			// The recipient (e.g. phone number) has already been collected once we reach the validating phase.
-			if (state.validating) {
-				throw new InvalidStateForFlowError(state.kind);
-			}
+			// Only the recipient (e.g. phone number) is collected here. Once it is in, the state is validating and
+			// the one-time code that confirms it goes to the validation branch instead.
 			const { identity } = await this.#sessionIdentity(state.sessionId);
 			// Stash the submitted recipient on the pending channel, keyed by the channel name (mirrors how the
 			// email component stores its address), then move to OTP validation.
 			state.channel.data = { ...(state.channel.data ?? {}), [state.channel.component]: options.value };
 			state.validating = true;
-			const prompt = await new OtpAuthDanceComponent({ channel: state.channel.component }).getPrompt(this.#subscribeContext(state, identity));
+			const prompt = await new OtpAuthDanceComponent({ channel: state.channel.component }).getPrompt(
+				this.#subscribeContext(state, identity),
+			);
 			return { state: await this.#encryptState(state, expireAt), prompt, expireAt };
 		} else if (state.kind === "unsubscribe") {
 			// A single confirmation gate: the authenticated caller must explicitly confirm (value === true)
@@ -1976,137 +2082,57 @@ export class AuthDanceApi {
 		return this.#advance(advanceOptions);
 	}
 
-	/**
-	 * Delivers the validation that proves control of a value the flow already collected. One example is the
-	 * one-time code that confirms the address the caller just gave.
-	 *
-	 * A sign-up, an enroll, a rotate, a recover and a subscribe all validate a value. A sign-in has no validation
-	 * phase, and a confirmation-only flow has none either. A rotate and a recover use this method in both of
-	 * their phases. Before the flow collects the replacement, the message proves control of the current value — of
-	 * the component the caller identified through, for a recovery. Afterwards it validates the replacement.
-	 *
-	 * For a subscribe the code goes over the channel being subscribed, to the recipient the flow collected, so
-	 * `name` does not select it. A recovery names one component in each of its phases, so `name` does not
-	 * select there either. This method needs no access token and no fresh sign-in.
-	 *
-	 * @param options `name` selects which component to validate when the sign-up step is a choice. `locale` picks
-	 * the language of the message. `state` is the opaque string the previous call returned.
-	 * @throws InvalidStateError when the state does not decrypt, carries no expiry, or no longer matches the schema.
-	 * @throws RateLimitedError when the `send` bucket of the subject is empty.
-	 * @throws InvalidStateForFlowError when the flow has no validation to deliver.
-	 * @throws ComponentNotInChoreographyError or UnknownComponentError when `name` is not the step the flow expects.
-	 * @throws ComponentNotVerifiableError when the component offers no verification.
-	 * @throws ComponentNotCollectedError when the flow has collected no value to validate yet.
-	 * @throws ComponentNotSendableError when the verification delivers nothing over a channel.
-	 * @throws RecoveryNotIdentifiedError when a recovery has not resolved its identity yet.
-	 * @throws SessionNotFoundError or IdentityNotFoundError when the session or the identity the state names is gone.
-	 * @throws UnknownChannelError when `options.channels` declares no channel the message names.
-	 */
-	sendValidation(options: { name: string; locale: string; state: string }): Promise<AuthDanceResponseResult> {
-		return this.#guard("sendValidation", () => this.#sendValidation(options));
-	}
-
-	async #sendValidation(options: { name: string; locale: string; state: string }): Promise<AuthDanceResponseResult> {
-		const { state } = await this.#decryptState(options.state);
-		await this.#consumeRateLimit("send", this.#stateSubject(state));
-		let authComponent: AuthDanceComponent | undefined;
-		let ctx: AuthDanceComponentContext | undefined;
+	// The verification that proves control of a value the flow already collected — the one-time code that confirms
+	// the address the owner just gave, for example. #awaitsValidation has already established that the state holds
+	// one, so every branch here resolves rather than guards.
+	async #resolveValidationSend(
+		state: AuthDanceState,
+		name: string,
+	): Promise<{ authComponent: AuthDanceComponent; ctx: AuthDanceComponentContext }> {
 		if (state.kind === "sign-up") {
-			const { ctx: c, verificationAuthDanceComponent: ac } = await this.#resolveVerification(state, options.name);
-			authComponent = ac;
-			ctx = c;
-		} else if (state.kind === "enroll") {
-			const { ctx: c, verificationAuthDanceComponent: ac } = await this.#resolveEnrollVerification(state);
-			authComponent = ac;
-			ctx = c;
-		} else if (state.kind === "rotate") {
-			// Serves both phases: before the replacement is collected the context still resolves to the
+			const { ctx, verificationAuthDanceComponent } = await this.#resolveVerification(state, name);
+			return { authComponent: verificationAuthDanceComponent, ctx };
+		}
+		if (state.kind === "enroll") {
+			const { ctx, verificationAuthDanceComponent } = await this.#resolveEnrollVerification(state);
+			return { authComponent: verificationAuthDanceComponent, ctx };
+		}
+		if (state.kind === "rotate") {
+			// Serves both rounds: before the replacement is collected the context still resolves to the
 			// enrolled value (proving control), afterwards it resolves to the replacement (validating it).
-			const { ctx: c, verificationAuthDanceComponent: ac } = await this.#resolveRotateVerification(state);
-			authComponent = ac;
-			ctx = c;
-		} else if (state.kind === "recover") {
-			// Serves both phases too: proving control of the component the caller picked to identify with, then
+			const { ctx, verificationAuthDanceComponent } = await this.#resolveRotateVerification(state);
+			return { authComponent: verificationAuthDanceComponent, ctx };
+		}
+		if (state.kind === "recover") {
+			// Serves both rounds too: proving control of the component the owner picked to identify with, then
 			// validating the replacement collected for the recovered component.
 			const identity = await this.#recoverIdentity(state);
-			const { ctx: c, verificationAuthDanceComponent: ac } = state.verified
+			const { ctx, verificationAuthDanceComponent } = state.verified
 				? await this.#resolveRecoverResetVerification(state, identity)
 				: await this.#resolveRecoverControl(state, identity);
-			authComponent = ac;
-			ctx = c;
-		} else if (state.kind === "subscribe") {
-			// The code goes to the recipient this flow collects, so before the recipient there is nothing to deliver to.
-			if (!state.validating) {
-				throw new ComponentNotCollectedError(state.channel.component);
-			}
+			return { authComponent: verificationAuthDanceComponent, ctx };
+		}
+		if (state.kind === "subscribe") {
 			const { identity } = await this.#sessionIdentity(state.sessionId);
-			authComponent = new OtpAuthDanceComponent({ channel: state.channel.component });
-			ctx = this.#subscribeContext(state, identity);
-		} else {
-			throw new InvalidStateForFlowError(state.kind);
+			return {
+				authComponent: new OtpAuthDanceComponent({ channel: state.channel.component }),
+				ctx: this.#subscribeContext(state, identity),
+			};
 		}
-		if (!authComponent || !authComponent.sendPrompt || !ctx) {
-			throw new ComponentNotSendableError(options.name);
-		}
-		const message = await authComponent.sendPrompt(options.locale, ctx);
-		if (!message) {
-			throw new ComponentNotSendableError(options.name);
-		}
-		await this.#sendMessage(message);
-		return { success: true };
+		// #awaitsValidation returns false for every other kind, so `state` narrows to `never` here — hence the cast.
+		// The branch is kept as a runtime guard, the way #submitPromptStep keeps its own.
+		throw new InvalidStateForFlowError((state as AuthDanceState).kind);
 	}
 
-	/**
-	 * Answers the validation prompt and proves control of the value the flow collected.
-	 *
-	 * On success the value becomes confirmed and the dance continues. A rotate and a recover use this method
-	 * twice. The first answer proves control of the current value, and the library replies with the prompt that
-	 * collects the replacement. The second answer validates that replacement.
-	 *
-	 * A sign-up that completes here mints the tokens, exactly as `submitPrompt` does. A management flow and a
-	 * recovery complete with a plain success result. Either way the completed flow reports itself to
-	 * `options.hooks`, the same way `submitPrompt` does.
-	 *
-	 * The library checks the elevated window when a flow starts, so this method does not check it again. It needs no
-	 * access token either, because the state carries the session the flow started from.
-	 *
-	 * @param options `name` selects which component to validate when the step is a choice. `value` is the proof the
-	 * client collected. `state` is the opaque string the previous call returned. The library stores `address` and
-	 * `userAgent` on the session a completed sign-up mints.
-	 * @returns The next state and prompt. A completed sign-up returns the tokens instead. A completed management
-	 * flow or recovery returns a plain success result.
-	 * @throws InvalidStateError when the state does not decrypt, carries no expiry, or no longer matches the schema.
-	 * @throws RateLimitedError when the `verify` bucket of the subject is empty.
-	 * @throws InvalidStateForFlowError when the flow has no validation to answer.
-	 * @throws InvalidValidationValueError when the verification rejects the value.
-	 * @throws ComponentNotInChoreographyError or UnknownComponentError when `name` is not the step the flow expects.
-	 * @throws ComponentNotVerifiableError when the component offers no verification.
-	 * @throws ComponentNotCollectedError when the flow has collected no value to validate yet.
-	 * @throws RecoveryNotIdentifiedError when a recovery has not resolved its identity yet.
-	 * @throws SessionNotFoundError or IdentityNotFoundError when the session or the identity the state names is gone.
-	 */
-	submitValidation(
-		options: { name: string; value: unknown; state: string; address?: string; userAgent?: string },
+	// The value answers the validation the flow asked for. On success the collected value becomes confirmed and the
+	// dance continues: a rotate and a recover reply with the prompt that collects the replacement, and every other
+	// flow advances.
+	async #submitValidationStep(
+		state: AuthDanceState,
+		expireAt: Date,
+		options: { name: string; value: unknown; address?: string; userAgent?: string },
 	): Promise<AuthDanceResponse> {
-		return this.#guard("submitValidation", () => this.#submitValidation(options));
-	}
-
-	async #submitValidation(
-		options: { name: string; value: unknown; state: string; address?: string; userAgent?: string },
-	): Promise<AuthDanceResponse> {
-		const { state, expireAt } = await this.#decryptState(options.state);
-		await this.#consumeRateLimit("verify", this.#stateSubject(state));
-		let advanceOptions = {
-			state,
-			path: [] as string[],
-			identity: void 0 as unknown as AuthDanceIdentity,
-			expireAt,
-			flow: "",
-			name: undefined as string | undefined,
-			persist: undefined as boolean | undefined,
-			address: options.address,
-			userAgent: options.userAgent,
-		};
+		let advanceOptions = this.#advanceBag(state, expireAt, options);
 		if (state.kind === "sign-up") {
 			const { path, choreographyComponent, identityComponent, ctx, verificationAuthDanceComponent } = await this.#resolveVerification(
 				state,
@@ -2189,10 +2215,8 @@ export class AuthDanceApi {
 				persist: true,
 			};
 		} else if (state.kind === "subscribe") {
-			// Same gate as #sendValidation: with no recipient collected, no code was ever deliverable.
-			if (!state.validating) {
-				throw new ComponentNotCollectedError(state.channel.component);
-			}
+			// The state is validating, so the recipient is in and the code was deliverable. #awaitsValidation is what
+			// establishes that; before the recipient the same value would have been read as the recipient itself.
 			const { identity } = await this.#sessionIdentity(state.sessionId);
 			const verified = await new OtpAuthDanceComponent({ channel: state.channel.component }).verifyPrompt(
 				options.value,
@@ -2211,7 +2235,9 @@ export class AuthDanceApi {
 				persist: true,
 			};
 		} else {
-			throw new InvalidStateForFlowError(state.kind);
+			// #awaitsValidation returns false for every other kind, so `state` narrows to `never` here. The branch is
+			// kept as a runtime guard, the way #submitPromptStep keeps its own.
+			throw new InvalidStateForFlowError((state as AuthDanceState).kind);
 		}
 		return this.#advance(advanceOptions);
 	}

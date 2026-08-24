@@ -4,7 +4,7 @@ import * as v from "valibot";
  * One input the client renders for the current step.
  *
  * A component or a channel builds this prompt for the step it owns. The library builds a confirmation prompt
- * on its own. The client returns the value under the same `name`, to `submitPrompt` or to `submitValidation`.
+ * on its own. The client returns the value under the same `name`, to `submitPrompt`.
  */
 export interface AuthDancePromptInput {
 	/** Marks the prompt as one input, and not a {@link AuthDancePromptChoice}. */
@@ -21,7 +21,7 @@ export interface AuthDancePromptInput {
 	type: string;
 	/**
 	 * `true` when the library can deliver the value over a channel, a one-time code for example. The client
-	 * then calls `sendPrompt`, or `sendValidation` during a validation, before it submits an answer. The
+	 * then calls `sendPrompt` before it submits an answer. The
 	 * library never reads this flag itself.
 	 */
 	sendable: boolean;
