@@ -26,6 +26,7 @@ import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, Memor
 import { EmailAuthDanceComponent } from "auth-dance/components/email";
 import { OtpAuthDanceComponent } from "auth-dance/components/otp";
 import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "auth-dance/components/password";
+import { TotpAuthDanceComponent } from "auth-dance/components/totp";
 import type { Durations } from "./config.ts";
 
 /** The key that signs the tokens and encrypts the state. It sits in the bundle. A real deployment must not do this. */
@@ -33,6 +34,12 @@ export const SECRET = "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs";
 
 /** The PBKDF2 rounds of the password component. The library default is 600 000. */
 export const PASSWORD_ROUNDS = 60_000;
+
+/** The digits of the authenticator codes. The `totp-key` field reads it back out of the prompt. */
+export const TOTP_DIGITS = 6;
+
+/** The length of one time step of the authenticator codes, in seconds. */
+export const TOTP_PERIOD = 30;
 
 /** What the seed puts in storage, and what the start card offers to type. */
 export const SEEDED = {
@@ -130,6 +137,7 @@ export class DemoChannel extends MemoryAuthDanceChannel {
 /**
  * Builds one instance from a choreography, a set of durations and a sink. The choreography picks components by name.
  * `email` and `email2` are two addresses with a channel each. `password` is a challenge. `otp` is a code over `email`.
+ * `totp` is the key of an authenticator app, which the browser generates and the library never delivers.
  */
 export function buildDance(choreography: AuthDanceChoreography, durations: Durations, sink: DanceSink): Dance {
 	const channels = {
@@ -143,7 +151,8 @@ export function buildDance(choreography: AuthDanceChoreography, durations: Durat
 	const email2 = new EmailAuthDanceComponent({ channel: "email2", challenge: "otp2" });
 	const otp2 = new OtpAuthDanceComponent({ channel: "email2" });
 	const password = new PasswordAuthDanceComponent("demo-pepper", pbkdf2PasswordHasher(PASSWORD_ROUNDS));
-	const components: Record<string, AuthDanceComponent> = { email, email2, password, otp, otp2 };
+	const totp = new TotpAuthDanceComponent({ digits: TOTP_DIGITS, period: TOTP_PERIOD });
+	const components: Record<string, AuthDanceComponent> = { email, email2, password, otp, otp2, totp };
 
 	const storage = new AuthDanceStorage({
 		identity: new MemoryIdentityProvider(),

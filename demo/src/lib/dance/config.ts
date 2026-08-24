@@ -82,6 +82,12 @@ export const PRESETS: ReadonlyArray<Preset> = [
 		choreography: sequence("email", "password", "otp"),
 	},
 	{
+		id: "authenticator",
+		label: "Two factors: email, password, then an authenticator code",
+		hint: 'sequence("email", "password", "totp") — the sign-up collects the key, the sign-in takes the code',
+		choreography: sequence("email", "password", "totp"),
+	},
+	{
 		id: "second-factor-choice",
 		label: "Email, then a password or a code",
 		hint: 'sequence("email", choice("password", "otp")) — the second step arrives as a choice prompt',

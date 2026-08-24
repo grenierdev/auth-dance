@@ -8,7 +8,8 @@
  */
 
 import { useEffect, useSyncExternalStore } from "react";
-import type { AuthDanceSession } from "auth-dance";
+import type { AuthDancePromptInput, AuthDanceSession } from "auth-dance";
+import { generateKey } from "auth-dance";
 import {
 	ApiError,
 	buildDance,
@@ -156,11 +157,27 @@ const INITIAL: DanceState = {
 	notice: undefined,
 };
 
-/** What a field holds before the owner touches it. A confirmation starts at `false`. */
+/**
+ * What one field holds before the owner touches it. A confirmation starts at `false`.
+ *
+ * A `totp-key` field starts on a key this browser draws. The library never generates one and never delivers one, so
+ * every arrival of that prompt draws a new key, and the owner takes it off the screen.
+ */
+function initialValue(input: AuthDancePromptInput): unknown {
+	if (input.type === "confirmation") {
+		return false;
+	}
+	if (input.type === "totp-key") {
+		return generateKey(16);
+	}
+	return "";
+}
+
+/** What every field of a prompt holds before the owner touches it. */
 function emptyValues(step: Step): Record<string, unknown> {
 	const values: Record<string, unknown> = {};
 	for (const input of promptInputs(step.prompt)) {
-		values[input.name] = input.type === "confirmation" ? false : "";
+		values[input.name] = initialValue(input);
 	}
 	return values;
 }

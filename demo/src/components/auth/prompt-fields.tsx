@@ -15,6 +15,8 @@ import { Input } from "@/components/ui/input.tsx";
 import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp.tsx";
 import { useDance, useDanceActions } from "@/lib/dance/index.ts";
 
+import { TotpKeyField } from "./totp-key-field.tsx";
+
 /** Everything a control is given. */
 export interface PromptControlProps {
 	/** The prompt being collected. A type of your own reads its `options` from here. */
@@ -37,7 +39,10 @@ export interface PromptFieldDefinition {
 	control: (props: PromptControlProps) => ReactNode;
 }
 
-/** Every type this page knows how to collect. The library ships `email`, `password` and `otp`, and builds `confirmation`. */
+/**
+ * Every type this page knows how to collect. The library ships `email`, `password`, `otp`, `totp` and `totp-key`, and
+ * builds `confirmation`.
+ */
 export const PROMPT_FIELDS: Record<string, PromptFieldDefinition> = {
 	text: {
 		label: "Value",
@@ -119,6 +124,33 @@ export const PROMPT_FIELDS: Record<string, PromptFieldDefinition> = {
 				</InputOTPGroup>
 			</InputOTP>
 		),
+	},
+	"totp-key": {
+		label: "Authenticator key",
+		// The store generated the key when the prompt arrived. This control only shows it, and writes nothing back.
+		control: ({ prompt, id, value }) => <TotpKeyField prompt={prompt} id={id} value={value} />,
+	},
+	totp: {
+		label: "Authenticator code",
+		control: ({ prompt, id, value, disabled, onValueChange }) => {
+			const digits = typeof prompt.options?.digits === "number" ? prompt.options.digits : 6;
+			return (
+				<InputOTP
+					id={id}
+					maxLength={digits}
+					pattern={REGEXP_ONLY_DIGITS}
+					autoComplete="one-time-code"
+					containerClassName="gap-2"
+					value={String(value ?? "")}
+					disabled={disabled}
+					onChange={(next) => onValueChange(next)}
+				>
+					<InputOTPGroup>
+						{Array.from({ length: digits }, (_, index) => <InputOTPSlot key={index} index={index} />)}
+					</InputOTPGroup>
+				</InputOTP>
+			);
+		},
 	},
 	confirmation: {
 		label: "Confirmation",
