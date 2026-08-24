@@ -88,6 +88,12 @@ export const PRESETS: ReadonlyArray<Preset> = [
 		choreography: sequence("email", "password", "totp"),
 	},
 	{
+		id: "passkey",
+		label: "Passkey only: one signature",
+		hint: 'sequence("webauthn") — the credential id names the owner, so no address and no password are asked for',
+		choreography: sequence("webauthn"),
+	},
+	{
 		id: "second-factor-choice",
 		label: "Email, then a password or a code",
 		hint: 'sequence("email", choice("password", "otp")) — the second step arrives as a choice prompt',

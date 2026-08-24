@@ -189,13 +189,15 @@ during authentication. On `getIdentityComponent`, `identity` is the identity _as
 is still on it. During a sign-up, it holds the components collected so far. A component can therefore refuse a value on grounds that the
 value alone cannot show.
 
-Three components ship with the library:
+Five components ship with the library:
 
-| Component                                                   | Kind           | Verifiable | Notes                                                                                                                                                       |
-| ----------------------------------------------------------- | -------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `EmailAuthDanceComponent({ channel, challenge })`           | identification | yes        | Resolves the identity by address, and verifies it with an OTP. Also contributes a linked `channel` and a linked OTP `challenge` under the `challenge` name. |
-| `PasswordAuthDanceComponent(pepper, hasher?)`               | challenge      | no         | PBKDF2 by default, salted with the pepper and the identity id. Pass a `hasher` of your own.                                                                 |
-| `OtpAuthDanceComponent({ channel, digits = 6, ttl = 300 })` | challenge      | no         | The only sendable component. Stores the code in KV under `otp/<stateId>/<name>`.                                                                            |
+| Component                                                   | Kind           | Verifiable | Notes                                                                                                                                                         |
+| ----------------------------------------------------------- | -------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EmailAuthDanceComponent({ channel, challenge })`           | identification | yes        | Resolves the identity by address, and verifies it with an OTP. Also contributes a linked `channel` and a linked OTP `challenge` under the `challenge` name.   |
+| `PasswordAuthDanceComponent(pepper, hasher?)`               | challenge      | no         | PBKDF2 by default, salted with the pepper and the identity id. Pass a `hasher` of your own.                                                                   |
+| `OtpAuthDanceComponent({ channel, digits = 6, ttl = 300 })` | challenge      | no         | The only sendable component. Stores the code in KV under `otp/<stateId>/<name>`.                                                                              |
+| `TotpAuthDanceComponent({ digits = 6, period = 30 })`       | challenge      | yes        | RFC 6238. Collects the shared key through a `totp-key` prompt, and verifies a code through a `totp` prompt. A code works one time.                            |
+| `WebAuthnAuthDanceComponent({ rp, origins?, … })`           | identification | yes        | A passkey. Collects a credential through a `webauthn-create` prompt, and verifies a signature through a `webauthn` prompt. The credential id names the owner. |
 
 The password component hashes through a function that you can replace, so you choose the KDF.
 

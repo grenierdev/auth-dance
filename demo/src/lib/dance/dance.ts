@@ -27,6 +27,7 @@ import { EmailAuthDanceComponent } from "auth-dance/components/email";
 import { OtpAuthDanceComponent } from "auth-dance/components/otp";
 import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "auth-dance/components/password";
 import { TotpAuthDanceComponent } from "auth-dance/components/totp";
+import { WebAuthnAuthDanceComponent } from "auth-dance/components/webauthn";
 import type { Durations } from "./config.ts";
 
 /** The key that signs the tokens and encrypts the state. It sits in the bundle. A real deployment must not do this. */
@@ -40,6 +41,20 @@ export const TOTP_DIGITS = 6;
 
 /** The length of one time step of the authenticator codes, in seconds. */
 export const TOTP_PERIOD = 30;
+
+/**
+ * The relying party of the passkeys: the domain this page is served from. A credential answers to that domain and to
+ * no other, so a reload on another host makes every passkey of the old one unusable. A server pass holds no
+ * `location`, so the fallback names the development host.
+ */
+export function webAuthnRelyingParty(): { id: string; name: string } {
+	return { id: typeof location === "undefined" ? "localhost" : location.hostname, name: "Auth Dance demo" };
+}
+
+/** The origins the passkey component accepts in the client data. The page serves itself, so it is the only one. */
+export function webAuthnOrigins(): string[] {
+	return typeof location === "undefined" ? ["http://localhost:5173"] : [location.origin];
+}
 
 /** What the seed puts in storage, and what the start card offers to type. */
 export const SEEDED = {
@@ -138,6 +153,8 @@ export class DemoChannel extends MemoryAuthDanceChannel {
  * Builds one instance from a choreography, a set of durations and a sink. The choreography picks components by name.
  * `email` and `email2` are two addresses with a channel each. `password` is a challenge. `otp` is a code over `email`.
  * `totp` is the key of an authenticator app, which the browser generates and the library never delivers.
+ * `webauthn` and `webauthn2` are passkeys, each an identification of its own: the credential id names the owner, so
+ * one signature signs in without an address. One component name holds one credential, which is why there are two.
  */
 export function buildDance(choreography: AuthDanceChoreography, durations: Durations, sink: DanceSink): Dance {
 	const channels = {
@@ -152,7 +169,24 @@ export function buildDance(choreography: AuthDanceChoreography, durations: Durat
 	const otp2 = new OtpAuthDanceComponent({ channel: "email2" });
 	const password = new PasswordAuthDanceComponent("demo-pepper", pbkdf2PasswordHasher(PASSWORD_ROUNDS));
 	const totp = new TotpAuthDanceComponent({ digits: TOTP_DIGITS, period: TOTP_PERIOD });
-	const components: Record<string, AuthDanceComponent> = { email, email2, password, otp, otp2, totp };
+	const passkey = () =>
+		new WebAuthnAuthDanceComponent({
+			rp: webAuthnRelyingParty(),
+			origins: webAuthnOrigins(),
+			// A sign-up builds its prompt before the library holds an identity, so name the account here.
+			user: (context) => {
+				const identification = context.identity?.components
+					.find((c) => c.kind === "identification" && c.component !== context.name && c.confirmed);
+				// A sign-up holds no identity yet, and every run of the demo makes one more passkey under the same
+				// domain. The minute tells the entries of the passkey manager apart.
+				const minted = `demo account · ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
+				const name = identification && "identification" in identification ? identification.identification : minted;
+				return { name, displayName: String(context.identity?.data?.name ?? name) };
+			},
+		});
+	const webauthn = passkey();
+	const webauthn2 = passkey();
+	const components: Record<string, AuthDanceComponent> = { email, email2, password, otp, otp2, totp, webauthn, webauthn2 };
 
 	const storage = new AuthDanceStorage({
 		identity: new MemoryIdentityProvider(),
@@ -256,7 +290,7 @@ export class ApiError extends Error {
 /** Plain sentences for the codes this demo runs into most. Everything else shows the code alone. */
 export const ERROR_HINTS: Record<string, string> = {
 	INVALID_PROMPT_VALUE:
-		"The value did not verify. A wrong password and an unknown address answer the same way, so nobody can probe for accounts.",
+		"The value did not verify. A wrong password, an unknown address and a passkey no identity claims all answer the same way, so nobody can probe for accounts.",
 	INVALID_VALIDATION_VALUE: "The one-time code did not match. Send a fresh one and try again.",
 	CONFIRMATION_REQUIRED: "This flow ends on a confirmation, and only the boolean true goes through.",
 	WOULD_LOCK_OUT: "Dropping this component, and everything linked to it, would leave no complete path through the choreography.",

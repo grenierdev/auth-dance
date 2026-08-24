@@ -7,8 +7,10 @@
 			"auth-dance/components/otp": ["../src/components/otp.ts"],
 			"auth-dance/components/password": ["../src/components/password.ts"],
 			"auth-dance/components/totp": ["../src/components/totp.ts"],
+			"auth-dance/components/webauthn": ["../src/components/webauthn.ts"],
 			"auth-dance/providers/memory": ["../src/providers/memory.ts"],
 			"@std/encoding/base32": ["./types/std-encoding.d.ts"],
+			"@std/encoding/base64url": ["./types/std-encoding.d.ts"],
 			"@std/encoding/hex": ["./types/std-encoding.d.ts"]
 		},
 

@@ -3,6 +3,9 @@
  *
  * How one type of prompt is collected, one entry per type. The flow driver never reads a `type` itself. To support a new
  * type, add a row to {@link PROMPT_FIELDS}.
+ *
+ * A row that nothing types into declares `resolve` instead. The submit button runs it, and what it answers is the value
+ * of the prompt.
  */
 
 import type { ReactNode } from "react";
@@ -15,7 +18,10 @@ import { Input } from "@/components/ui/input.tsx";
 import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp.tsx";
 import { useDance, useDanceActions } from "@/lib/dance/index.ts";
 
+import { runCeremony } from "@/lib/webauthn.ts";
+
 import { TotpKeyField } from "./totp-key-field.tsx";
+import { WebAuthnField } from "./webauthn-field.tsx";
 
 /** Everything a control is given. */
 export interface PromptControlProps {
@@ -37,11 +43,16 @@ export interface PromptFieldDefinition {
 	label: string;
 	/** The control. It reads `value` and writes through `onValueChange`. */
 	control: (props: PromptControlProps) => ReactNode;
+	/**
+	 * Builds the value when the submit button is pressed, for a type that nothing types into. Without it the button
+	 * sends what the control wrote. What this throws lands in the alert of the page.
+	 */
+	resolve?: (prompt: AuthDancePromptInput) => Promise<unknown>;
 }
 
 /**
- * Every type this page knows how to collect. The library ships `email`, `password`, `otp`, `totp` and `totp-key`, and
- * builds `confirmation`.
+ * Every type this page knows how to collect. The library ships `email`, `password`, `otp`, `totp`, `totp-key`,
+ * `webauthn` and `webauthn-create`, and builds `confirmation`.
  */
 export const PROMPT_FIELDS: Record<string, PromptFieldDefinition> = {
 	text: {
@@ -151,6 +162,17 @@ export const PROMPT_FIELDS: Record<string, PromptFieldDefinition> = {
 				</InputOTP>
 			);
 		},
+	},
+	"webauthn-create": {
+		label: "Passkey",
+		// Nothing is typed. The submit button runs the ceremony, and the answer of the authenticator is the value.
+		control: ({ prompt, id }) => <WebAuthnField prompt={prompt} id={id} />,
+		resolve: runCeremony,
+	},
+	webauthn: {
+		label: "Passkey",
+		control: ({ prompt, id }) => <WebAuthnField prompt={prompt} id={id} />,
+		resolve: runCeremony,
 	},
 	confirmation: {
 		label: "Confirmation",

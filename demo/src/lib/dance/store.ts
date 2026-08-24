@@ -104,8 +104,12 @@ export interface DanceActions {
 	rebuild(): Promise<void>;
 	/** Starts a flow and keeps the first prompt. `argument` names a component or a channel for the flows that take one. */
 	startFlow(flow: FlowName, argument?: string): Promise<void>;
-	/** Answers the current prompt and takes whatever comes back: the next prompt, the tokens, or a plain success. */
-	submitCurrent(): Promise<void>;
+	/**
+	 * Answers the current prompt and takes whatever comes back: the next prompt, the tokens, or a plain success.
+	 * @param prepare Builds the value instead of reading it out of the fields, for a type that nothing types into.
+	 * It runs inside the same action as the call, so what it throws lands in the same alert.
+	 */
+	submitCurrent(prepare?: (prompt: AuthDancePromptInput) => Promise<unknown>): Promise<void>;
 	/** Asks the library to deliver the current prompt over its channel. */
 	sendCurrent(): Promise<void>;
 	/** Drops the flow in progress. */
@@ -260,7 +264,7 @@ export class DanceStore implements DanceActions {
 			});
 		});
 
-	readonly submitCurrent = (): Promise<void> =>
+	readonly submitCurrent = (prepare?: (prompt: AuthDancePromptInput) => Promise<unknown>): Promise<void> =>
 		this.act(async () => {
 			const step = this.#state.step;
 			if (!step) {
@@ -270,7 +274,7 @@ export class DanceStore implements DanceActions {
 			if (!target) {
 				throw new Error("Pick which component to answer.");
 			}
-			const value = this.#state.values[target.name];
+			const value = prepare ? await prepare(target) : this.#state.values[target.name];
 			const result = await this.#post<StateBody | TokensBody | ResultBody>("/submit-prompt", {
 				name: target.name,
 				value,

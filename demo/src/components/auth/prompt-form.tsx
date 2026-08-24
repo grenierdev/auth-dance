@@ -13,7 +13,7 @@ import { activePrompt, isSendable, promptInputs, useDance, useDanceActions } fro
 import { clock } from "@/lib/format.ts";
 
 import { FlowTrail } from "./flow-trail.tsx";
-import { PromptField } from "./prompt-fields.tsx";
+import { fieldFor, PromptField } from "./prompt-fields.tsx";
 
 /** The prompt in progress: the trail, the fields it asks for, and the actions on them. */
 export function PromptForm() {
@@ -32,7 +32,9 @@ export function PromptForm() {
 			className="flex flex-col gap-6"
 			onSubmit={(event) => {
 				event.preventDefault();
-				void submitCurrent();
+				// A type that nothing types into builds its value here. Nothing is awaited before the call, so the
+				// browser still counts this press as the gesture a passkey ceremony asks for.
+				void submitCurrent(target ? fieldFor(target.type).resolve : undefined);
 			}}
 		>
 			<div className="flex flex-col gap-3">
