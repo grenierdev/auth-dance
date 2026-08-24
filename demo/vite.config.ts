@@ -27,6 +27,7 @@ export default defineConfig({
 				// `noUnusedLocals` reports the `createStart` type import the generator writes but never uses.
 				routeTreeFileHeader: [
 					`// deno-lint-ignore-file`,
+					`// deno-fmt-ignore-file`,
 					`/* eslint-disable */`,
 					`// @ts-nocheck`,
 					`// noinspection JSUnusedGlobalSymbols`,
