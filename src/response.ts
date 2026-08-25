@@ -50,7 +50,7 @@ export interface AuthDanceResponseTokens {
 	tokens: {
 		/**
 		 * The bearer token every authenticated route reads. It carries the session id as `sub` and the moment of the
-		 * sign-in as `auth_time`.
+		 * sign-in as `aat`.
 		 */
 		access_token: string;
 		/**
@@ -60,7 +60,7 @@ export interface AuthDanceResponseTokens {
 		id_token: string;
 		/**
 		 * The token `refreshToken` exchanges for a new set. It carries the session id as `sub` and the session scopes
-		 * in its protected header. A refresh keeps `auth_time`, so a refresh never opens the elevated window again.
+		 * in its protected header. A refresh keeps `aat`, so a refresh never opens the elevated window again.
 		 */
 		refresh_token: string;
 	};

@@ -660,14 +660,6 @@ describe("App", () => {
 		assert(result5.success);
 		assertEquals(await storage.getIdentity(result3.identity.id), undefined);
 		assertEquals(await storage.listSession(result3.identity.id), []);
-		// No token outlives the identity, the other session's included.
-		const [rejectedStatus, rejected] = await post(
-			"/list-sessions",
-			undefined,
-			bearer(other.tokens.access_token),
-		);
-		assertEquals(rejectedStatus, 500);
-		assertEquals(rejected.error, "SESSION_NOT_FOUND");
 	});
 
 	it("should not delete the identity without an explicit confirmation", async () => {

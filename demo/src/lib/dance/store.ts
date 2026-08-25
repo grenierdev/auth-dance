@@ -346,7 +346,7 @@ export class DanceStore implements DanceActions {
 			this.#patch({
 				tokens: result.tokens,
 				session: result,
-				notice: "Fresh tokens on the same session. A refresh keeps auth_time, so it never reopens the elevated window.",
+				notice: "Fresh tokens on the same session. A refresh keeps aat, so it never reopens the elevated window.",
 			});
 		});
 

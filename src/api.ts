@@ -75,6 +75,16 @@ import {
 	WouldLockOutError,
 } from "./error.ts";
 
+export type AuthDanceClaimJson =
+	| string
+	| number
+	| boolean
+	| null;
+// | { [key: string]: AuthDanceClaimJson }
+// | AuthDanceClaimJson[];
+
+export type AuthDanceClaims = Record<string, AuthDanceClaimJson>;
+
 /** One fixed-window rate limit bucket. It allows `limit` hits in each `window`. */
 export interface AuthDanceRateLimit {
 	/** How many hits the bucket allows in one window. */
@@ -177,7 +187,7 @@ export interface AuthDanceApiHooks {
 	onIdentityDeleted?(event: AuthDanceIdentityEvent<"delete">): void | Promise<void>;
 	/** A sign-in or a sign-up minted a session, together with the first pair of tokens on it. */
 	onSessionCreated?(event: AuthDanceSessionEvent<"sign-in" | "sign-up">): void | Promise<void>;
-	/** A refresh minted a new pair of tokens on a session that already existed. It keeps `auth_time` unchanged. */
+	/** A refresh minted a new pair of tokens on a session that already existed. It keeps `aat` unchanged. */
 	onSessionRefreshed?(event: AuthDanceSessionEvent<"refresh">): void | Promise<void>;
 	/** The library deleted a session. A sign-out or a delete flow fires this hook one time for each session it takes. */
 	onSessionDeleted?(event: AuthDanceSessionEvent<"sign-out" | "delete">): void | Promise<void>;
@@ -224,7 +234,7 @@ export interface AuthDanceApiOptions {
 		/**
 		 * The window after a sign-in in which a session may still run a sensitive flow. Past this window `enroll`,
 		 * `unenroll`, `rotate`, `subscribe`, `unsubscribe` and `delete` raise `FreshSignInRequiredError`. A sign-out
-		 * needs no fresh sign-in. A refresh keeps `auth_time` unchanged and never re-opens the window.
+		 * needs no fresh sign-in. A refresh keeps `aat` unchanged and never re-opens the window.
 		 * @defaultValue 300
 		 */
 		elevated?: number;
@@ -389,13 +399,20 @@ export class AuthDanceApi {
 		});
 	}
 
-	// `auth_time` comes from the first pair and stays unchanged through every refresh. See #requireFreshSignIn.
+	// `aat` comes from the first pair and stays unchanged through every refresh. See #requireFreshSignIn.
 	async #generateTokens(
 		options: { identity: AuthDanceIdentity; scopes: string[]; session: AuthDanceSession; authTime?: number },
 	): Promise<AuthDanceResponseTokens> {
 		const authTime = options.authTime ?? Math.floor(Date.now() / 1000);
 
-		const access_token = await new SignJWT({ auth_time: authTime })
+		const claims = Object.entries(options.identity.data ?? {}).reduce((acc, [key, value]) => {
+			if (options.scopes.includes(key)) {
+				acc[key] = value as AuthDanceClaimJson;
+			}
+			return acc;
+		}, {} as AuthDanceClaims);
+
+		const access_token = await new SignJWT({ id: options.identity.id, claims, aat: authTime })
 			.setProtectedHeader({ alg: "HS256" })
 			.setIssuer(this.#options.tokens?.issuer ?? "acme")
 			.setIssuedAt()
@@ -404,8 +421,8 @@ export class AuthDanceApi {
 			.setJti(ksuid())
 			.sign(this.#decodedSecret);
 
-		const refresh_token = await new SignJWT({ auth_time: authTime })
-			.setProtectedHeader({ alg: "HS256", scopes: options.scopes })
+		const refresh_token = await new SignJWT({ aat: authTime, scopes: options.scopes })
+			.setProtectedHeader({ alg: "HS256" })
 			.setIssuer(this.#options.tokens?.issuer ?? "acme")
 			.setIssuedAt()
 			.setExpirationTime(new Date(Date.now() + (this.#options.durations?.refresh ?? 24 * 60 * 60) * 1000))
@@ -413,14 +430,8 @@ export class AuthDanceApi {
 			.setJti(ksuid())
 			.sign(this.#decodedSecret);
 
-		const claims = Object.entries(options.identity.data ?? {}).reduce((acc, [key, value]) => {
-			if (options.scopes.includes(key)) {
-				acc[key] = value;
-			}
-			return acc;
-		}, {} as Record<string, unknown>);
-		const id_token = await new SignJWT({})
-			.setProtectedHeader({ ...claims, alg: "HS256" })
+		const id_token = await new SignJWT({ claims })
+			.setProtectedHeader({ alg: "HS256" })
 			.setIssuer(this.#options.tokens?.issuer ?? "acme")
 			.setIssuedAt()
 			.setSubject(options.identity.id)
@@ -433,19 +444,19 @@ export class AuthDanceApi {
 		};
 	}
 
-	// Every failure reads the same to the caller. Every token this class mints carries `sub` and `auth_time`,
+	// Every failure reads the same to the caller. Every token this class mints carries `sub` and `aat`,
 	// so a token that misses either one is invalid.
 	async #verifiedClaims(token: string, invalid: () => AuthDanceError): Promise<{ sub: string; authTime: number }> {
 		const payload = await jwtVerify(token, this.#decodedSecret, {
 			issuer: this.#options.tokens?.issuer ?? "acme",
 		}).then(({ payload }) => payload, () => undefined);
-		if (!payload?.sub || typeof payload.auth_time !== "number") {
+		if (!payload?.sub || typeof payload.aat !== "number") {
 			throw invalid();
 		}
-		return { sub: payload.sub, authTime: payload.auth_time };
+		return { sub: payload.sub, authTime: payload.aat };
 	}
 
-	// A valid session is not enough for a management action. A refresh carries `auth_time` forward unchanged,
+	// A valid session is not enough for a management action. A refresh carries `aat` forward unchanged,
 	// so it cannot extend this window.
 	#requireFreshSignIn(authTime: number): void {
 		const elevated = (this.#options.durations?.elevated ?? 5 * 60) * 1000;
@@ -521,7 +532,7 @@ export class AuthDanceApi {
 	/**
 	 * Exchanges a refresh token for a new set of tokens on the same session.
 	 *
-	 * The new tokens keep the `auth_time` of the sign-in. A refresh needs no fresh sign-in and re-opens no window.
+	 * The new tokens keep the `aat` of the sign-in. A refresh needs no fresh sign-in and re-opens no window.
 	 * A completed exchange fires `onSessionRefreshed`.
 	 *
 	 * @returns A new access token, id token and refresh token, plus the session and the scoped identity data.
@@ -564,7 +575,7 @@ export class AuthDanceApi {
 	signOut(access_token: string, others: boolean = false): Promise<AuthDanceResponseResult> {
 		return this.#guard("signOut", async () => {
 			try {
-				const { session, identity } = await this.accessTokenIdentity(access_token);
+				const { session, identity } = await this.#unrollAccessToken(access_token);
 				await this.#consumeRateLimit("manage", `session:${session.id}`);
 				const deleted = others ? await this.#options.storage.listSession(session.identityId) : [session];
 				await Promise.all(deleted.map((s) => this.#options.storage.deleteSession(s.id)));
@@ -720,7 +731,35 @@ export class AuthDanceApi {
 		};
 	}
 
-	async #sessionIdentity(sessionId: string): Promise<{ session: AuthDanceSession; identity: AuthDanceIdentity }> {
+	/**
+	 * Verify an access token and return the identity id, the session id, the claims and the `aat` it carries.
+	 *
+	 * @param access_token The access token to verify.
+	 * @returns The identity id, the session id, the claims and the `aat` the token carries.
+	 * @throws InvalidAccessTokenError when the token is tampered with, expired, or missing a claim.
+	 */
+	async verifyAccessToken(
+		access_token: string,
+	): Promise<{ identityId: string; sessionId: string; claims: AuthDanceClaims; authTime: number }> {
+		const payload = await jwtVerify(access_token, this.#decodedSecret, {
+			issuer: this.#options.tokens?.issuer ?? "acme",
+		}).then(({ payload }) => payload, () => undefined);
+		const identityId = payload?.id;
+		const sessionId = payload?.sub;
+		const authTime = payload?.aat;
+		const claims = (payload?.claims as AuthDanceClaims | undefined) ?? {};
+		if (!sessionId || typeof identityId !== "string" || typeof authTime !== "number") {
+			throw new InvalidAccessTokenError();
+		}
+		return { identityId, sessionId, claims, authTime };
+	}
+
+	async #unrollAccessToken(access_token: string): Promise<{ session: AuthDanceSession; identity: AuthDanceIdentity; authTime: number }> {
+		const { sub, authTime } = await this.#verifiedClaims(access_token, () => new InvalidAccessTokenError());
+		return { ...await this.#getSessionAndIdentity(sub), authTime };
+	}
+
+	async #getSessionAndIdentity(sessionId: string): Promise<{ session: AuthDanceSession; identity: AuthDanceIdentity }> {
 		const session = await this.#options.storage.getSession(sessionId);
 		if (!session) {
 			throw new SessionNotFoundError(sessionId);
@@ -730,22 +769,6 @@ export class AuthDanceApi {
 			throw new IdentityNotFoundError(session.identityId);
 		}
 		return { session, identity };
-	}
-
-	/**
-	 * Resolves the session and the identity of an access token, and returns its `auth_time`.
-	 *
-	 * A management flow such as enroll or subscribe starts from the access token, not from a step through the
-	 * choreography.
-	 *
-	 * @returns The session, the identity behind it, and the `auth_time` claim of the token in seconds.
-	 * @throws InvalidAccessTokenError when the token is tampered with, expired, or missing a claim.
-	 * @throws SessionNotFoundError when the session has already expired or was signed out.
-	 * @throws IdentityNotFoundError when storage holds no identity for that session.
-	 */
-	async accessTokenIdentity(access_token: string): Promise<{ session: AuthDanceSession; identity: AuthDanceIdentity; authTime: number }> {
-		const { sub, authTime } = await this.#verifiedClaims(access_token, () => new InvalidAccessTokenError());
-		return { ...await this.#sessionIdentity(sub), authTime };
 	}
 
 	// The pending channel comes before the components of the identity. The one-time code goes to the new recipient.
@@ -776,7 +799,7 @@ export class AuthDanceApi {
 		ctx: AuthDanceComponentContext;
 		verificationAuthDanceComponent: AuthDanceComponent;
 	}> {
-		const { identity } = await this.#sessionIdentity(state.sessionId);
+		const { identity } = await this.#getSessionAndIdentity(state.sessionId);
 		const authComponent = this.#options.components[state.component];
 		if (!authComponent) {
 			throw new UnknownComponentError(state.component);
@@ -821,7 +844,7 @@ export class AuthDanceApi {
 		authComponent: AuthDanceComponent;
 		verificationAuthDanceComponent: AuthDanceComponent;
 	}> {
-		const { identity } = await this.#sessionIdentity(state.sessionId);
+		const { identity } = await this.#getSessionAndIdentity(state.sessionId);
 		const authComponent = this.#options.components[state.component];
 		if (!authComponent) {
 			throw new UnknownComponentError(state.component);
@@ -1107,7 +1130,7 @@ export class AuthDanceApi {
 	 */
 	enroll(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("enroll", async () => {
-			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
+			const { session, identity, authTime } = await this.#unrollAccessToken(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
 			if (identity.components.some((c) => c.kind !== "channel" && c.component === options.name)) {
 				throw new ComponentAlreadyEnrolledError(options.name);
@@ -1149,7 +1172,7 @@ export class AuthDanceApi {
 	 */
 	unenroll(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("unenroll", async () => {
-			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
+			const { session, identity, authTime } = await this.#unrollAccessToken(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
 			if (!identity.components.some((c) => c.kind !== "channel" && c.component === options.name)) {
 				throw new ComponentNotEnrolledError(options.name);
@@ -1192,7 +1215,7 @@ export class AuthDanceApi {
 	 */
 	rotate(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("rotate", async () => {
-			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
+			const { session, identity, authTime } = await this.#unrollAccessToken(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
 			if (!identity.components.some((c) => c.kind !== "channel" && c.component === options.name)) {
 				throw new ComponentNotEnrolledError(options.name);
@@ -1282,7 +1305,7 @@ export class AuthDanceApi {
 	 */
 	subscribe(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("subscribe", async () => {
-			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
+			const { session, identity, authTime } = await this.#unrollAccessToken(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
 			if (identity.components.some((c) => c.kind === "channel" && c.component === options.name)) {
 				throw new ChannelAlreadySubscribedError(options.name);
@@ -1334,7 +1357,7 @@ export class AuthDanceApi {
 	 */
 	unsubscribe(options: { name: string; access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("unsubscribe", async () => {
-			const { session, identity, authTime } = await this.accessTokenIdentity(options.access_token);
+			const { session, identity, authTime } = await this.#unrollAccessToken(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
 			if (!identity.components.some((c) => c.kind === "channel" && c.component === options.name)) {
 				throw new ChannelNotSubscribedError(options.name);
@@ -1376,7 +1399,7 @@ export class AuthDanceApi {
 	 */
 	delete(options: { access_token: string }): Promise<AuthDanceResponseState> {
 		return this.#guard("delete", async () => {
-			const { session, authTime } = await this.accessTokenIdentity(options.access_token);
+			const { session, authTime } = await this.#unrollAccessToken(options.access_token);
 			await this.#consumeRateLimit("manage", `session:${session.id}`);
 			this.#requireFreshSignIn(authTime);
 			const expireAt = this.#expireAt(this.#options.durations?.delete);
@@ -1613,7 +1636,7 @@ export class AuthDanceApi {
 			if (state.components.length > 0) {
 				throw new ComponentAlreadyCollectedError(state.component);
 			}
-			const { identity } = await this.#sessionIdentity(state.sessionId);
+			const { identity } = await this.#getSessionAndIdentity(state.sessionId);
 			const authComponent = this.#options.components[state.component];
 			if (!authComponent) {
 				throw new UnknownComponentError(state.component);
@@ -1645,7 +1668,7 @@ export class AuthDanceApi {
 			if (state.components.length > 0) {
 				throw new ComponentAlreadyCollectedError(state.component);
 			}
-			const { identity } = await this.#sessionIdentity(state.sessionId);
+			const { identity } = await this.#getSessionAndIdentity(state.sessionId);
 			const authComponent = this.#options.components[state.component];
 			if (!authComponent) {
 				throw new UnknownComponentError(state.component);
@@ -1730,7 +1753,7 @@ export class AuthDanceApi {
 			if (options.value !== true) {
 				throw new ConfirmationRequiredError(state.component);
 			}
-			const { identity } = await this.#sessionIdentity(state.sessionId);
+			const { identity } = await this.#getSessionAndIdentity(state.sessionId);
 			// Resolve the collateral again against the identity as it stands now. Another flow can change the
 			// identity while the confirmation is outstanding.
 			const collateral = this.#removalCollateral(identity, state.component, "component");
@@ -1750,7 +1773,7 @@ export class AuthDanceApi {
 		} else if (state.kind === "subscribe") {
 			// Only the recipient is collected here. The one-time code that confirms it goes to the validation
 			// branch.
-			const { identity } = await this.#sessionIdentity(state.sessionId);
+			const { identity } = await this.#getSessionAndIdentity(state.sessionId);
 			state.channel.data = { ...(state.channel.data ?? {}), [state.channel.component]: options.value };
 			state.validating = true;
 			const prompt = await new OtpAuthDanceComponent({ channel: state.channel.component }).getPrompt(
@@ -1761,7 +1784,7 @@ export class AuthDanceApi {
 			if (options.value !== true) {
 				throw new ConfirmationRequiredError(state.channel);
 			}
-			const { identity } = await this.#sessionIdentity(state.sessionId);
+			const { identity } = await this.#getSessionAndIdentity(state.sessionId);
 			// Resolve the collateral again against the identity as it stands now, the same way the unenroll branch
 			// above does.
 			const collateral = this.#removalCollateral(identity, state.channel, "channel");
@@ -1783,7 +1806,7 @@ export class AuthDanceApi {
 			if (options.value !== true) {
 				throw new ConfirmationRequiredError("identity");
 			}
-			const { identity } = await this.#sessionIdentity(state.sessionId);
+			const { identity } = await this.#getSessionAndIdentity(state.sessionId);
 			const sessions = await this.#options.storage.listSession(identity.id);
 			await Promise.all(sessions.map((s) => this.#options.storage.deleteSession(s.id)));
 			await this.#options.storage.deleteIdentity(identity.id);
@@ -1828,7 +1851,7 @@ export class AuthDanceApi {
 			return { authComponent: verificationAuthDanceComponent, ctx };
 		}
 		if (state.kind === "subscribe") {
-			const { identity } = await this.#sessionIdentity(state.sessionId);
+			const { identity } = await this.#getSessionAndIdentity(state.sessionId);
 			return {
 				authComponent: new OtpAuthDanceComponent({ channel: state.channel.component }),
 				ctx: this.#subscribeContext(state, identity),
@@ -1925,7 +1948,7 @@ export class AuthDanceApi {
 				persist: true,
 			};
 		} else if (state.kind === "subscribe") {
-			const { identity } = await this.#sessionIdentity(state.sessionId);
+			const { identity } = await this.#getSessionAndIdentity(state.sessionId);
 			const verified = await new OtpAuthDanceComponent({ channel: state.channel.component }).verifyPrompt(
 				options.value,
 				this.#subscribeContext(state, identity),

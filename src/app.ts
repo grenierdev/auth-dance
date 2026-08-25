@@ -260,9 +260,9 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		// The sort by id keeps the order independent of the enumeration order of a KV provider. `localeCompare` orders
 		// by collation, not by the base62 value of the id, so two ids from different seconds can come out unsorted.
 		async (c) => {
-			const { session } = await c.env.api.accessTokenIdentity(bearer(c));
-			const sessions = await c.env.api.storage.listSession(session.identityId);
-			return c.json({ sessions: sessions.sort((a, b) => a.id.localeCompare(b.id)), current: session.id });
+			const { identityId, sessionId } = await c.env.api.verifyAccessToken(bearer(c));
+			const sessions = await c.env.api.storage.listSession(identityId);
+			return c.json({ sessions: sessions.sort((a, b) => a.id.localeCompare(b.id)), current: sessionId });
 		},
 	);
 
@@ -283,7 +283,11 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 			},
 		}),
 		async (c) => {
-			const { identity } = await c.env.api.accessTokenIdentity(bearer(c));
+			const { identityId } = await c.env.api.verifyAccessToken(bearer(c));
+			const identity = await c.env.api.storage.getIdentity(identityId);
+			if (!identity) {
+				throw new InvalidAccessTokenError();
+			}
 			return c.json({ components: identity.components.map(withoutComponentData) });
 		},
 	);

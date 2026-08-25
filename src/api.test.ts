@@ -1325,15 +1325,15 @@ describe("Api", () => {
 		});
 		assert("tokens" in result3);
 		const refreshed = await api.refreshToken(result3.tokens.refresh_token);
-		const signedInAt = decodeJwt(result3.tokens.access_token).auth_time;
+		const signedInAt = decodeJwt(result3.tokens.access_token).aat;
 		assertEquals(typeof signedInAt, "number");
 		// A refresh extends how long the session may be used, never how recently the owner proved who they are.
 		assertEquals(
-			decodeJwt(refreshed.tokens.access_token).auth_time,
+			decodeJwt(refreshed.tokens.access_token).aat,
 			signedInAt,
 		);
 		assertEquals(
-			decodeJwt(refreshed.tokens.refresh_token).auth_time,
+			decodeJwt(refreshed.tokens.refresh_token).aat,
 			signedInAt,
 		);
 	});

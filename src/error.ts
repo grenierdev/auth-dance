@@ -21,14 +21,14 @@ export abstract class AuthDanceError extends Error {
 
 // Token & session
 /**
- * The access token does not verify, or it carries no `sub` or no numeric `auth_time`. The HTTP layer also raises it
+ * The access token does not verify, or it carries no `sub` or no numeric `aat`. The HTTP layer also raises it
  * when the `Authorization` header is missing or malformed.
  */
 export class InvalidAccessTokenError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"INVALID_ACCESS_TOKEN"}`. */
 	readonly code: "INVALID_ACCESS_TOKEN" = "INVALID_ACCESS_TOKEN";
 }
-/** The refresh token given to `refreshToken` does not verify, or it carries no `sub` or no numeric `auth_time`. */
+/** The refresh token given to `refreshToken` does not verify, or it carries no `sub` or no numeric `aat`. */
 export class InvalidRefreshTokenError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"INVALID_REFRESH_TOKEN"}`. */
 	readonly code: "INVALID_REFRESH_TOKEN" = "INVALID_REFRESH_TOKEN";
@@ -60,7 +60,7 @@ export class InvalidStateForFlowError extends AuthDanceError {
 }
 /**
  * The sign-in of the session is older than the elevated window a sensitive action requires. A refresh carries
- * `auth_time` forward unchanged, so a refresh cannot re-open the window.
+ * `aat` forward unchanged, so a refresh cannot re-open the window.
  */
 export class FreshSignInRequiredError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"FRESH_SIGN_IN_REQUIRED"}`. */

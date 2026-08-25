@@ -274,10 +274,10 @@ the maximum count of keys to return.
 ### Sessions and tokens
 
 A completed sign-in or sign-up mints three HS256 JWTs. `access_token` and `refresh_token` carry the **session** id as `sub` plus a numeric
-`auth_time`. `id_token` carries the **identity** id, and puts scope-filtered identity `data` in its protected header.
+`aat`. `id_token` carries the **identity** id, and puts scope-filtered identity `data` in its protected header.
 
-A refresh keeps `auth_time` unchanged, so a refresh never re-opens the elevated window. Sensitive flows such as `enroll` and `rotate` demand
-a fresh sign-in. Otherwise they answer `FRESH_SIGN_IN_REQUIRED`.
+A refresh keeps `aat` unchanged, so a refresh never re-opens the elevated window. Sensitive flows such as `enroll` and `rotate` demand a
+fresh sign-in. Otherwise they answer `FRESH_SIGN_IN_REQUIRED`.
 
 ## HTTP API
 
