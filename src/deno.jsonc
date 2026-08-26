@@ -11,6 +11,7 @@
 		"./components/webauthn": "./components/webauthn.ts",
 		"./providers/cloudflare": "./providers/cloudflare.ts",
 		"./providers/deno": "./providers/deno.ts",
-		"./providers/memory": "./providers/memory.ts"
+		"./providers/memory": "./providers/memory.ts",
+		"./react": "./react.ts"
 	}
 }
