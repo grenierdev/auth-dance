@@ -642,7 +642,7 @@ describe("App", () => {
 		]);
 		const result3 = await signIn();
 		// A second session, to show the deletion takes every session with it.
-		const other = await signIn();
+		const _other = await signIn();
 		const [, result4] = await post(
 			"/delete",
 			undefined,

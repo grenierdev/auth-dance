@@ -3,16 +3,13 @@ import { assert, assertEquals } from "@std/assert";
 import { MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "./providers/memory.ts";
 import { EmailAuthDanceComponent } from "./components/email.ts";
 import { AuthDanceStorage } from "./storage.ts";
-import { OtpAuthDanceComponent } from "./components/otp.ts";
 
 describe("Storage", () => {
 	let storage: AuthDanceStorage;
 	let email: EmailAuthDanceComponent;
-	let otp: OtpAuthDanceComponent;
 
 	beforeEach(() => {
 		email = new EmailAuthDanceComponent({ channel: "email", challenge: "otp" });
-		otp = new OtpAuthDanceComponent({ channel: "email" });
 		storage = new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),
 			kv: new MemoryKvProvider(),
