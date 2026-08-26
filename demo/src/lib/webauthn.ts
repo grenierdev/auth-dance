@@ -13,7 +13,7 @@
  * because they are the whole contract between this page and the component, and they are worth reading.
  */
 
-import type { AuthDancePromptInput } from "auth-dance";
+import type { AuthDancePromptInput } from "auth-dance/client";
 
 /** Reads a base64url string as bytes. */
 function fromBase64Url(value: string): Uint8Array {

@@ -3,6 +3,8 @@
 		"paths": {
 			"@/*": ["./src/*"],
 			"auth-dance": ["../src/mod.ts"],
+			"auth-dance/client": ["../src/client.ts"],
+			"auth-dance/react": ["../src/react.ts"],
 			"auth-dance/components/email": ["../src/components/email.ts"],
 			"auth-dance/components/otp": ["../src/components/otp.ts"],
 			"auth-dance/components/password": ["../src/components/password.ts"],

@@ -7,7 +7,6 @@
 
 import { InboxIcon } from "lucide-react";
 
-import { focusPromptField } from "@/components/auth/prompt-fields.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty.tsx";
@@ -25,8 +24,7 @@ export interface InboxPanelProps {
 /** The body of the inbox slideout. It owns no state. */
 export function InboxPanel({ onUsed }: InboxPanelProps) {
 	const { messages } = useDance();
-	// `useCode` is not a react hook despite the name.
-	const { useCode: fillCode } = useDanceActions();
+	const { fillCode } = useDanceActions();
 
 	if (messages.length === 0) {
 		return (
@@ -69,10 +67,8 @@ export function InboxPanel({ onUsed }: InboxPanelProps) {
 											variant="secondary"
 											size="xs"
 											onClick={() => {
-												const filled = fillCode(code);
-												if (filled) {
-													focusPromptField(filled);
-												}
+												// The field that takes a code reads it off the store and moves the caret to itself.
+												fillCode(code);
 												onUsed();
 											}}
 										>

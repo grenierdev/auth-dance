@@ -1,34 +1,27 @@
 /**
  * @module
  *
- * Everything the page knows, in one observable record. Only {@link useDance} knows React exists.
+ * Everything the page knows that the library does not: the instance it built, the config that instance came from, the
+ * inbox and the wire log. Only {@link useDance} knows React exists.
  *
- * Every field of a prompt is controlled state, keyed by prompt name. A checkbox that nobody touched submits `false`.
+ * Nothing here drives a flow. The client of `auth-dance/client` keeps the tokens, and `useAuthDanceFlow` of
+ * `auth-dance/react` drives the dance, so the store hands the client to the tree and stays out of the way.
+ *
  * The module builds no instance until {@link useDance} runs its effect, so a server pass is safe.
  */
 
 import { useEffect, useSyncExternalStore } from "react";
-import type { AuthDancePromptInput, AuthDanceSession } from "auth-dance";
-import { generateKey } from "auth-dance";
+import type { AuthDanceClient, AuthDanceIdentityComponentPublic, AuthDanceResponseSessions } from "auth-dance/client";
 import {
-	ApiError,
 	buildDance,
-	CALLER_ADDRESS,
-	type ComponentsBody,
+	type CalledRoute,
 	type Dance,
 	type DanceSink,
 	type DeliveredMessage,
-	type EnrolledComponent,
-	ERROR_HINTS,
-	type ErrorBody,
+	describeFailure,
 	type ReportedHook,
-	type ResultBody,
-	type SessionsBody,
-	type StateBody,
-	type TokensBody,
 } from "./dance.ts";
 import { type Config, currentChoreography, defaultConfig, loadConfig, saveConfig } from "./config.ts";
-import { activePrompt, type FlowName, FLOWS, promptInputs, type Step } from "./flows.ts";
 
 /** One message a channel took, as the inbox lists it. */
 export interface Message extends DeliveredMessage {
@@ -58,43 +51,45 @@ export interface LogEntry {
 	response?: unknown;
 }
 
+/** A one-time code the inbox handed to the form. The id rises, so the same code twice still moves the field. */
+export interface HandedCode {
+	/** The bare code. */
+	value: string;
+	/** A number that rises with every hand-over. */
+	id: number;
+}
+
 /** The whole state of the page. Every field is replaced, never mutated. */
 export interface DanceState {
-	/** Whether the first instance has been built. Every panel shows a placeholder until it has. */
-	ready: boolean;
 	/** The config the running instance was built from. */
 	config: Config;
+	/** The client of the running instance, or nothing while one is being built. */
+	client: AuthDanceClient | undefined;
+	/** Whether the running instance holds the John Doe identity. It reports the seed that landed, not the one asked for. */
+	seeded: boolean;
 	/** The component names the running choreography can name, for the pickers of `enroll`, `unenroll`, `rotate` and `recover`. */
 	componentNames: string[];
 	/** The channel names of the running instance, for the pickers of `subscribe` and `unsubscribe`. */
 	channelNames: string[];
-	/** The flow in progress, or nothing when the page is between flows. */
-	step: Step | undefined;
-	/** The value of every field of the current prompt, keyed by prompt name. Seeded on arrival, dropped on advance. */
-	values: Record<string, unknown>;
-	/** The branch of a choice prompt the owner picked, by name. The first branch is picked when the prompt arrives. */
-	branch: string | undefined;
-	/** The three tokens of the session, or nothing while signed out. */
-	tokens: TokensBody["tokens"] | undefined;
-	/** The whole answer of the sign-in, the sign-up or the last refresh. The session record sits at `session.session`. */
-	session: TokensBody | undefined;
 	/** What `/list-sessions` last answered, until a rebuild or a sign-out drops it. */
-	sessions: AuthDanceSession[] | undefined;
+	sessions: AuthDanceResponseSessions | undefined;
 	/** What `/list-components` last answered, until a rebuild or a sign-out drops it. */
-	enrolled: EnrolledComponent[] | undefined;
+	enrolled: AuthDanceIdentityComponentPublic[] | undefined;
 	/** Every message a channel took, newest first. */
 	messages: Message[];
 	/** Every call and every hook report, newest first. */
 	log: LogEntry[];
-	/** Whether an action is running. */
+	/** The code the inbox handed over, until a field takes it. */
+	code: HandedCode | undefined;
+	/** Whether an action of the store is running. A running flow reports through its own handle. */
 	busy: boolean;
-	/** What the last action refused with: the code, and the sentence for it when there is one. */
+	/** What the last action of the store refused with: the code, and the sentence for it when there is one. */
 	error: string | undefined;
-	/** What the last action reported on success. */
+	/** What the last action, or the last completed flow, reported. */
 	notice: string | undefined;
 }
 
-/** Everything a control can do. Every action is bound. */
+/** Everything a control can do that the client does not do on its own. Every action is bound. */
 export interface DanceActions {
 	/** Runs one action, and turns whatever it throws into the alert. A second call while one is running does nothing. */
 	act(action: () => void | Promise<void>): Promise<void>;
@@ -102,22 +97,10 @@ export interface DanceActions {
 	start(): Promise<void>;
 	/** Rebuilds the instance from the current config. Every identity, session and message of the old one goes with it. */
 	rebuild(): Promise<void>;
-	/** Starts a flow and keeps the first prompt. `argument` names a component or a channel for the flows that take one. */
-	startFlow(flow: FlowName, argument?: string): Promise<void>;
-	/**
-	 * Answers the current prompt and takes whatever comes back: the next prompt, the tokens, or a plain success.
-	 * @param prepare Builds the value instead of reading it out of the fields, for a type that nothing types into.
-	 * It runs inside the same action as the call, so what it throws lands in the same alert.
-	 */
-	submitCurrent(prepare?: (prompt: AuthDancePromptInput) => Promise<unknown>): Promise<void>;
-	/** Asks the library to deliver the current prompt over its channel. */
-	sendCurrent(): Promise<void>;
-	/** Drops the flow in progress. */
-	cancel(): Promise<void>;
 	/** Ends this session. */
 	signOut(): Promise<void>;
-	/** Ends every session but this one. */
-	signOutOthers(): Promise<void>;
+	/** Ends every session of the identity, this one included. */
+	signOutEverywhere(): Promise<void>;
 	/** Exchanges the refresh token for a fresh set on the same session. */
 	refreshTokens(): Promise<void>;
 	/** Reads every session open on the identity into {@link DanceState.sessions}. */
@@ -126,15 +109,14 @@ export interface DanceActions {
 	listComponents(): Promise<void>;
 	/** Empties the wire log. */
 	clearLog(): Promise<void>;
-	/**
-	 * Fills the one-time code field of the current prompt with a code out of the inbox.
-	 * @returns The prompt name it filled, or nothing when the step has no code field.
-	 */
-	useCode(code: string): string | undefined;
-	/** Writes one field of the current prompt. */
-	setPromptValue(name: string, value: unknown): void;
-	/** Picks a branch of a choice prompt, by name. */
-	setBranch(name: string): void;
+	/** Hands a one-time code out of the inbox to whichever field takes one. */
+	fillCode(code: string): void;
+	/** Drops the handed code, once a field took it. */
+	clearCode(): void;
+	/** Writes the affirmative line of the page. A completed flow reports through here. */
+	notify(notice: string): void;
+	/** Empties both alerts of the page. A flow that starts calls it, so no stale line sits behind the card. */
+	clearAlerts(): void;
 	/** Stores a config and rebuilds on it. It refuses a broken custom tree before it drops the running instance. */
 	applyConfig(next: Config): Promise<void>;
 	/** Goes back to the shipped config and rebuilds on it. */
@@ -143,60 +125,20 @@ export interface DanceActions {
 
 /** The state before anything is built. A server pass reads it, so hydration starts from it. */
 const INITIAL: DanceState = {
-	ready: false,
 	config: defaultConfig(),
+	client: undefined,
+	seeded: false,
 	componentNames: [],
 	channelNames: [],
-	step: undefined,
-	values: {},
-	branch: undefined,
-	tokens: undefined,
-	session: undefined,
 	sessions: undefined,
 	enrolled: undefined,
 	messages: [],
 	log: [],
+	code: undefined,
 	busy: false,
 	error: undefined,
 	notice: undefined,
 };
-
-/**
- * What one field holds before the owner touches it. A confirmation starts at `false`.
- *
- * A `totp-key` field starts on a key this browser draws. The library never generates one and never delivers one, so
- * every arrival of that prompt draws a new key, and the owner takes it off the screen.
- */
-function initialValue(input: AuthDancePromptInput): unknown {
-	if (input.type === "confirmation") {
-		return false;
-	}
-	if (input.type === "totp-key") {
-		return generateKey(16);
-	}
-	return "";
-}
-
-/** What every field of a prompt holds before the owner touches it. */
-function emptyValues(step: Step): Record<string, unknown> {
-	const values: Record<string, unknown> = {};
-	for (const input of promptInputs(step.prompt)) {
-		values[input.name] = initialValue(input);
-	}
-	return values;
-}
-
-function firstBranch(step: Step): string | undefined {
-	return step.prompt.kind === "choice" ? promptInputs(step.prompt)[0]?.name : undefined;
-}
-
-function describe(cause: unknown): string {
-	if (cause instanceof ApiError) {
-		const hint = ERROR_HINTS[cause.code];
-		return hint ? `${cause.code} — ${hint}` : cause.code;
-	}
-	return cause instanceof Error ? cause.message : String(cause);
-}
 
 /** The page, as a store. Nothing constructs an instance of the library until {@link start} runs. */
 export class DanceStore implements DanceActions {
@@ -206,10 +148,11 @@ export class DanceStore implements DanceActions {
 	#counter = 0;
 	#started = false;
 
-	/** Where the channels and the hooks of the running instance report. */
+	/** Where the channels, the hooks and the client of the running instance report. */
 	#sink: DanceSink = {
 		delivered: (message) => this.#deliver(message),
 		reported: (event) => this.#report(event),
+		called: (call) => this.#trace(call),
 	};
 
 	/** Registers a listener, and returns the call that drops it again. */
@@ -234,7 +177,7 @@ export class DanceStore implements DanceActions {
 		try {
 			await action();
 		} catch (cause) {
-			this.#patch({ error: describe(cause) });
+			this.#patch({ error: describeFailure(cause) });
 		}
 		this.#patch({ busy: false });
 	};
@@ -250,139 +193,66 @@ export class DanceStore implements DanceActions {
 
 	readonly rebuild = (): Promise<void> => this.act(() => this.#rebuild());
 
-	readonly startFlow = (flow: FlowName, argument?: string): Promise<void> =>
-		this.act(async () => {
-			const definition = FLOWS[flow];
-			const body = definition.argument === "none" ? undefined : { name: argument };
-			const result = await this.#post<StateBody>(definition.path, body, definition.authenticated);
-			this.#enter({
-				flow,
-				state: result.state,
-				prompt: result.prompt,
-				expireAt: result.expireAt,
-				trail: [],
-			});
-		});
-
-	readonly submitCurrent = (prepare?: (prompt: AuthDancePromptInput) => Promise<unknown>): Promise<void> =>
-		this.act(async () => {
-			const step = this.#state.step;
-			if (!step) {
-				return;
-			}
-			const target = activePrompt(step.prompt, this.#state.branch);
-			if (!target) {
-				throw new Error("Pick which component to answer.");
-			}
-			const value = prepare ? await prepare(target) : this.#state.values[target.name];
-			const result = await this.#post<StateBody | TokensBody | ResultBody>("/submit-prompt", {
-				name: target.name,
-				value,
-				state: step.state,
-			});
-			const trail = [...step.trail, target.name];
-			if ("tokens" in result) {
-				this.#leave({
-					tokens: result.tokens,
-					session: result,
-					notice: `Signed in as ${result.identity.id}. The session panel holds the tokens.`,
-				});
-				return;
-			}
-			if ("success" in result) {
-				this.#leave({ notice: `${FLOWS[step.flow].label} completed.` });
-				return;
-			}
-			this.#enter({
-				...step,
-				state: result.state,
-				prompt: result.prompt,
-				expireAt: result.expireAt,
-				trail,
-			});
-		});
-
-	readonly sendCurrent = (): Promise<void> =>
-		this.act(async () => {
-			const step = this.#state.step;
-			if (!step) {
-				return;
-			}
-			const target = activePrompt(step.prompt, this.#state.branch);
-			if (!target) {
-				throw new Error("Pick which component to send.");
-			}
-			await this.#post<ResultBody>("/send-prompt", { name: target.name, locale: this.#locale(), state: step.state });
-			this.#patch({ notice: "Sent. The inbox holds it." });
-		});
-
-	readonly cancel = (): Promise<void> => this.act(() => this.#leave({}));
-
 	readonly signOut = (): Promise<void> =>
 		this.act(async () => {
-			await this.#post<ResultBody>("/sign-out", { others: false }, true);
+			await this.#client().signOut();
 			this.#patch({
-				tokens: undefined,
-				session: undefined,
 				sessions: undefined,
 				enrolled: undefined,
-				notice: "Signed out. The session is gone from storage.",
+				notice: "Signed out. The client dropped the tokens it held.",
 			});
 		});
 
-	readonly signOutOthers = (): Promise<void> =>
+	readonly signOutEverywhere = (): Promise<void> =>
 		this.act(async () => {
-			await this.#post<ResultBody>("/sign-out", { others: true }, true);
-			this.#patch({ sessions: undefined, notice: "Every other session is gone." });
+			// `others` destroys every session of the identity, this one included, which is exactly what
+			// `listSessions` enumerates. The client drops the tokens with them.
+			await this.#client().signOut({ others: true });
+			this.#patch({
+				sessions: undefined,
+				enrolled: undefined,
+				notice: "Every session of this identity is gone, this one included.",
+			});
 		});
 
 	readonly refreshTokens = (): Promise<void> =>
 		this.act(async () => {
-			const tokens = this.#state.tokens;
-			if (!tokens) {
-				throw new Error("This route needs an access token. Sign in first.");
-			}
-			const result = await this.#post<TokensBody>("/refresh-token", { refresh_token: tokens.refresh_token });
+			await this.#client().refreshTokens();
 			this.#patch({
-				tokens: result.tokens,
-				session: result,
 				notice: "Fresh tokens on the same session. A refresh keeps aat, so it never reopens the elevated window.",
 			});
 		});
 
 	readonly listSessions = (): Promise<void> =>
 		this.act(async () => {
-			const result = await this.#post<SessionsBody>("/list-sessions", undefined, true);
-			this.#patch({ sessions: result.sessions });
+			this.#patch({ sessions: await this.#client().listSessions() });
 		});
 
 	readonly listComponents = (): Promise<void> =>
 		this.act(async () => {
-			const result = await this.#post<ComponentsBody>("/list-components", undefined, true);
-			this.#patch({ enrolled: result.components });
+			this.#patch({ enrolled: await this.#client().listComponents() });
 		});
 
 	readonly clearLog = (): Promise<void> => this.act(() => this.#patch({ log: [] }));
 
-	readonly useCode = (code: string): string | undefined => {
-		const step = this.#state.step;
-		if (!step) {
-			return undefined;
-		}
-		const field = promptInputs(step.prompt).find((input) => input.type === "otp");
-		if (!field) {
-			return undefined;
-		}
-		this.setPromptValue(field.name, code);
-		return field.name;
+	readonly fillCode = (code: string): void => {
+		this.#patch({ code: { value: code, id: ++this.#counter } });
 	};
 
-	readonly setPromptValue = (name: string, value: unknown): void => {
-		this.#patch({ values: { ...this.#state.values, [name]: value } });
+	readonly clearCode = (): void => {
+		if (this.#state.code) {
+			this.#patch({ code: undefined });
+		}
 	};
 
-	readonly setBranch = (name: string): void => {
-		this.#patch({ branch: name });
+	readonly notify = (notice: string): void => {
+		this.#patch({ error: undefined, notice });
+	};
+
+	readonly clearAlerts = (): void => {
+		if (this.#state.error !== undefined || this.#state.notice !== undefined) {
+			this.#patch({ error: undefined, notice: undefined });
+		}
 	};
 
 	readonly applyConfig = (next: Config): Promise<void> =>
@@ -410,87 +280,39 @@ export class DanceStore implements DanceActions {
 		}
 	}
 
-	#enter(step: Step): void {
-		this.#patch({ step, values: emptyValues(step), branch: firstBranch(step) });
-	}
-
-	#leave(partial: Partial<DanceState>): void {
-		this.#patch({ step: undefined, values: {}, branch: undefined, ...partial });
-	}
-
-	#locale(): string {
-		return navigator.language || "en";
-	}
-
-	#require(): Dance {
+	#client(): AuthDanceClient {
 		if (!this.#dance) {
 			throw new Error("The library is not built yet.");
 		}
-		return this.#dance;
+		return this.#dance.client;
 	}
 
-	/** Builds the instance and empties everything the old one held. It runs outside {@link act}. */
+	/** Builds the instance, seeds it, and empties everything the old one held. It runs outside {@link act}. */
 	async #rebuild(): Promise<void> {
 		const config = this.#state.config;
 		const dance = buildDance(currentChoreography(config), config.durations, this.#sink);
 		this.#dance = dance;
+		// Nothing reads the instance until the seed is in storage. A card that offers John Doe before the record
+		// exists earns INVALID_PROMPT_VALUE on the first prompt, and the owner has no way to tell why.
 		this.#patch({
-			ready: true,
-			componentNames: dance.componentNames,
-			channelNames: dance.channelNames,
-			step: undefined,
-			values: {},
-			branch: undefined,
-			tokens: undefined,
-			session: undefined,
+			client: undefined,
+			seeded: false,
 			sessions: undefined,
 			enrolled: undefined,
 			messages: [],
 			log: [],
+			code: undefined,
 		});
 		if (config.seed) {
 			await dance.seedIdentity();
 		}
-	}
-
-	/**
-	 * Sends one request into the library and records it.
-	 * @throws {ApiError} For any status other than 200, carrying the code the body names.
-	 */
-	async #post<T>(path: string, body?: unknown, authenticated = false): Promise<T> {
-		const dance = this.#require();
-		const headers: Record<string, string> = {
-			"content-type": "application/json",
-			"accept-language": this.#locale(),
-			"cf-connecting-ip": CALLER_ADDRESS,
-			"user-agent": navigator.userAgent,
-		};
-		if (authenticated) {
-			const tokens = this.#state.tokens;
-			if (!tokens) {
-				throw new Error("This route needs an access token. Sign in first.");
-			}
-			headers.authorization = `Bearer ${tokens.access_token}`;
-		}
-		const started = performance.now();
-		const response = await dance.auth.fetch(
-			new Request(`http://demo${path}`, { method: "POST", headers, body: body === undefined ? undefined : JSON.stringify(body) }),
-		);
-		const payload: unknown = await response.json();
-		this.#write({
-			id: ++this.#counter,
-			at: new Date(),
-			kind: "http",
-			label: `POST ${path}`,
-			status: response.status,
-			ms: Math.round(performance.now() - started),
-			request: body,
-			response: payload,
+		// The new client holds no tokens, so the tree under it renders as signed out on its own.
+		this.#patch({
+			client: dance.client,
+			seeded: config.seed,
+			componentNames: dance.componentNames,
+			channelNames: dance.channelNames,
 		});
-		if (response.status !== 200) {
-			throw new ApiError(response.status, String((payload as Partial<ErrorBody> | null)?.error ?? "UNKNOWN"));
-		}
-		return payload as T;
 	}
 
 	#deliver(message: DeliveredMessage): void {
@@ -504,6 +326,19 @@ export class DanceStore implements DanceActions {
 			kind: "hook",
 			label: event.hook,
 			response: { flow: event.flow, summary: event.summary },
+		});
+	}
+
+	#trace(call: CalledRoute): void {
+		this.#write({
+			id: ++this.#counter,
+			at: new Date(),
+			kind: "http",
+			label: `POST ${call.path}`,
+			status: call.status,
+			ms: call.ms,
+			request: call.request,
+			response: call.response,
 		});
 	}
 

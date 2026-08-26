@@ -1,9 +1,12 @@
 /**
  * @module
  *
- * The instance the page dances with, and the shapes its answers take. Everything runs in the browser. The memory
+ * The instance the page dances with, and the client that calls it. Everything runs in the browser. The memory
  * providers keep identities, sessions, one-time codes and rate limit counters in a `Map` that a reload erases.
  * `buildDance` takes a sink, and the store hands it one that lands in state.
+ *
+ * The client of `auth-dance/client` is handed the `fetch` of the instance, so the whole exchange stays in this tab. It
+ * is wrapped one time, so the wire panel reads every call the client makes, the exchanges it makes on its own included.
  */
 
 import {
@@ -12,16 +15,11 @@ import {
 	type AuthDanceComponent,
 	type AuthDanceComponentContext,
 	type AuthDanceIdentity,
-	type AuthDanceIdentityComponentPublic,
 	type AuthDanceMessage,
-	type AuthDanceResponseComponents,
-	type AuthDanceResponseResult,
-	type AuthDanceResponseSessions,
-	type AuthDanceResponseState,
-	type AuthDanceResponseTokens,
 	AuthDanceStorage,
 	createAuthDance,
 } from "auth-dance";
+import { AuthDanceClient } from "auth-dance/client";
 import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "auth-dance/providers/memory";
 import { EmailAuthDanceComponent } from "auth-dance/components/email";
 import { OtpAuthDanceComponent } from "auth-dance/components/otp";
@@ -42,6 +40,9 @@ export const TOTP_DIGITS = 6;
 /** The length of one time step of the authenticator codes, in seconds. */
 export const TOTP_PERIOD = 30;
 
+/** What every route path of the client hangs off. Nothing resolves it: the wrapped `fetch` answers every call. */
+export const BASE_URL = "http://demo";
+
 /**
  * The relying party of the passkeys: the domain this page is served from. A credential answers to that domain and to
  * no other, so a reload on another host makes every passkey of the old one unusable. A server pass holds no
@@ -56,12 +57,31 @@ export function webAuthnOrigins(): string[] {
 	return typeof location === "undefined" ? ["http://localhost:5173"] : [location.origin];
 }
 
+/** The language the client asks every message in. A server pass holds no `navigator`. */
+export function currentLocale(): string {
+	return typeof navigator === "undefined" ? "en" : navigator.language || "en";
+}
+
+/** The user agent a session records. A server pass holds no `navigator`. */
+export function currentUserAgent(): string {
+	return typeof navigator === "undefined" ? "auth-dance demo" : navigator.userAgent;
+}
+
 /** What the seed puts in storage, and what the start card offers to type. */
 export const SEEDED = {
 	id: "id_0000000000000000000demo",
 	email: "john.doe@example.com",
 	password: "hunter2",
+	/**
+	 * The authenticator key of the seeded identity, in base32. A choreography that names `totp` needs the identity to
+	 * carry a key, or a sign-in reaches that step and can never answer it. The start card publishes both this key and
+	 * the code it derives, so the demo needs no phone.
+	 */
+	totp: "JBSWY3DPEHPK3PXP",
 };
+
+/** The hash the authenticator codes derive through. It is the default of the component. */
+export const TOTP_ALGORITHM = "SHA-1" as const;
 
 /** The address the demo claims to call from, so a session carries one. */
 export const CALLER_ADDRESS = "203.0.113.7";
@@ -88,18 +108,36 @@ export interface ReportedHook {
 	summary: string;
 }
 
+/** One call the client made, as the wire panel needs it. */
+export interface CalledRoute {
+	/** The route, `/submit-prompt` for example. */
+	path: string;
+	/** The status the call answered with. */
+	status: number;
+	/** How long the call took, in milliseconds. */
+	ms: number;
+	/** The body the call sent, or nothing on a route that takes none. */
+	request?: unknown;
+	/** The body the call answered with. */
+	response?: unknown;
+}
+
 /** Where a running instance reports what happened out of band. */
 export interface DanceSink {
 	/** Called by a channel for every message it took. */
 	delivered(message: DeliveredMessage): void;
 	/** Called by every hook the instance declares. */
 	reported(event: ReportedHook): void;
+	/** Called for every call the client made, once the answer is in. */
+	called(call: CalledRoute): void;
 }
 
-/** One built instance, with the names its pickers offer and the seed that fills it. */
+/** One built instance, with the client that calls it and the seed that fills it. */
 export interface Dance {
 	/** The library itself. `auth.fetch` is the whole transport of this page. */
 	auth: AuthDance;
+	/** The client of `auth-dance/client`, wired to `auth.fetch`. Every flow of the page runs through it. */
+	client: AuthDanceClient;
 	/** The storage the instance writes through, which the seed uses directly. */
 	storage: AuthDanceStorage;
 	/** The component names a flow that takes a component may name. */
@@ -226,65 +264,52 @@ export function buildDance(choreography: AuthDanceChoreography, durations: Durat
 	});
 
 	/**
+	 * Hands one request to the instance and reports the exchange. Both bodies are read off a clone, because the client
+	 * reads the answer itself and a body is read one time.
+	 */
+	async function trace(request: Request): Promise<Response> {
+		const sent: unknown = await request.clone().json().catch(() => undefined);
+		const started = performance.now();
+		const response = await auth.fetch(request);
+		const received: unknown = await response.clone().json().catch(() => undefined);
+		sink.called({
+			path: new URL(request.url).pathname,
+			status: response.status,
+			ms: Math.round(performance.now() - started),
+			request: sent,
+			response: received,
+		});
+		return response;
+	}
+
+	// No token store and no dance store: this page keeps every identity in a `Map`, so tokens that outlived a reload
+	// would name a session nothing backs. The client holds them in memory, and a reload starts over.
+	const client = new AuthDanceClient({
+		baseUrl: BASE_URL,
+		fetch: trace,
+		locale: currentLocale(),
+		headers: { "cf-connecting-ip": CALLER_ADDRESS, "user-agent": currentUserAgent() },
+	});
+
+	/**
 	 * Writes the John Doe identity into storage, the way a sign-up would leave one.
 	 * The password record uses the identity id as salt, so the id must exist before the components are built.
 	 */
 	async function seedIdentity(): Promise<AuthDanceIdentity> {
 		const identity: AuthDanceIdentity = { id: SEEDED.id, data: { name: "John Doe" }, components: [] };
 		const seed = (name: string): AuthDanceComponentContext => ({ storage, stateId: "state_seed", name, flow: "sign-up", identity });
+		// An identity may carry a component the running choreography never names, and the authenticator key is here for
+		// exactly that reason: the presets that name `totp` are otherwise a dead end for this identity.
 		identity.components = [
 			...await email.getIdentityComponent("email", SEEDED.email, true),
 			...await password.getIdentityComponent("password", SEEDED.password, true, seed("password")),
+			...await totp.getIdentityComponent("totp", SEEDED.totp, true, seed("totp")),
 		];
 		await storage.setIdentity(identity);
 		return identity;
 	}
 
-	return { auth, storage, componentNames: Object.keys(components), channelNames: Object.keys(channels), seedIdentity };
-}
-
-/** A state response as it arrives over the wire, with `expireAt` as a string and not a `Date`. */
-export interface StateBody extends Omit<AuthDanceResponseState, "expireAt"> {
-	/** The moment the flow expires, as an ISO 8601 string. An answer to a prompt never extends it. */
-	expireAt: string;
-}
-
-/** A completed sign-in, a completed sign-up or a refresh. */
-export type TokensBody = AuthDanceResponseTokens;
-
-/** A call that succeeded and returns nothing else. */
-export type ResultBody = AuthDanceResponseResult;
-
-/** The body of `/list-sessions`: every open session, and the id of the one that asked. */
-export type SessionsBody = AuthDanceResponseSessions;
-
-/** The body of `/list-components`: every enrolled component, with the private `data` of each one dropped. */
-export type ComponentsBody = AuthDanceResponseComponents;
-
-/** The body of every failure. The library answers a single code and nothing else. */
-export interface ErrorBody {
-	/** One of the codes of the `Errors` registry, or `BAD_REQUEST` when the body did not parse. */
-	error: string;
-}
-
-/** The public component records `/list-components` answers with. */
-export type EnrolledComponent = AuthDanceIdentityComponentPublic;
-
-/**
- * A refusal from the library. The body of a failure is always a single `{ error: CODE }`.
- * Do not branch on the status. Everything but a missing body and an empty rate limit bucket comes back as 500.
- */
-export class ApiError extends Error {
-	/** The HTTP status the call answered with: 400 for a missing body, 429 for a rate limit, 500 for everything else. */
-	readonly status: number;
-	/** The code the body named. Branch on it. */
-	readonly code: string;
-
-	constructor(status: number, code: string) {
-		super(`${code} · HTTP ${status}`);
-		this.status = status;
-		this.code = code;
-	}
+	return { auth, client, storage, componentNames: Object.keys(components), channelNames: Object.keys(channels), seedIdentity };
 }
 
 /** Plain sentences for the codes this demo runs into most. Everything else shows the code alone. */
@@ -306,3 +331,23 @@ export const ERROR_HINTS: Record<string, string> = {
 	IDENTITY_NOT_RESOLVED: "No step of this dance has said who is dancing yet.",
 	RATE_LIMITED: "The bucket for this address or identity is empty for now.",
 };
+
+/**
+ * The one sentence a refusal earns.
+ *
+ * Every failure the library reports carries a `code`, and so does the one the client raises for an answer it cannot
+ * map. Anything else shows the message it came with.
+ *
+ * @param cause - What an action threw.
+ * @returns The code and the sentence for it, or the message of the failure.
+ */
+export function describeFailure(cause: unknown): string {
+	const code = (cause as { code?: unknown } | null | undefined)?.code;
+	if (typeof code !== "string") {
+		return cause instanceof Error ? cause.message : String(cause);
+	}
+	const hint = ERROR_HINTS[code];
+	const retryAfter = (cause as { retryAfter?: unknown }).retryAfter;
+	const wait = typeof retryAfter === "number" ? ` Try again in ${retryAfter} s.` : "";
+	return hint ? `${code} — ${hint}${wait}` : `${code}${wait}`;
+}

@@ -7,12 +7,11 @@
  */
 
 import { useMemo } from "react";
-import type { AuthDancePromptInput } from "auth-dance";
 import { isOTPAlgorithm, toURI } from "auth-dance";
+import { type AuthDancePromptInput, useAuthDanceIdentity } from "auth-dance/react";
 import { QRCodeSVG } from "qrcode.react";
 
 import { Input } from "@/components/ui/input.tsx";
-import { useDance } from "@/lib/dance/index.ts";
 
 /** What the control needs out of {@link PromptControlProps}. The key is read-only, so it writes nothing back. */
 export interface TotpKeyFieldProps {
@@ -20,7 +19,7 @@ export interface TotpKeyFieldProps {
 	prompt: AuthDancePromptInput;
 	/** The id the visible label points at. */
 	id: string;
-	/** The key the store generated when the prompt arrived. */
+	/** The key the field drew when the prompt arrived. */
 	value: unknown;
 }
 
@@ -32,10 +31,10 @@ function numberOption(prompt: AuthDancePromptInput, key: string, fallback: numbe
 
 /** The QR code of the `otpauth://` URI, and the key it carries, under the label of the prompt. */
 export function TotpKeyField({ prompt, id, value }: TotpKeyFieldProps) {
-	const { session } = useDance();
+	const identity = useAuthDanceIdentity();
 	const key = String(value ?? "");
 	// The account name the authenticator app shows beside the code. A sign-up has no identity yet.
-	const label = String(session?.identity.data?.name ?? session?.identity.id ?? "auth-dance demo");
+	const label = String(identity?.data?.name ?? identity?.id ?? "auth-dance demo");
 	const algorithm = prompt.options?.algorithm;
 
 	const uri = useMemo(() => {

@@ -1,22 +1,22 @@
 /**
  * @module
  *
- * How one type of prompt is collected, one entry per type. The flow driver never reads a `type` itself. To support a new
- * type, add a row to {@link PROMPT_FIELDS}.
+ * How one type of prompt is collected, one entry per type. Nothing here reads a `type` itself. To support a new type,
+ * add a row to {@link PROMPT_FIELDS}: `AuthDancePromptSwitch` then routes that type to it.
  *
  * A row that nothing types into declares `resolve` instead. The submit button runs it, and what it answers is the value
- * of the prompt.
+ * of the prompt. A row that starts on something other than an empty string declares `initial`.
  */
 
 import type { ReactNode } from "react";
-import type { AuthDancePromptInput } from "auth-dance";
+import { generateKey } from "auth-dance";
+import type { AuthDancePromptInput } from "auth-dance/react";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
 
 import { Checkbox } from "@/components/ui/checkbox.tsx";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field.tsx";
+import { Field } from "@/components/ui/field.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp.tsx";
-import { useDance, useDanceActions } from "@/lib/dance/index.ts";
 
 import { runCeremony } from "@/lib/webauthn.ts";
 
@@ -29,11 +29,11 @@ export interface PromptControlProps {
 	prompt: AuthDancePromptInput;
 	/** The id the visible label points at, and the id the inbox moves focus to. */
 	id: string;
-	/** What the store holds under the name of the prompt. */
+	/** What the step holds under the name of the prompt. */
 	value: unknown;
-	/** Writes the store. A confirmation writes a boolean, everything else writes a string. */
+	/** Writes the value of the step. A confirmation writes a boolean, everything else writes a string. */
 	onValueChange: (next: unknown) => void;
-	/** Whether an action is running. No control takes input then. */
+	/** Whether a call is out. No control takes input then. */
 	disabled: boolean;
 }
 
@@ -44,8 +44,12 @@ export interface PromptFieldDefinition {
 	/** The control. It reads `value` and writes through `onValueChange`. */
 	control: (props: PromptControlProps) => ReactNode;
 	/**
+	 * What the control holds before the owner touches it. Without one the field starts on an empty string.
+	 */
+	initial?: (prompt: AuthDancePromptInput) => unknown;
+	/**
 	 * Builds the value when the submit button is pressed, for a type that nothing types into. Without it the button
-	 * sends what the control wrote. What this throws lands in the alert of the page.
+	 * sends what the control wrote. What this rejects with lands under the field.
 	 */
 	resolve?: (prompt: AuthDancePromptInput) => Promise<unknown>;
 }
@@ -138,7 +142,8 @@ export const PROMPT_FIELDS: Record<string, PromptFieldDefinition> = {
 	},
 	"totp-key": {
 		label: "Authenticator key",
-		// The store generated the key when the prompt arrived. This control only shows it, and writes nothing back.
+		// The library never generates a key and never delivers one, so the browser draws it. The control only shows it.
+		initial: () => generateKey(16),
 		control: ({ prompt, id, value }) => <TotpKeyField prompt={prompt} id={id} value={value} />,
 	},
 	totp: {
@@ -177,6 +182,7 @@ export const PROMPT_FIELDS: Record<string, PromptFieldDefinition> = {
 	confirmation: {
 		label: "Confirmation",
 		// The library takes the boolean true and nothing else. An unchecked box submits false, and the library refuses it.
+		initial: () => false,
 		control: ({ id, value, disabled, onValueChange }) => (
 			<Field orientation="horizontal">
 				<Checkbox id={id} checked={value === true} disabled={disabled} onCheckedChange={(checked) => onValueChange(checked)} />
@@ -191,6 +197,16 @@ export function fieldFor(type: string): PromptFieldDefinition {
 	return PROMPT_FIELDS[type] ?? PROMPT_FIELDS.text;
 }
 
+/** What one field holds before the owner touches it. */
+export function initialValue(prompt: AuthDancePromptInput): unknown {
+	return fieldFor(prompt.type).initial?.(prompt) ?? "";
+}
+
+/** Whether a field of this type takes a code out of the inbox. */
+export function takesCode(prompt: AuthDancePromptInput): boolean {
+	return prompt.type === "otp" || prompt.type === "totp";
+}
+
 /** Where a field of the current prompt lives in the document. */
 export function promptFieldId(name: string): string {
 	return `prompt-${name}`;
@@ -201,30 +217,4 @@ export function focusPromptField(name: string): void {
 	requestAnimationFrame(() => {
 		document.getElementById(promptFieldId(name))?.focus();
 	});
-}
-
-/** The label, the control and the metadata line for one input of the current prompt. */
-export function PromptField({ prompt }: { prompt: AuthDancePromptInput }) {
-	const { values, busy } = useDance();
-	const { setPromptValue } = useDanceActions();
-
-	const field = fieldFor(prompt.type);
-	const id = promptFieldId(prompt.name);
-
-	return (
-		<Field>
-			<FieldLabel htmlFor={id}>{field.label}</FieldLabel>
-			{field.control({
-				prompt,
-				id,
-				value: values[prompt.name],
-				disabled: busy,
-				onValueChange: (next) => setPromptValue(prompt.name, next),
-			})}
-			<FieldDescription className="font-mono text-xs">
-				name <span className="text-foreground">{prompt.name}</span> · type <span className="text-foreground">{prompt.type}</span>
-				{prompt.sendable ? " · sendable" : ""}
-			</FieldDescription>
-		</Field>
-	);
 }

@@ -7,7 +7,7 @@
  * authenticator for.
  */
 
-import type { AuthDancePromptInput } from "auth-dance";
+import type { AuthDancePromptInput } from "auth-dance/react";
 
 import type { CreationOptionsJSON, RequestOptionsJSON } from "@/lib/webauthn.ts";
 import { webAuthnAvailable } from "@/lib/webauthn.ts";

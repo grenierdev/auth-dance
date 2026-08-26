@@ -3,10 +3,14 @@
  *
  * The body of the session slideout. Signed out it says where the tokens will appear. Signed in it shows the identity,
  * the session, the three tokens, and whatever `/list-sessions` and `/list-components` last answered.
+ *
+ * `useAuthDanceTokens` of `auth-dance/react` reads the tokens off the client, so this panel renders again the moment a
+ * flow mints a set, an exchange replaces it, or a sign-out drops it.
  */
 
 import { useEffect, useState } from "react";
 import { CheckIcon, CopyIcon, KeyRoundIcon } from "lucide-react";
+import { useAuthDanceTokens } from "auth-dance/react";
 
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -14,7 +18,6 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item.tsx";
 import { ScrollArea } from "@/components/ui/scroll-area.tsx";
 import { Separator } from "@/components/ui/separator.tsx";
-import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { useDance, useDanceActions } from "@/lib/dance/index.ts";
 import { stamp } from "@/lib/format.ts";
 
@@ -31,7 +34,8 @@ function middle(value: string, keep = 12): string {
 
 /** The session slideout: what the running instance knows about the caller, and the two lists it can answer with. */
 export function SessionPanel() {
-	const { ready, tokens, session, sessions, enrolled, busy } = useDance();
+	const credentials = useAuthDanceTokens();
+	const { sessions, enrolled, busy } = useDance();
 	const { listSessions, listComponents } = useDanceActions();
 	const [copied, setCopied] = useState<string | undefined>(undefined);
 
@@ -43,17 +47,7 @@ export function SessionPanel() {
 		return () => clearTimeout(timer);
 	}, [copied]);
 
-	if (!ready) {
-		return (
-			<div className="flex flex-col gap-3 px-6 pb-6">
-				<Skeleton className="h-4 w-2/3" />
-				<Skeleton className="h-4 w-1/2" />
-				<Skeleton className="h-20 w-full" />
-			</div>
-		);
-	}
-
-	if (!tokens) {
+	if (!credentials) {
 		return (
 			<div className="min-h-0 flex-1 px-6 pb-6">
 				<Empty className="border">
@@ -71,16 +65,18 @@ export function SessionPanel() {
 		);
 	}
 
+	const tokens = credentials.tokens;
+
 	return (
 		<ScrollArea className="min-h-0 flex-1">
 			<div className="flex flex-col gap-4 px-6 pb-6">
 				<dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
 					<dt className="text-muted-foreground">identity</dt>
-					<dd className="font-mono break-all">{session?.identity.id ?? "—"}</dd>
+					<dd className="font-mono break-all">{credentials.identity.id}</dd>
 					<dt className="text-muted-foreground">session</dt>
-					<dd className="font-mono break-all">{session?.session.id ?? "—"}</dd>
+					<dd className="font-mono break-all">{credentials.session.id}</dd>
 					<dt className="text-muted-foreground">address</dt>
-					<dd className="font-mono break-all">{session?.session.address ?? "—"}</dd>
+					<dd className="font-mono break-all">{credentials.session.address ?? "—"}</dd>
 				</dl>
 
 				<Separator />
@@ -118,11 +114,11 @@ export function SessionPanel() {
 				{sessions && (
 					<div className="flex flex-col gap-2">
 						<h3 className="text-sm font-medium">Sessions</h3>
-						{sessions.length === 0
+						{sessions.sessions.length === 0
 							? <p className="text-xs text-muted-foreground">The identity holds no open session.</p>
 							: (
 								<ItemGroup className="gap-2">
-									{sessions.map((entry) => (
+									{sessions.sessions.map((entry) => (
 										<Item key={entry.id} variant="muted" size="xs">
 											<ItemContent>
 												<ItemTitle className="w-full font-mono text-xs break-all">{entry.id}</ItemTitle>
@@ -131,7 +127,8 @@ export function SessionPanel() {
 													{entry.scopes.length > 0 && ` · ${entry.scopes.join(" ")}`}
 												</ItemDescription>
 											</ItemContent>
-											{entry.id === session?.session.id && (
+											{/* `current` names the session the call was made with, which is the one this page holds. */}
+											{entry.id === sessions.current && (
 												<ItemActions>
 													<Badge variant="secondary">this one</Badge>
 												</ItemActions>

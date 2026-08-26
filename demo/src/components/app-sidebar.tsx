@@ -9,6 +9,7 @@
 
 import * as React from "react";
 import { CableIcon, InboxIcon, KeyRoundIcon, Settings2Icon, ShieldCheckIcon } from "lucide-react";
+import { useAuthDanceIdentity } from "auth-dance/react";
 
 import { Badge } from "@/components/ui/badge.tsx";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet.tsx";
@@ -126,7 +127,8 @@ const PANELS: readonly PanelDefinition[] = [
  * Mount it inside a `SidebarProvider`, beside the `SidebarInset` that holds the stage.
  */
 export function AppSidebar() {
-	const { ready, tokens, session, messages, log } = useDance();
+	const identity = useAuthDanceIdentity();
+	const { messages, log } = useDance();
 	const { open, openPanel, closePanel } = usePanels();
 	const { isMobile, setOpenMobile } = useSidebar();
 
@@ -140,13 +142,9 @@ export function AppSidebar() {
 	}
 	const shown = current ?? leaving.current;
 
-	const signedIn = tokens !== undefined;
-	const status = !ready ? "Starting" : signedIn ? "Signed in" : "Signed out";
-	const detail = !ready
-		? "The library is still being built."
-		: signedIn
-		? (session?.identity.id ?? "Signed in")
-		: "No tokens yet. Sign in or sign up to mint some.";
+	const signedIn = identity !== undefined;
+	const status = signedIn ? "Signed in" : "Signed out";
+	const detail = identity?.id ?? "No tokens yet. Sign in or sign up to mint some.";
 
 	return (
 		<>
