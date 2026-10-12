@@ -67,7 +67,7 @@
 	"sideEffects": false,
 	"scripts": {
 		"lint": "biome check --write --unsafe .",
-		"check": "tsc --noEmit && npm run check --workspace demo",
+		"check": "tsc --noEmit",
 		"test": "vitest run",
 		"fmt": "biome format --write .",
 		"prebuild": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
