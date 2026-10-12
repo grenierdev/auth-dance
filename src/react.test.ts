@@ -1,24 +1,20 @@
-/// <reference lib="dom" />
+// @vitest-environment jsdom
 
-// jsdom first: it puts a document on the global scope, and react-dom reads that scope the moment it loads.
-import "global-jsdom/register";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
-import { assert, assertEquals, assertThrows } from "@std/assert";
-// @deno-types="npm:@types/react@^19.2.17"
-import { act, type ChangeEvent, createElement, type ReactNode } from "react";
+import { throws as assertThrows, deepEqual, ok } from "node:assert";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "./providers/memory.ts";
+import { act, type ChangeEvent, createElement, type ReactNode } from "react";
+import { afterEach, beforeEach, describe, it } from "vitest";
 import type { AuthDanceApiOptions } from "./api.ts";
 import { choice, sequence } from "./choreography.ts";
+import { AuthDanceClient, type AuthDanceClientChoreographyStore, webStorageStore } from "./client.ts";
+import type { AuthDanceComponentContext } from "./component.ts";
 import { EmailAuthDanceComponent } from "./components/email.ts";
 import { OtpAuthDanceComponent } from "./components/otp.ts";
 import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "./components/password.ts";
-import type { AuthDanceComponentContext } from "./component.ts";
-import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
 import { ksuid } from "./id.ts";
-import { AuthDanceStorage } from "./storage.ts";
+import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
 import { type AuthDance, createAuthDance } from "./mod.ts";
-import { AuthDanceClient, type AuthDanceClientChoreographyStore, webStorageStore } from "./client.ts";
+import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "./providers/memory.ts";
 import {
 	type AuthDanceFlow,
 	type AuthDanceFlowHandle,
@@ -29,9 +25,10 @@ import {
 	type AuthDanceResponse,
 	useAuthDanceIdentity,
 } from "./react.ts";
+import { AuthDanceStorage } from "./storage.ts";
 
 // React only runs its act queue when the environment says a test drives it.
-// deno-lint-ignore no-explicit-any
+
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 // One PBKDF2 pass, to keep the suites fast.
@@ -71,8 +68,8 @@ describe("React", () => {
 	// The identity every management case starts from: an address, a password and a phone number.
 	function seedJohnDoe(): Promise<AuthDanceIdentity> {
 		return seedIdentity(async (seed) => [
-			...await email.getIdentityComponent("email", "john.doe@example.com", true),
-			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			...(await email.getIdentityComponent("email", "john.doe@example.com", true)),
+			...(await password.getIdentityComponent("password", "foo", true, seed("password"))),
 			await channelSms.getIdentityChannel("sms", "5551234567", true),
 		]);
 	}
@@ -82,13 +79,13 @@ describe("React", () => {
 		using choreography = await client.signIn();
 		await choreography.submitPrompt("john.doe@example.com");
 		await choreography.submitPrompt("foo");
-		assert(choreography.done);
+		ok(choreography.done);
 	}
 
 	// The bare one-time code of the last message a channel took.
 	function lastCode(channel: MemoryAuthDanceChannel): string {
 		const code = (channel.messages.at(-1)?.content as Record<string, string> | undefined)?.["text/x-code"];
-		assert(code, "the channel took no one-time code");
+		ok(code, "the channel took no one-time code");
 		return code;
 	}
 
@@ -132,9 +129,9 @@ describe("React", () => {
 		await answer("email", "john.doe@example.com");
 		await answer("password", "foo");
 
-		await waitFor(() => assertEquals(screen.getByTestId("identity").textContent, identity.id));
-		assertEquals(screen.getByTestId("done").textContent, "done");
-		assertEquals(client.identity?.id, identity.id);
+		await waitFor(() => deepEqual(screen.getByTestId("identity").textContent, identity.id));
+		deepEqual(screen.getByTestId("done").textContent, "done");
+		deepEqual(client.identity?.id, identity.id);
 	});
 
 	it("should render the start of the flow only once the call answers", async () => {
@@ -142,9 +139,9 @@ describe("React", () => {
 		render(page({ client, flow: "sign-in", fallback: true }));
 
 		// The fallback stands in for the children until the dance holds its first prompt.
-		assert(screen.queryByTestId("starting"));
-		await waitFor(() => assert(screen.queryByTestId("prompt-email")));
-		assertEquals(screen.queryByTestId("starting"), null);
+		ok(screen.queryByTestId("starting"));
+		await waitFor(() => ok(screen.queryByTestId("prompt-email")));
+		deepEqual(screen.queryByTestId("starting"), null);
 	});
 
 	it("should keep the failure the library named, and drop it on demand", async () => {
@@ -153,46 +150,46 @@ describe("React", () => {
 
 		await answer("email", "john.doe@example.com");
 		await answer("password", "wrong");
-		await waitFor(() => assertEquals(screen.getByTestId("error").textContent, "InvalidPromptValueError"));
+		await waitFor(() => deepEqual(screen.getByTestId("error").textContent, "InvalidPromptValueError"));
 
 		// The flow does not advance, so the same step answers again.
-		assert(screen.queryByTestId("prompt-password"));
+		ok(screen.queryByTestId("prompt-password"));
 		await gesture(() => fireEvent.click(screen.getByTestId("clear-error")));
-		assertEquals(screen.queryByTestId("error"), null);
+		deepEqual(screen.queryByTestId("error"), null);
 
 		await answer("password", "foo");
-		await waitFor(() => assert(screen.queryByTestId("done")));
+		await waitFor(() => ok(screen.queryByTestId("done")));
 	});
 
 	it("should take one branch of a choice", async () => {
 		build({ choreography: choice(sequence("email", "password"), "email2") });
 		await seedIdentity(async (seed) => [
-			...await email2.getIdentityComponent("email2", "john.doe@example.com", true),
-			...await password.getIdentityComponent("password", "foo", true, seed("password")),
+			...(await email2.getIdentityComponent("email2", "john.doe@example.com", true)),
+			...(await password.getIdentityComponent("password", "foo", true, seed("password"))),
 		]);
 		render(page({ client, flow: "sign-in" }));
 
-		await waitFor(() => assert(screen.queryByTestId("choice")));
+		await waitFor(() => ok(screen.queryByTestId("choice")));
 		await gesture(() => fireEvent.click(screen.getByTestId("choose-email2")));
 
-		await waitFor(() => assert(screen.queryByTestId("prompt-email2")));
+		await waitFor(() => ok(screen.queryByTestId("prompt-email2")));
 		await answer("email2", "john.doe@example.com");
-		await waitFor(() => assert(screen.queryByTestId("done")));
+		await waitFor(() => ok(screen.queryByTestId("done")));
 	});
 
 	it("should deliver a one-time code during a sign-up", async () => {
 		render(page({ client, flow: "sign-up" }));
 
 		await answer("email", "john.doe@example.com");
-		await waitFor(() => assert(screen.queryByTestId("send")));
+		await waitFor(() => ok(screen.queryByTestId("send")));
 
 		await gesture(() => fireEvent.click(screen.getByTestId("send")));
-		await waitFor(() => assertEquals(channelEmail.messages.length, 1));
+		await waitFor(() => deepEqual(channelEmail.messages.length, 1));
 
 		await answer("email", lastCode(channelEmail));
 		await answer("password", "bar");
-		await waitFor(() => assert(screen.queryByTestId("done")));
-		assert(client.identity?.id);
+		await waitFor(() => ok(screen.queryByTestId("done")));
+		ok(client.identity?.id);
 	});
 
 	it("should go back one step", async () => {
@@ -200,10 +197,10 @@ describe("React", () => {
 		render(page({ client, flow: "sign-in" }));
 
 		await answer("email", "john.doe@example.com");
-		await waitFor(() => assert(screen.queryByTestId("prompt-password")));
+		await waitFor(() => ok(screen.queryByTestId("prompt-password")));
 
 		await gesture(() => fireEvent.click(screen.getByTestId("prev")));
-		await waitFor(() => assert(screen.queryByTestId("prompt-email")));
+		await waitFor(() => ok(screen.queryByTestId("prompt-email")));
 	});
 
 	it("should resume a dance out of a store", async () => {
@@ -212,31 +209,29 @@ describe("React", () => {
 		render(page({ client, flow: "sign-in", store }));
 
 		await answer("email", "john.doe@example.com");
-		await waitFor(() => assert(screen.queryByTestId("prompt-password")));
+		await waitFor(() => ok(screen.queryByTestId("prompt-password")));
 
 		// A page that reloads reads the same store, so the dance goes on from the step it left.
 		cleanup();
 		render(page({ client, flow: "sign-in", store }));
-		await waitFor(() => assert(screen.queryByTestId("prompt-password")));
+		await waitFor(() => ok(screen.queryByTestId("prompt-password")));
 
 		await answer("password", "foo");
-		await waitFor(() => assert(screen.queryByTestId("done")));
-		assertEquals(localStorage.getItem("choreography"), null);
+		await waitFor(() => ok(screen.queryByTestId("done")));
+		deepEqual(localStorage.getItem("choreography"), null);
 	});
 
 	it("should rotate a component for an authenticated owner", async () => {
 		const identity = await seedJohnDoe();
 		await signIn();
-		const before = (await storage.getIdentity(identity.id))?.components
-			.find((c) => c.kind === "challenge" && c.component === "password");
+		const before = (await storage.getIdentity(identity.id))?.components.find((c) => c.kind === "challenge" && c.component === "password");
 
 		render(page({ client, flow: "rotate", name: "password" }));
 		await answer("password", "bar");
-		await waitFor(() => assert(screen.queryByTestId("done")));
+		await waitFor(() => ok(screen.queryByTestId("done")));
 
-		const after = (await storage.getIdentity(identity.id))?.components
-			.find((c) => c.kind === "challenge" && c.component === "password");
-		assert(after?.data?.hash !== before?.data?.hash);
+		const after = (await storage.getIdentity(identity.id))?.components.find((c) => c.kind === "challenge" && c.component === "password");
+		ok(after?.data?.hash !== before?.data?.hash);
 	});
 
 	it("should confirm a delete and drop the tokens", async () => {
@@ -246,22 +241,22 @@ describe("React", () => {
 		render(page({ client, flow: "delete", onDone: (response) => answered.push(response) }));
 
 		// The prompt is named `identity` and typed `confirmation`, so the switch falls back to the type.
-		await waitFor(() => assert(screen.queryByTestId("prompt-identity")));
+		await waitFor(() => ok(screen.queryByTestId("prompt-identity")));
 		await gesture(() => fireEvent.click(screen.getByTestId("confirm")));
 
-		await waitFor(() => assertEquals(screen.getByTestId("identity").textContent, "anonymous"));
-		assertEquals(answered.length, 1);
-		assert("success" in answered[0]);
-		assertEquals(client.tokens, undefined);
-		assertEquals(await storage.getIdentity(identity.id), undefined);
+		await waitFor(() => deepEqual(screen.getByTestId("identity").textContent, "anonymous"));
+		deepEqual(answered.length, 1);
+		ok("success" in answered[0]);
+		deepEqual(client.tokens, undefined);
+		deepEqual(await storage.getIdentity(identity.id), undefined);
 	});
 
 	it("should hold the flow back while it is turned off", async () => {
 		await seedJohnDoe();
 		render(page({ client, flow: "sign-in", enabled: false }));
 
-		await waitFor(() => assertEquals(screen.getByTestId("fallback").textContent, "over"));
-		assertEquals(screen.queryByTestId("prompt-email"), null);
+		await waitFor(() => deepEqual(screen.getByTestId("fallback").textContent, "over"));
+		deepEqual(screen.queryByTestId("prompt-email"), null);
 	});
 
 	it("should refuse a hook with no client above it", () => {
@@ -289,19 +284,16 @@ function page(options: {
 		AuthDanceProvider,
 		{ client: options.client },
 		h(Identity, { key: "identity" }),
-		h(
-			AuthDanceFlowProvider,
-			{
-				key: "flow",
-				flow: options.flow,
-				name: options.name,
-				store: options.store,
-				enabled: options.enabled,
-				onDone: options.onDone,
-				fallback: options.fallback ? h("p", { "data-testid": "starting" }, "starting") : undefined,
-				children: (flow: AuthDanceFlowHandle) => h(Steps, { flow }),
-			},
-		),
+		h(AuthDanceFlowProvider, {
+			key: "flow",
+			flow: options.flow,
+			name: options.name,
+			store: options.store,
+			enabled: options.enabled,
+			onDone: options.onDone,
+			fallback: options.fallback ? h("p", { "data-testid": "starting" }, "starting") : undefined,
+			children: (flow: AuthDanceFlowHandle) => h(Steps, { flow }),
+		}),
 	);
 }
 
@@ -327,12 +319,16 @@ function Steps({ flow }: { flow: AuthDanceFlowHandle }): ReactNode {
 						h(
 							"li",
 							{ key: branch.name },
-							h("button", {
-								type: "button",
-								"data-testid": `choose-${branch.name}`,
-								onClick: () => void handle.choose(branch.name),
-							}, branch.name),
-						)
+							h(
+								"button",
+								{
+									type: "button",
+									"data-testid": `choose-${branch.name}`,
+									onClick: () => void handle.choose(branch.name),
+								},
+								branch.name,
+							),
+						),
 					),
 				),
 			prompts: { email: input, password: input, otp: input, confirmation: confirmation },
@@ -378,8 +374,8 @@ async function gesture(run: () => void): Promise<void> {
 
 // Types a value into the step and waits for the answer to land.
 async function answer(name: string, value: string): Promise<void> {
-	await waitFor(() => assert(screen.queryByTestId(`prompt-${name}`)));
+	await waitFor(() => ok(screen.queryByTestId(`prompt-${name}`)));
 	const field = screen.getByTestId(`prompt-${name}`).querySelector("input");
-	assert(field);
+	ok(field);
 	await gesture(() => fireEvent.change(field, { target: { value } }));
 }

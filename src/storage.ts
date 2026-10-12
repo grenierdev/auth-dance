@@ -1,3 +1,4 @@
+import { parse } from "valibot";
 import { ksuid } from "./id.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
 import type {
@@ -6,7 +7,6 @@ import type {
 	AuthDanceRateLimiterProvider,
 	AuthDanceRateLimiterResult,
 } from "./provider.ts";
-import { parse } from "valibot";
 import { AuthDanceSession } from "./session.ts";
 
 /**
@@ -38,10 +38,7 @@ export class AuthDanceStorage {
 	 * Create an identity with a fresh `id_` ksuid and save it. An absent `data` becomes an empty object. An absent
 	 * `components` becomes an empty list.
 	 */
-	async createIdentity(
-		data?: Record<string, unknown>,
-		components?: Array<AuthDanceIdentityComponent>,
-	): Promise<AuthDanceIdentity> {
+	async createIdentity(data?: Record<string, unknown>, components?: Array<AuthDanceIdentityComponent>): Promise<AuthDanceIdentity> {
 		const identity: AuthDanceIdentity = {
 			id: ksuid("id_"),
 			data: data ?? {},
@@ -112,9 +109,13 @@ export class AuthDanceStorage {
 	 * Create a session for an identity and write it to both session key spaces. The session gets a fresh `ses_`
 	 * ksuid. `options.expireAt` also sets the time to live of both records, in seconds.
 	 */
-	async createSession(
-		options: { identityId: string; scopes: string[]; expireAt: Date; address?: string; userAgent?: string },
-	): Promise<AuthDanceSession> {
+	async createSession(options: {
+		identityId: string;
+		scopes: string[];
+		expireAt: Date;
+		address?: string;
+		userAgent?: string;
+	}): Promise<AuthDanceSession> {
 		const id = ksuid("ses_");
 		const session: AuthDanceSession = {
 			id,
@@ -153,10 +154,7 @@ export class AuthDanceStorage {
 		if (!session) {
 			return;
 		}
-		await Promise.all([
-			this.unsetKv(`session/${session.id}`),
-			this.unsetKv(`sessions/${session.identityId}/${session.id}`),
-		]);
+		await Promise.all([this.unsetKv(`session/${session.id}`), this.unsetKv(`sessions/${session.identityId}/${session.id}`)]);
 	}
 
 	/**
@@ -166,9 +164,7 @@ export class AuthDanceStorage {
 	async listSession(identityId: string): Promise<AuthDanceSession[]> {
 		const keys = await this.#options.kv.list(`sessions/${identityId}/`);
 		const values = await Promise.all(keys.map((key) => this.getKv(key)));
-		return values
-			.filter((value): value is string => value !== undefined)
-			.map((value) => parse(AuthDanceSession, JSON.parse(value)));
+		return values.filter((value): value is string => value !== undefined).map((value) => parse(AuthDanceSession, JSON.parse(value)));
 	}
 
 	/**

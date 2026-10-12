@@ -29,10 +29,7 @@ export function id(prefix?: string): ID {
  * @returns Whether the ID is valid.
  */
 export function isID(id: unknown): id is ID;
-export function isID<const Prefix extends string>(
-	prefix: Prefix,
-	id: unknown,
-): id is ID<Prefix>;
+export function isID<const Prefix extends string>(prefix: Prefix, id: unknown): id is ID<Prefix>;
 export function isID(id_or_prefix: unknown | string, id?: unknown): boolean {
 	const prefix = typeof id !== "undefined" ? `${id_or_prefix}` : "";
 	id = typeof id !== "undefined" ? id : id_or_prefix;
@@ -45,10 +42,7 @@ export function isID(id_or_prefix: unknown | string, id?: unknown): boolean {
  * @throws InvalidIDError when the ID is not valid.
  */
 export function assertID(id: unknown): asserts id is ID;
-export function assertID<const Prefix extends string>(
-	prefix: Prefix,
-	id: unknown,
-): asserts id is ID<Prefix>;
+export function assertID<const Prefix extends string>(prefix: Prefix, id: unknown): asserts id is ID<Prefix>;
 export function assertID(id_or_prefix: unknown | string, id?: unknown): void {
 	const prefix = typeof id !== "undefined" ? `${id_or_prefix}` : "";
 	id = typeof id !== "undefined" ? id : id_or_prefix;
@@ -87,14 +81,8 @@ export const KSUID_EPOCH = 1545753300;
 export function ksuid(): ID;
 export function ksuid(counter: number): ID;
 export function ksuid<const Prefix extends string>(prefix: Prefix): ID<Prefix>;
-export function ksuid<const Prefix extends string>(
-	prefix: Prefix,
-	counter: number,
-): ID<Prefix>;
-export function ksuid(
-	counter_or_prefix?: string | number,
-	counter = Date.now() / 1000 - KSUID_EPOCH,
-): ID {
+export function ksuid<const Prefix extends string>(prefix: Prefix, counter: number): ID<Prefix>;
+export function ksuid(counter_or_prefix?: string | number, counter = Date.now() / 1000 - KSUID_EPOCH): ID {
 	let prefix = "";
 	if (typeof counter_or_prefix === "number") {
 		prefix = "";
@@ -103,10 +91,8 @@ export function ksuid(
 		prefix = counter_or_prefix;
 		counter = typeof counter === "number" ? counter : Date.now() / 1000 - KSUID_EPOCH;
 	}
-	if (counter > 0xFFFFFFFF || counter < 0) {
-		throw new RangeError(
-			`Expected counter must be between 0 and ${0xFFFFFFFF}, got ${counter}.`,
-		);
+	if (counter > 0xffffffff || counter < 0) {
+		throw new RangeError(`Expected counter must be between 0 and ${0xffffffff}, got ${counter}.`);
 	}
 	crypto.getRandomValues(buffer1);
 	dataview.setUint32(0, counter, false);
@@ -127,21 +113,15 @@ export function ksuid(
 export function rksuid(): ID;
 export function rksuid(counter: number): ID;
 export function rksuid<const Prefix extends string>(prefix: Prefix): ID<Prefix>;
-export function rksuid<const Prefix extends string>(
-	prefix: Prefix,
-	counter: number,
-): ID<Prefix>;
-export function rksuid(
-	counter_or_prefix?: string | number,
-	counter = 0xFFFFFFFF - Date.now() / 1000 - KSUID_EPOCH,
-): ID {
+export function rksuid<const Prefix extends string>(prefix: Prefix, counter: number): ID<Prefix>;
+export function rksuid(counter_or_prefix?: string | number, counter = 0xffffffff - Date.now() / 1000 - KSUID_EPOCH): ID {
 	let prefix = "";
 	if (typeof counter_or_prefix === "number") {
 		prefix = "";
-		counter = 0xFFFFFFFF - counter_or_prefix;
+		counter = 0xffffffff - counter_or_prefix;
 	} else if (typeof counter_or_prefix === "string") {
 		prefix = counter_or_prefix;
-		counter = 0xFFFFFFFF - (typeof counter === "number" ? counter : Date.now() / 1000 - KSUID_EPOCH);
+		counter = 0xffffffff - (typeof counter === "number" ? counter : Date.now() / 1000 - KSUID_EPOCH);
 	}
 	return ksuid(prefix, counter) as ID;
 }
@@ -167,7 +147,7 @@ function base62(buffer: Uint8Array): string {
 		}
 		length = pointer;
 
-		// deno-fmt-ignore
+		// biome-ignore format: Keep the existing table or query layout.
 		result = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"[remainder] + result;
 	}
 

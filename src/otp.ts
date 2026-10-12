@@ -1,4 +1,4 @@
-import { decodeBase32 } from "@std/encoding/base32";
+import { base32 } from "@scure/base";
 
 /** The name of the HMAC hash that derives a one-time password. */
 export type OTPAlgorithm = "SHA-1" | "SHA-256" | "SHA-384" | "SHA-512";
@@ -33,14 +33,11 @@ export type OTPOptions = {
 
 /** Tests whether `value` is one of the four hash names of {@link OTPAlgorithm}. */
 export function isOTPAlgorithm(value?: unknown): value is OTPAlgorithm {
-	return !!value && typeof value === "string" &&
-		["SHA-1", "SHA-256", "SHA-384", "SHA-512"].includes(value);
+	return !!value && typeof value === "string" && ["SHA-1", "SHA-256", "SHA-384", "SHA-512"].includes(value);
 }
 
 /** Narrows `value` to {@link OTPAlgorithm}. @throws {@link InvalidOTPAlgorithmError} When `value` is not a hash name. */
-export function assertOTPAlgorithm(
-	value?: unknown,
-): asserts value is OTPAlgorithm {
+export function assertOTPAlgorithm(value?: unknown): asserts value is OTPAlgorithm {
 	if (!isOTPAlgorithm(value)) {
 		throw new InvalidOTPAlgorithmError();
 	}
@@ -51,16 +48,18 @@ export class InvalidOTPAlgorithmError extends Error {}
 
 /** Tests whether `value` matches {@link HOTPOptions}. The guard checks `algorithm` and `digits` only when `value` carries them. */
 export function isHOTPOptions(value?: unknown): value is HOTPOptions {
-	return !!value && typeof value === "object" && "key" in value &&
+	return (
+		!!value &&
+		typeof value === "object" &&
+		"key" in value &&
 		(typeof value.key === "string" || value.key instanceof CryptoKey) &&
 		(!("algorithm" in value) || isOTPAlgorithm(value.algorithm)) &&
-		(!("digits" in value) || typeof value.digits === "number");
+		(!("digits" in value) || typeof value.digits === "number")
+	);
 }
 
 /** Narrows `value` to {@link HOTPOptions}. @throws {@link InvalidHOTPOptionsError} When `value` does not match the shape. */
-export function assertHOTPOptions(
-	value?: unknown,
-): asserts value is HOTPOptions {
+export function assertHOTPOptions(value?: unknown): asserts value is HOTPOptions {
 	if (!isHOTPOptions(value)) {
 		throw new InvalidHOTPOptionsError();
 	}
@@ -71,17 +70,20 @@ export class InvalidHOTPOptionsError extends Error {}
 
 /** Tests whether `value` matches {@link TOTPOptions}. The guard checks `algorithm` and `digits` only when `value` carries them. */
 export function isTOTPOptions(value?: unknown): value is TOTPOptions {
-	return !!value && typeof value === "object" && "key" in value &&
+	return (
+		!!value &&
+		typeof value === "object" &&
+		"key" in value &&
 		(typeof value.key === "string" || value.key instanceof CryptoKey) &&
-		"period" in value && typeof value.period === "number" &&
+		"period" in value &&
+		typeof value.period === "number" &&
 		(!("algorithm" in value) || isOTPAlgorithm(value.algorithm)) &&
-		(!("digits" in value) || typeof value.digits === "number");
+		(!("digits" in value) || typeof value.digits === "number")
+	);
 }
 
 /** Narrows `value` to {@link TOTPOptions}. @throws {@link InvalidTOTPOptionsError} When `value` does not match the shape. */
-export function assertTOTPOptions(
-	value?: unknown,
-): asserts value is TOTPOptions {
+export function assertTOTPOptions(value?: unknown): asserts value is TOTPOptions {
 	if (!isTOTPOptions(value)) {
 		throw new InvalidTOTPOptionsError();
 	}
@@ -92,14 +94,11 @@ export class InvalidTOTPOptionsError extends Error {}
 
 /** Tests whether `value` carries a numeric `digits`. The guard requires `digits`, although {@link OTPOptions} marks it optional. */
 export function isOTPOptions(value?: unknown): value is OTPOptions {
-	return !!value && typeof value === "object" && "digits" in value &&
-		typeof value.digits === "number";
+	return !!value && typeof value === "object" && "digits" in value && typeof value.digits === "number";
 }
 
 /** Narrows `value` to {@link OTPOptions}. @throws {@link InvalidOTPOptionsError} When `value` does not match the shape. */
-export function assertOTPOptions(
-	value?: unknown,
-): asserts value is OTPOptions {
+export function assertOTPOptions(value?: unknown): asserts value is OTPOptions {
 	if (!isOTPOptions(value)) {
 		throw new InvalidOTPOptionsError();
 	}
@@ -120,8 +119,7 @@ function padCounter(counter: number): Uint8Array<ArrayBuffer> {
  */
 function truncate(hmac: Uint8Array): number {
 	const offset = hmac[19] & 0b1111;
-	return ((hmac[offset] & 0x7f) << 24) | (hmac[offset + 1] << 16) |
-		(hmac[offset + 2] << 8) | hmac[offset + 3];
+	return ((hmac[offset] & 0x7f) << 24) | (hmac[offset + 1] << 16) | (hmac[offset + 2] << 8) | hmac[offset + 3];
 }
 
 /**
@@ -136,11 +134,14 @@ function truncate(hmac: Uint8Array): number {
  * const code = await hotp({ key: generateKey(16), counter: 1 });
  * ```
  */
-export async function hotp(
-	{ key, counter, algorithm = "SHA-1", digits = 6 }: HOTPOptions & {
-		counter: number;
-	},
-): Promise<string> {
+export async function hotp({
+	key,
+	counter,
+	algorithm = "SHA-1",
+	digits = 6,
+}: HOTPOptions & {
+	counter: number;
+}): Promise<string> {
 	assertOTPAlgorithm(algorithm);
 	let cryptoKey: CryptoKey;
 	if (key instanceof CryptoKey) {
@@ -152,21 +153,13 @@ export async function hotp(
 		if (key.length % 8 !== 0) {
 			throw new RangeError("Expected key length to be a multiple of 8.");
 		}
-		cryptoKey = await crypto.subtle.importKey(
-			"raw",
-			Uint8Array.from(decodeBase32(key)),
-			{ name: "HMAC", hash: algorithm },
-			false,
-			["sign"],
-		);
+		cryptoKey = await crypto.subtle.importKey("raw", Uint8Array.from(base32.decode(key)), { name: "HMAC", hash: algorithm }, false, [
+			"sign",
+		]);
 	} else {
-		throw new Error(
-			`Expected \`key\` to be either a string or a CryptoKey, got ${key}.`,
-		);
+		throw new Error(`Expected \`key\` to be either a string or a CryptoKey, got ${key}.`);
 	}
-	const hmac = new Uint8Array(
-		await crypto.subtle.sign("HMAC", cryptoKey, padCounter(counter)),
-	);
+	const hmac = new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, padCounter(counter)));
 	const num = truncate(hmac);
 	return num.toString().padStart(digits, "0").slice(-digits);
 }
@@ -181,11 +174,7 @@ export async function hotp(
  * const code = await totp({ key: generateKey(16), period: 30 });
  * ```
  */
-export function totp(
-	{ key, time = Date.now() / 1000, period = 60, algorithm, digits }:
-		& TOTPOptions
-		& { time?: number },
-): Promise<string> {
+export function totp({ key, time = Date.now() / 1000, period = 60, algorithm, digits }: TOTPOptions & { time?: number }): Promise<string> {
 	return hotp({ key, counter: Math.floor(time / period), algorithm, digits });
 }
 
@@ -221,33 +210,33 @@ export function generateKey(length = 16, alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ2
 /** Options for {@link toURI}. Use the `"hotp"` variant for a counter-based code and the `"totp"` variant for a time-based code. */
 export type OTPAuthDanceURIOptions =
 	| {
-		/** Marks the URI as counter-based. */
-		type: "hotp";
-		/** The shared key in base32. */
-		secret: string;
-		/** The account name that the authenticator app shows. */
-		label: string;
-		/** The HMAC hash that derives the code. @defaultValue `"SHA-1"` */
-		algorithm?: OTPAlgorithm;
-		/** The number of digits in the code. @defaultValue `6` */
-		digits?: number;
-		/** The first counter of the sequence. `toURI` rejects the `"hotp"` variant without it. */
-		counter: number;
-	}
+			/** Marks the URI as counter-based. */
+			type: "hotp";
+			/** The shared key in base32. */
+			secret: string;
+			/** The account name that the authenticator app shows. */
+			label: string;
+			/** The HMAC hash that derives the code. @defaultValue `"SHA-1"` */
+			algorithm?: OTPAlgorithm;
+			/** The number of digits in the code. @defaultValue `6` */
+			digits?: number;
+			/** The first counter of the sequence. `toURI` rejects the `"hotp"` variant without it. */
+			counter: number;
+	  }
 	| {
-		/** Marks the URI as time-based. */
-		type: "totp";
-		/** The shared key in base32. */
-		secret: string;
-		/** The account name that the authenticator app shows. */
-		label: string;
-		/** The HMAC hash that derives the code. @defaultValue `"SHA-1"` */
-		algorithm?: OTPAlgorithm;
-		/** The number of digits in the code. @defaultValue `6` */
-		digits?: number;
-		/** The length of one time step in seconds. Pass the same value to {@link totp}, which uses `60` by default. @defaultValue `30` */
-		period?: number;
-	};
+			/** Marks the URI as time-based. */
+			type: "totp";
+			/** The shared key in base32. */
+			secret: string;
+			/** The account name that the authenticator app shows. */
+			label: string;
+			/** The HMAC hash that derives the code. @defaultValue `"SHA-1"` */
+			algorithm?: OTPAlgorithm;
+			/** The number of digits in the code. @defaultValue `6` */
+			digits?: number;
+			/** The length of one time step in seconds. Pass the same value to {@link totp}, which uses `60` by default. @defaultValue `30` */
+			period?: number;
+	  };
 
 /**
  * Builds the `otpauth://` URI that an authenticator app reads from a QR code.
@@ -270,25 +259,15 @@ export function toURI(options: OTPAuthDanceURIOptions): string {
 		}
 	} else {
 		options.period ??= 30;
-		if (
-			"period" in options && options.period &&
-			typeof options.period !== "number"
-		) {
+		if ("period" in options && options.period && typeof options.period !== "number") {
 			throw new Error(`When provided, the "period" options must be a number.`);
 		}
 	}
-	if (
-		"digits" in options && options.digits && typeof options.digits !== "number"
-	) {
+	if ("digits" in options && options.digits && typeof options.digits !== "number") {
 		throw new Error(`When provided, the "digits" options must be a number.`);
 	}
-	if (
-		"algorithm" in options && options.algorithm &&
-		!isOTPAlgorithm(options.algorithm)
-	) {
-		throw new Error(
-			`When provided, the "algorithm" options must be either "SHA-1", "SHA-256", "SHA-384" or "SHA-512".`,
-		);
+	if ("algorithm" in options && options.algorithm && !isOTPAlgorithm(options.algorithm)) {
+		throw new Error(`When provided, the "algorithm" options must be either "SHA-1", "SHA-256", "SHA-384" or "SHA-512".`);
 	}
 	const { type, secret, label, ...rest } = options;
 	const uri = new URL(`otpauth://${type}/${encodeURIComponent(label)}`);

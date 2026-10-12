@@ -1,4 +1,4 @@
-import { encodeHex } from "@std/encoding/hex";
+import { hex } from "@scure/base";
 import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
 import { IdentityNotResolvedError, InvalidPromptValueError } from "../error.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "../identity.ts";
@@ -28,7 +28,7 @@ export function pbkdf2PasswordHasher(iterations: number = 600_000): PasswordHash
 		const salt = new Uint8Array(await crypto.subtle.digest("SHA-256", encoded), 0, 16);
 		const key = await crypto.subtle.importKey("raw", encoded, { name: "PBKDF2" }, false, ["deriveBits"]);
 		const digest = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations, hash: "SHA-256" }, key, 256);
-		return `${iterations}:${encodeHex(salt)}:${encodeHex(digest)}`;
+		return `${iterations}:${hex.encode(salt)}:${hex.encode(new Uint8Array(digest))}`;
 	};
 }
 
@@ -46,13 +46,7 @@ let comparisonKey: Promise<CryptoKey> | undefined;
 
 /** Draws the key that signs the two strings `timingSafeEqual` compares. */
 function resolveComparisonKey(): Promise<CryptoKey> {
-	return crypto.subtle.importKey(
-		"raw",
-		crypto.getRandomValues(new Uint8Array(32)),
-		{ name: "HMAC", hash: "SHA-256" },
-		false,
-		["sign"],
-	);
+	return crypto.subtle.importKey("raw", crypto.getRandomValues(new Uint8Array(32)), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
 }
 
 /** Finds the comparison that the runtime holds. Workers keeps one on `crypto.subtle`, Node and Deno in `node:crypto`. */
@@ -89,8 +83,10 @@ async function resolveConstantTimeEqual(): Promise<ConstantTimeEqual> {
  */
 async function timingSafeEqual(left: string, right: string): Promise<boolean> {
 	const [equals, key] = await Promise.all([
-		constantTimeEqual ??= resolveConstantTimeEqual(),
-		comparisonKey ??= resolveComparisonKey(),
+		// biome-ignore lint/suspicious/noAssignInExpressions: Cache the crypto initialization promise.
+		(constantTimeEqual ??= resolveConstantTimeEqual()),
+		// biome-ignore lint/suspicious/noAssignInExpressions: Cache the crypto initialization promise.
+		(comparisonKey ??= resolveComparisonKey()),
 	]);
 	const encoder = new TextEncoder();
 	const [a, b] = await Promise.all([
@@ -125,7 +121,7 @@ export class PasswordAuthDanceComponent implements AuthDanceComponent {
 	 * @param hasher What turns the salted password into the stored string.
 	 * @example
 	 * ```ts
-	 * new PasswordAuthDanceComponent(Deno.env.get("PASSWORD_PEPPER")!, pbkdf2PasswordHasher(1_000_000));
+	 * new PasswordAuthDanceComponent(process.env.PASSWORD_PEPPER!, pbkdf2PasswordHasher(1_000_000));
 	 * ```
 	 */
 	constructor(pepper: string, hasher: PasswordHasher = pbkdf2PasswordHasher()) {
@@ -150,8 +146,9 @@ export class PasswordAuthDanceComponent implements AuthDanceComponent {
 	}
 
 	#storedHash(context: AuthDanceComponentContext): string | undefined {
-		const stored = context.identity?.components
-			.find((c) => c.kind === "challenge" && c.component === context.name && typeof c.data?.hash === "string");
+		const stored = context.identity?.components.find(
+			(c) => c.kind === "challenge" && c.component === context.name && typeof c.data?.hash === "string",
+		);
 		return stored?.data?.hash as string | undefined;
 	}
 
@@ -183,12 +180,13 @@ export class PasswordAuthDanceComponent implements AuthDanceComponent {
 		}
 		const hash = await this.#hasher(prepared);
 		const stored = this.#storedHash(context);
-		if (stored && await timingSafeEqual(hash, stored)) {
+		if (stored && (await timingSafeEqual(hash, stored))) {
 			throw new InvalidPromptValueError("password must differ from the one it replaces");
 		}
 		const password = (value as string).normalize("NFKC");
-		const identifies = context.identity?.components
-			.some((c) => c.kind === "identification" && c.identification.normalize("NFKC").toLowerCase() === password.toLowerCase());
+		const identifies = context.identity?.components.some(
+			(c) => c.kind === "identification" && c.identification.normalize("NFKC").toLowerCase() === password.toLowerCase(),
+		);
 		if (identifies) {
 			throw new InvalidPromptValueError("password must differ from the value that identifies its owner");
 		}
@@ -207,7 +205,7 @@ export class PasswordAuthDanceComponent implements AuthDanceComponent {
 	 * sendable.
 	 * @returns One password input for the client to render.
 	 */
-	// deno-lint-ignore require-await
+
 	async getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput> {
 		return {
 			kind: "input",

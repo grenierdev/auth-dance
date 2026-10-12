@@ -1,1 +1,16 @@
-*.test.ts
+# Include compiled library files and package documentation.
+/*
+!/dist/
+!/README.md
+!/LICENSE*
+
+# Exclude compiled development tooling outside the library.
+/dist/*
+!/dist/src/
+
+# Exclude tests, fixtures, and compiler caches from the library output.
+**/*.test.*
+**/*.spec.*
+**/__tests__/
+**/__fixtures__/
+**/*.tsbuildinfo

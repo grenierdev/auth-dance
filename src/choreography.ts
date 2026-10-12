@@ -36,7 +36,7 @@ export const AuthDanceChoreographyChoice: v.GenericSchema<AuthDanceChoreographyC
 		}),
 		v.title("ChoreographyChoice"),
 		v.description("A choice of choreography components"),
-	)
+	),
 );
 
 /** An ordered run of the dance. The owner performs every child, from the first one to the last one. */
@@ -56,7 +56,7 @@ export const AuthDanceChoreographySequence: v.GenericSchema<AuthDanceChoreograph
 		}),
 		v.title("ChoreographySequence"),
 		v.description("A sequence of choreography components"),
-	)
+	),
 );
 
 /** The authentication policy as data. Build the tree with the `component`, `sequence`, `choice` and `pick` combinators. */
@@ -136,7 +136,10 @@ export function pick(count: number, ...components: Array<AuthDanceChoreography |
 			permute([...chosen, remaining[i]], [...remaining.slice(0, i), ...remaining.slice(i + 1)]);
 		}
 	}
-	permute([], components.map((c) => (typeof c === "string" ? component(c) : c)));
+	permute(
+		[],
+		components.map((c) => (typeof c === "string" ? component(c) : c)),
+	);
 	return choice(...permutations);
 }
 
@@ -229,7 +232,7 @@ export function* walk(
 	const end = Symbol("end");
 	const choreographyWithEnd = simplify(sequence(choreography, component(end as unknown as string)));
 	for (const { component, path } of innerWalk(choreographyWithEnd, [])) {
-		yield { component: component?.component as unknown === end ? null : component, path };
+		yield { component: (component?.component as unknown) === end ? null : component, path };
 	}
 }
 

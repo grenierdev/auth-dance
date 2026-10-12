@@ -1,5 +1,5 @@
-import { AuthDanceIdentityChannel, AuthDanceIdentityComponent } from "./identity.ts";
 import * as v from "valibot";
+import { AuthDanceIdentityChannel, AuthDanceIdentityComponent } from "./identity.ts";
 
 /** The in-progress dance of an owner who signs in to an identity that already exists. */
 export interface AuthDanceStateSignIn {

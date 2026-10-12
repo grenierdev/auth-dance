@@ -22,8 +22,10 @@ deno add npm:auth-dance
 ## The server
 
 `createAuthDance(options)` is the single entry point. Declare the choreography, say what each step does, and serve the handler it returns.
+For the Node.js example below, install the HTTP adapter with `npm install @hono/node-server`.
 
 ```ts
+import { serve } from "@hono/node-server";
 import { AuthDanceStorage, createAuthDance, sequence } from "auth-dance";
 import { EmailAuthDanceComponent } from "auth-dance/components/email";
 import { OtpAuthDanceComponent } from "auth-dance/components/otp";
@@ -38,12 +40,12 @@ const auth = createAuthDance({
 		components: {
 			email: new EmailAuthDanceComponent({ channel: "email", challenge: "otp" }),
 			otp: new OtpAuthDanceComponent({ channel: "email" }),
-			password: new PasswordAuthDanceComponent(Deno.env.get("PASSWORD_PEPPER")!),
+			password: new PasswordAuthDanceComponent(process.env.PASSWORD_PEPPER!),
 		},
 		// Where the messages go.
 		channels: { email: new MemoryAuthDanceChannel("email") },
 		// openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
-		secret: Deno.env.get("AUTH_SECRET")!,
+		secret: process.env.AUTH_SECRET!,
 		storage: new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),
 			kv: new MemoryKvProvider(),
@@ -53,7 +55,7 @@ const auth = createAuthDance({
 	info: { title: "Auth API", version: "1.0.0" },
 });
 
-Deno.serve(auth.fetch);
+serve({ fetch: auth.fetch, port: 3000 });
 ```
 
 `auth.fetch` is the HTTP surface, `auth.app` is the Hono instance behind it, `auth.api` is the same state machine without HTTP, and
@@ -130,24 +132,37 @@ Full documentation lives at [auth.dance](https://auth.dance/). The tests beside 
 
 ## Contributing
 
-This repository is Deno-native. There is no build step, no bundler and no transpiler: the TypeScript in `src/` is what runs and what
-publishes. A Deno workspace holds the library in `src/` and a demo application in `demo/`.
+Contributors use Node.js 24.4 or newer and npm. The root package contains the library in `src/`; `demo/` is an npm workspace.
+Deno is not required to install dependencies, check types, run tests, format, lint, build, or publish.
 
 ```sh
-deno test                      # no permission flags needed
-deno test src/api.test.ts
-deno test --filter "should sign-in"
-deno fmt                       # tabs, line width 140
-deno lint
-deno doc --lint src/mod.ts     # every export needs JSDoc
+npm install
+npm run lint                         # Biome
+npm run check                        # TypeScript: library, tests, and demo
+npm test                             # Vitest, runs once
+npm test -- src/api.test.ts
+npm test -- -t "should sign-in"
+npm run fmt                          # Biome: tabs, line width 140
+npm run build                        # TypeScript: JavaScript, declarations, and source maps
+npm run dev --workspace demo
+npm run build --workspace demo
 ```
 
 Layout: `src/mod.ts` is the entry point, `src/api.ts` holds the state machine, `src/app.ts` holds the Hono routes, `src/choreography.ts`
-holds the DSL, and `src/client.ts` plus `src/react.ts` hold the client half. `src/components/` and `src/providers/` hold the batteries. A
-test sits beside its subject.
+holds the DSL, and `src/client.ts` plus `src/react.ts` hold the client half. `src/components/` and `src/providers/` hold the batteries.
+Tests sit beside their subjects. The shared provider suites run against memory storage and the Node-compatible `@deno/kv` in-memory
+client. The optional `auth-dance/providers/deno` export remains compatible with Deno KV; the core library uses web APIs and npm packages.
 
-The npm package comes out of `scripts/publish.sh`, which packs the same sources with `deno pack`. Node consumers get a published artifact;
-contributors need Deno alone.
+`npm run build` cleans `dist/` and compiles the library, tests, and tooling with `tsc` using `tsconfig.json`, emitting JavaScript,
+`.d.ts` declarations, and source maps. Library modules are emitted into `dist/src/`; `.npmignore` excludes tests and development
+artifacts from the published package.
+Source imports keep their `.ts` extensions; TypeScript rewrites them to `.js` in the emitted JavaScript. Declarations retain `.ts`
+imports, which TypeScript resolves to the corresponding `.d.ts` files. Runtime npm dependencies and `cloudflare:workers` remain
+external; the browser-facing client and React entry points remain separate from the server API.
+
+The root `package.json` owns the package version and exports. `npm pack` builds and produces a package containing the compiled
+library and the README. To publish, run `npm publish --access public --tag next`; omit the tag for `latest`.
+Publishing builds automatically through `prepack`, and the demo and tests are excluded from the published package.
 
 ## License
 

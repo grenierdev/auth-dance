@@ -1,9 +1,9 @@
 import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
+import { ChannelNotSubscribedError, ComponentNotVerifiableError } from "../error.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityChannel, AuthDanceIdentityComponent } from "../identity.ts";
 import type { AuthDanceMessage } from "../message.ts";
-import type { AuthDancePromptInput } from "../prompt.ts";
 import { otp } from "../otp.ts";
-import { ChannelNotSubscribedError, ComponentNotVerifiableError } from "../error.ts";
+import type { AuthDancePromptInput } from "../prompt.ts";
 
 export interface OtpAuthDanceComponentOptions {
 	channel: string;
@@ -42,12 +42,8 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 	 * @param confirmed Whether the owner already proved control of the value. Defaults to `false`.
 	 * @returns One challenge record.
 	 */
-	// deno-lint-ignore require-await
-	async getIdentityComponent(
-		component: string,
-		value: unknown,
-		confirmed: boolean = false,
-	): Promise<AuthDanceIdentityComponent[]> {
+
+	async getIdentityComponent(component: string, value: unknown, confirmed: boolean = false): Promise<AuthDanceIdentityComponent[]> {
 		return [
 			{
 				kind: "challenge",
@@ -59,7 +55,7 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 	}
 
 	/** Describes the code entry the client renders. The prompt is sendable, so the client can ask for a fresh code. */
-	// deno-lint-ignore require-await
+
 	async getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput> {
 		return {
 			kind: "input",
@@ -97,22 +93,26 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 	 * the configured name.
 	 */
 	async sendPrompt(_locale: string, context: AuthDanceComponentContext): Promise<AuthDanceMessage> {
-		const identityChannel = context.identity?.components
-			.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === this.#options.channel);
+		const identityChannel = context.identity?.components.find(
+			(c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === this.#options.channel,
+		);
 		if (!identityChannel) {
 			throw new ChannelNotSubscribedError(this.#options.channel);
 		}
 		const code = otp({ digits: this.#options.digits ?? 6 });
 		await context.storage.setKv(`otp/${context.stateId}/${context.name}`, code, this.#options.ttl ?? 300);
-		const subject = this.#options.subject?.["en"] instanceof Function
-			? this.#options.subject?.["en"](code, context)
-			: this.#options.subject?.["en"] ?? "Your one-time code";
-		const text = this.#options.text?.["en"] instanceof Function
-			? this.#options.text?.["en"](code, context)
-			: this.#options.text?.["en"] ?? `Your one-time code is: ${code}`;
-		const html = this.#options.html?.["en"] instanceof Function
-			? this.#options.html?.["en"](code, context)
-			: this.#options.html?.["en"] ?? `<p>Your one-time code is: <strong>${code}</strong></p>`;
+		const subject =
+			this.#options.subject?.en instanceof Function
+				? this.#options.subject?.en(code, context)
+				: (this.#options.subject?.en ?? "Your one-time code");
+		const text =
+			this.#options.text?.en instanceof Function
+				? this.#options.text?.en(code, context)
+				: (this.#options.text?.en ?? `Your one-time code is: ${code}`);
+		const html =
+			this.#options.html?.en instanceof Function
+				? this.#options.html?.en(code, context)
+				: (this.#options.html?.en ?? `<p>Your one-time code is: <strong>${code}</strong></p>`);
 		return {
 			recipient: identityChannel,
 			subject,
@@ -128,7 +128,7 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 	 * Always throws, because another component uses this one as its verification.
 	 * @throws {@link ComponentNotVerifiableError} On every call. The message carries the step name.
 	 */
-	// deno-lint-ignore require-await
+
 	async verificationComponent?(context: AuthDanceComponentContext): Promise<AuthDanceComponent> {
 		throw new ComponentNotVerifiableError(context.name);
 	}

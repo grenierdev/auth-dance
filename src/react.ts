@@ -23,7 +23,6 @@
  * ```
  */
 
-// @deno-types="npm:@types/react@^19.2.17"
 import {
 	type Context,
 	createContext,
@@ -291,6 +290,7 @@ export function useAuthDanceFlow(options: AuthDanceFlowOptions): AuthDanceFlowHa
 	onDone.current = options.onDone;
 	onError.current = options.onError;
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: The attempt counter deliberately restarts the flow.
 	useEffect(() => {
 		if (!enabled) {
 			setPending(false);
@@ -363,13 +363,19 @@ export function useAuthDanceFlow(options: AuthDanceFlowOptions): AuthDanceFlowHa
 		[choreography],
 	);
 
-	const choose = useCallback(async (branch: string): Promise<void> => {
-		await run((dance) => dance.choose(branch));
-	}, [run]);
+	const choose = useCallback(
+		async (branch: string): Promise<void> => {
+			await run((dance) => dance.choose(branch));
+		},
+		[run],
+	);
 
-	const sendPrompt = useCallback(async (sendOptions?: { name?: string; locale?: string }): Promise<void> => {
-		await run((dance) => dance.sendPrompt(sendOptions));
-	}, [run]);
+	const sendPrompt = useCallback(
+		async (sendOptions?: { name?: string; locale?: string }): Promise<void> => {
+			await run((dance) => dance.sendPrompt(sendOptions));
+		},
+		[run],
+	);
 
 	const submitPrompt = useCallback(
 		async (value: unknown, submitOptions?: { name?: string }): Promise<AuthDanceResponse | undefined> => {
@@ -404,30 +410,34 @@ export function useAuthDanceFlow(options: AuthDanceFlowOptions): AuthDanceFlowHa
 
 	const clearError = useCallback((): void => setError(undefined), []);
 
-	return useMemo<AuthDanceFlowHandle>(() => ({
-		choreography,
-		flow,
-		name,
-		prompt: choreography?.prompt ?? null,
-		current: choreography?.current ?? null,
-		choices: choreography?.choices ?? [],
-		selected: choreography?.selected,
-		trail: choreography?.trail ?? [],
-		sendable: choreography?.sendable ?? false,
-		expired: choreography?.expired ?? false,
-		done: choreography?.done ?? false,
-		pending,
-		error,
-		choose,
-		sendPrompt,
-		submitPrompt,
-		confirm,
-		prev,
-		restart,
-		abandon,
-		clearError,
-		// `tick` reads as unused here, and it is the whole point: it is what a change of the dance moves.
-	}), [choreography, tick, flow, name, pending, error, choose, sendPrompt, submitPrompt, confirm, prev, restart, abandon, clearError]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: The tick counter refreshes fields of the mutable choreography.
+	return useMemo<AuthDanceFlowHandle>(
+		() => ({
+			choreography,
+			flow,
+			name,
+			prompt: choreography?.prompt ?? null,
+			current: choreography?.current ?? null,
+			choices: choreography?.choices ?? [],
+			selected: choreography?.selected,
+			trail: choreography?.trail ?? [],
+			sendable: choreography?.sendable ?? false,
+			expired: choreography?.expired ?? false,
+			done: choreography?.done ?? false,
+			pending,
+			error,
+			choose,
+			sendPrompt,
+			submitPrompt,
+			confirm,
+			prev,
+			restart,
+			abandon,
+			clearError,
+			// `tick` reads as unused here, and it is the whole point: it is what a change of the dance moves.
+		}),
+		[choreography, tick, flow, name, pending, error, choose, sendPrompt, submitPrompt, confirm, prev, restart, abandon, clearError],
+	);
 }
 
 /** What {@link AuthDanceFlowProvider} takes: everything {@link useAuthDanceFlow} needs, and what to render. */
@@ -522,11 +532,11 @@ export function AuthDancePromptSwitch({ prompts, choice, fallback, flow }: AuthD
 	const current = handle.current;
 	if (current) {
 		const render = prompts[current.name] ?? prompts[current.type];
-		return render ? render(current, handle) : fallback?.(handle.prompt, handle) ?? null;
+		return render ? render(current, handle) : (fallback?.(handle.prompt, handle) ?? null);
 	}
 	const prompt = handle.prompt;
 	if (prompt?.kind === "choice") {
-		return choice ? choice(handle.choices, handle) : fallback?.(prompt, handle) ?? null;
+		return choice ? choice(handle.choices, handle) : (fallback?.(prompt, handle) ?? null);
 	}
 	return fallback?.(prompt, handle) ?? null;
 }

@@ -23,11 +23,13 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 	constructor(storage?: Iterable<[string, AuthDanceIdentity]>) {
 		this.#storage = new Map(storage);
 		this.#identificationIndex = new Map(
-			this.#storage.values().flatMap((identity) =>
-				identity.components
-					.filter((c) => c.kind === "identification")
-					.map((c) => [`${c.component}:${c.identification}`, identity.id] as const)
-			),
+			this.#storage
+				.values()
+				.flatMap((identity) =>
+					identity.components
+						.filter((c) => c.kind === "identification")
+						.map((c) => [`${c.component}:${c.identification}`, identity.id] as const),
+				),
 		);
 	}
 
@@ -47,9 +49,7 @@ export class MemoryIdentityProvider implements AuthDanceIdentityProvider, Dispos
 		if (cursorIndex === -1) {
 			return Promise.resolve([]);
 		}
-		const results = identities
-			.slice(cursorIndex, limit === undefined ? undefined : cursorIndex + limit)
-			.map((r) => structuredClone(r));
+		const results = identities.slice(cursorIndex, limit === undefined ? undefined : cursorIndex + limit).map((r) => structuredClone(r));
 		return Promise.resolve(results);
 	}
 
@@ -164,7 +164,7 @@ export class MemoryKvProvider implements AuthDanceKvProvider, Disposable {
 	 * @param ttl Lifetime of the entry in seconds. Omit `ttl` to keep the entry until `unset` or dispose.
 	 */
 	set(key: string, value: string, ttl?: number): Promise<void> {
-		const now = new Date().getTime();
+		const now = Date.now();
 		const expiration = ttl !== undefined ? now + ttl * 1000 : undefined;
 		const item = { value, expiration };
 		this.#storage.set(key, structuredClone(item));
@@ -252,7 +252,7 @@ export class MemoryAuthDanceChannel implements AuthDanceChannel, Disposable {
 	}
 
 	/** Builds the prompt that the client renders for this channel. The prompt is always `sendable`. */
-	// deno-lint-ignore require-await
+
 	async getPrompt(context: AuthDanceChannelContext): Promise<AuthDancePromptInput> {
 		return {
 			kind: "input",
@@ -266,7 +266,7 @@ export class MemoryAuthDanceChannel implements AuthDanceChannel, Disposable {
 	 * Builds the channel component that a flow stores on the identity. The channel writes `value` under the `sms` key of `data`.
 	 * @param confirmed Whether control of the recipient is already proven. The default is `false`.
 	 */
-	// deno-lint-ignore require-await
+
 	async getIdentityChannel(channel: string, value: unknown, confirmed: boolean = false): Promise<AuthDanceIdentityChannel> {
 		return {
 			kind: "channel",

@@ -1,5 +1,5 @@
-import { decodeBase64Url, encodeBase64Url } from "@std/encoding/base64url";
-import { encodeHex } from "@std/encoding/hex";
+import { hex } from "@scure/base";
+import { decode as decodeBase64Url, encode as encodeBase64Url } from "jose/base64url";
 import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
 import { InvalidPromptValueError } from "../error.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent, AuthDanceIdentityIdentification } from "../identity.ts";
@@ -54,7 +54,7 @@ const ALGORITHMS: Record<number, WebAuthnAlgorithm> = {
 
 /** Reads a value as a plain object. Returns `null` for anything else, an array included. */
 function asObject(value: unknown): Record<string, unknown> | null {
-	return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 /** Reads a value as a string that holds something. Returns `null` for anything else. */
@@ -136,7 +136,7 @@ function parseAuthenticatorData(bytes: Uint8Array): WebAuthnAuthenticatorData | 
 	if (length === 0 || length > CREDENTIAL_ID_LIMIT || bytes.length < 55 + length) {
 		return null;
 	}
-	data.aaguid = encodeHex(bytes.subarray(37, 53));
+	data.aaguid = hex.encode(bytes.subarray(37, 53));
 	data.credentialId = bytes.subarray(55, 55 + length);
 	return data;
 }
@@ -389,8 +389,9 @@ export class WebAuthnAuthDanceComponent implements AuthDanceComponent {
 
 	// Every credential the identity holds under the name of the step. A sign-in carries no identity, so it holds none.
 	#records(context: AuthDanceComponentContext): AuthDanceIdentityIdentification[] {
-		return (context.identity?.components ?? [])
-			.filter((c): c is AuthDanceIdentityIdentification => c.kind === "identification" && c.component === context.name);
+		return (context.identity?.components ?? []).filter(
+			(c): c is AuthDanceIdentityIdentification => c.kind === "identification" && c.component === context.name,
+		);
 	}
 
 	// Which credentials may answer the prompt. A flow that just collected one puts it in front of the stored ones,
@@ -433,8 +434,9 @@ export class WebAuthnAuthDanceComponent implements AuthDanceComponent {
 		if (this.#options.user) {
 			return await this.#options.user(context);
 		}
-		const identification = (context.identity?.components ?? [])
-			.find((c): c is AuthDanceIdentityIdentification => c.kind === "identification" && c.component !== context.name && c.confirmed);
+		const identification = (context.identity?.components ?? []).find(
+			(c): c is AuthDanceIdentityIdentification => c.kind === "identification" && c.component !== context.name && c.confirmed,
+		);
 		const name = identification?.identification ?? context.identity?.id ?? this.#options.rp.name;
 		const data = context.identity?.data;
 		return { name, displayName: asText(data?.name) ?? name };
@@ -597,7 +599,7 @@ export class WebAuthnAuthDanceComponent implements AuthDanceComponent {
 		context: AuthDanceComponentContext,
 	): Promise<AuthDanceIdentityComponent[]> {
 		const ceremony = await this.#ceremony(context);
-		if (!ceremony || ceremony.type !== "webauthn.create") {
+		if (ceremony?.type !== "webauthn.create") {
 			throw new InvalidPromptValueError("no webauthn registration is in progress");
 		}
 		const credential = asObject(value);
@@ -616,7 +618,7 @@ export class WebAuthnAuthDanceComponent implements AuthDanceComponent {
 			throw new InvalidPromptValueError("webauthn client data does not match the registration in progress");
 		}
 		const authenticatorData = parseAuthenticatorData(authenticatorBytes);
-		if (!authenticatorData || !authenticatorData.credentialId || !await this.#verifyAuthenticatorData(authenticatorData)) {
+		if (!authenticatorData?.credentialId || !(await this.#verifyAuthenticatorData(authenticatorData))) {
 			throw new InvalidPromptValueError("webauthn authenticator data does not pass its checks");
 		}
 		// The credential id the authenticator signed and the one the client reports are the same value.
@@ -641,12 +643,16 @@ export class WebAuthnAuthDanceComponent implements AuthDanceComponent {
 		};
 		// A key that does not read here would refuse every signature later, so the failure lands on the step that
 		// collected it.
-		if (!publicKey || !await this.#importKey(record)) {
+		if (!publicKey || !(await this.#importKey(record))) {
 			throw new InvalidPromptValueError("webauthn public key does not read as a DER SubjectPublicKeyInfo");
 		}
 		// A credential id belongs to one owner. WebAuthn level 3 section 7.1 refuses a registration that repeats one.
-		const taken = this.#records(context).some((c) => c.identification === id) ||
-			await context.storage.getIdentityByIdentification(component, id).then((i) => !!i).catch(() => false);
+		const taken =
+			this.#records(context).some((c) => c.identification === id) ||
+			(await context.storage
+				.getIdentityByIdentification(component, id)
+				.then((i) => !!i)
+				.catch(() => false));
 		if (taken) {
 			throw new InvalidPromptValueError("webauthn credential id already belongs to an identity");
 		}
@@ -679,7 +685,7 @@ export class WebAuthnAuthDanceComponent implements AuthDanceComponent {
 	 */
 	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]> {
 		const ceremony = await this.#ceremony(context);
-		if (!ceremony || ceremony.type !== "webauthn.get") {
+		if (ceremony?.type !== "webauthn.get") {
 			return false;
 		}
 		const credential = asObject(response);
@@ -695,9 +701,10 @@ export class WebAuthnAuthDanceComponent implements AuthDanceComponent {
 		// sign-in carries no identity at all, and the credential id names the owner.
 		const known = this.#records(context).find((c) => c.identification === id);
 		const identity = known ? context.identity : await context.storage.getIdentityByIdentification(context.name, id).catch(() => undefined);
-		const stored = known ?? identity?.components
-			.find((c): c is AuthDanceIdentityIdentification =>
-				c.kind === "identification" && c.component === context.name && c.identification === id
+		const stored =
+			known ??
+			identity?.components.find(
+				(c): c is AuthDanceIdentityIdentification => c.kind === "identification" && c.component === context.name && c.identification === id,
 			);
 		if (!identity || !stored) {
 			return false;
@@ -717,13 +724,13 @@ export class WebAuthnAuthDanceComponent implements AuthDanceComponent {
 			return false;
 		}
 		const authenticatorData = parseAuthenticatorData(authenticatorBytes);
-		if (!authenticatorData || !await this.#verifyAuthenticatorData(authenticatorData)) {
+		if (!authenticatorData || !(await this.#verifyAuthenticatorData(authenticatorData))) {
 			return false;
 		}
-		if (!await this.#verifySignature(record, authenticatorBytes, clientData, signature)) {
+		if (!(await this.#verifySignature(record, authenticatorBytes, clientData, signature))) {
 			return false;
 		}
-		if (!await this.#countSignature(context, id, record, authenticatorData.signCount)) {
+		if (!(await this.#countSignature(context, id, record, authenticatorData.signCount))) {
 			return false;
 		}
 		await context.storage.unsetKv(this.#ceremonyKey(context));
@@ -732,12 +739,7 @@ export class WebAuthnAuthDanceComponent implements AuthDanceComponent {
 
 	// The signature counter of the authenticator. The store holds the last accepted value under
 	// `webauthn/count/<credentialId>`, because the component writes no identity of its own.
-	async #countSignature(
-		context: AuthDanceComponentContext,
-		id: string,
-		record: WebAuthnRecord,
-		signCount: number,
-	): Promise<boolean> {
+	async #countSignature(context: AuthDanceComponentContext, id: string, record: WebAuthnRecord, signCount: number): Promise<boolean> {
 		const key = `webauthn/count/${id}`;
 		const seen = Number(await context.storage.getKv(key));
 		const previous = Number.isFinite(seen) ? Math.max(seen, record.signCount) : record.signCount;
@@ -759,7 +761,7 @@ export class WebAuthnAuthDanceComponent implements AuthDanceComponent {
 	 * with the same relying party, and it names that one credential in `allowCredentials`.
 	 * @returns The component that asks for the signature. Its prompt carries the type `webauthn`.
 	 */
-	// deno-lint-ignore require-await
+
 	async verificationComponent(_context: AuthDanceComponentContext): Promise<AuthDanceComponent> {
 		const component = new WebAuthnAuthDanceComponent(this.#options);
 		component.#validation = true;

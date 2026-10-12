@@ -6,10 +6,10 @@
  * an identity keeps at least one complete path. This module is the entry point, and it adds `createAuthDance`.
  */
 
+import { generateSpecs } from "hono-openapi";
 import type { OpenAPIV3_1 } from "openapi-types";
 import { type AuthDanceApi, type AuthDanceApiOptions, createAuthDanceApi } from "./api.ts";
 import { type AuthDanceApp, type AuthDanceAppOptions, createAuthDanceApp } from "./app.ts";
-import { generateSpecs } from "hono-openapi";
 
 export * from "./api.ts";
 export * from "./app.ts";
@@ -47,7 +47,7 @@ export interface AuthDance {
 	api: AuthDanceApi;
 	/** The Hono instance behind `fetch`. Mount it in your own app, and supply the `api` binding. `rate_limit` is optional. */
 	app: AuthDanceApp;
-	/** The HTTP surface. Hand it to a server, for example `Deno.serve(auth.fetch)`. It supplies both bindings. */
+	/** The HTTP surface. Hand it to a server, for example `serve({ fetch: auth.fetch })` with `@hono/node-server`. It supplies both bindings. */
 	fetch: (request: Request) => Response | Promise<Response>;
 	/**
 	 * Builds the OpenAPI document of the routes. Its 429 and 500 responses list every code of the `Errors` registry.
@@ -70,7 +70,8 @@ export interface AuthDance {
  * 	info: { title: "Auth API", version: "1.0.0" },
  * });
  *
- * Deno.serve(auth.fetch);
+ * // Node.js, with `serve` imported from `@hono/node-server`.
+ * serve({ fetch: auth.fetch });
  * ```
  */
 export function createAuthDance(options: AuthDanceOptions): AuthDance {

@@ -44,14 +44,9 @@ export class EmailAuthDanceComponent implements AuthDanceComponent {
 	 * @param confirmed Whether the owner already proved control of the address. Defaults to `false`.
 	 * @returns The identification record first, then the channel record, then the challenge record.
 	 */
-	async getIdentityComponent(
-		component: string,
-		value: unknown,
-		confirmed: boolean = false,
-	): Promise<AuthDanceIdentityComponent[]> {
+	async getIdentityComponent(component: string, value: unknown, confirmed: boolean = false): Promise<AuthDanceIdentityComponent[]> {
 		const email = typeof value === "string" ? value : "";
-		const challenges = await new OtpAuthDanceComponent(this.#options)
-			.getIdentityComponent(this.#options.challenge, email, confirmed);
+		const challenges = await new OtpAuthDanceComponent(this.#options).getIdentityComponent(this.#options.challenge, email, confirmed);
 		return [
 			{
 				kind: "identification",
@@ -71,7 +66,7 @@ export class EmailAuthDanceComponent implements AuthDanceComponent {
 	}
 
 	/** Describes the address entry the client renders. The prompt is not sendable. */
-	// deno-lint-ignore require-await
+
 	async getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput> {
 		return {
 			kind: "input",
@@ -91,14 +86,13 @@ export class EmailAuthDanceComponent implements AuthDanceComponent {
 		if (!identification) {
 			return false;
 		}
-		const identity = await context.storage
-			.getIdentityByIdentification(context.name, identification)
-			.catch((_) => null);
+		const identity = await context.storage.getIdentityByIdentification(context.name, identification).catch((_) => null);
 		if (!identity) {
 			return false;
 		}
-		const identityComponent = identity.components
-			.find((c): c is AuthDanceIdentityIdentification => c.kind === "identification" && c.component === context.name);
+		const identityComponent = identity.components.find(
+			(c): c is AuthDanceIdentityIdentification => c.kind === "identification" && c.component === context.name,
+		);
 		if (
 			!identityComponent ||
 			!("identification" in identityComponent) ||
@@ -115,7 +109,7 @@ export class EmailAuthDanceComponent implements AuthDanceComponent {
 	 * six digits and the default time to live of 300 seconds. The component reads the recipient from the identity in
 	 * the context.
 	 */
-	// deno-lint-ignore require-await
+
 	async verificationComponent?(_context: AuthDanceComponentContext): Promise<AuthDanceComponent> {
 		return new OtpAuthDanceComponent(this.#options);
 	}

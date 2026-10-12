@@ -122,13 +122,13 @@ export interface AuthDanceFlowDefinition {
 export const AuthDanceFlows = {
 	"sign-in": { path: "/sign-in", authenticated: false, argument: "none" },
 	"sign-up": { path: "/sign-up", authenticated: false, argument: "none" },
-	"recover": { path: "/recover", authenticated: false, argument: "component" },
-	"enroll": { path: "/enroll", authenticated: true, argument: "component" },
-	"unenroll": { path: "/unenroll", authenticated: true, argument: "component" },
-	"rotate": { path: "/rotate", authenticated: true, argument: "component" },
-	"subscribe": { path: "/subscribe", authenticated: true, argument: "channel" },
-	"unsubscribe": { path: "/unsubscribe", authenticated: true, argument: "channel" },
-	"delete": { path: "/delete", authenticated: true, argument: "none" },
+	recover: { path: "/recover", authenticated: false, argument: "component" },
+	enroll: { path: "/enroll", authenticated: true, argument: "component" },
+	unenroll: { path: "/unenroll", authenticated: true, argument: "component" },
+	rotate: { path: "/rotate", authenticated: true, argument: "component" },
+	subscribe: { path: "/subscribe", authenticated: true, argument: "channel" },
+	unsubscribe: { path: "/unsubscribe", authenticated: true, argument: "channel" },
+	delete: { path: "/delete", authenticated: true, argument: "none" },
 } as const satisfies Record<string, AuthDanceFlowDefinition>;
 
 /** The name of a flow, and the key of {@link AuthDanceFlows}. */
@@ -211,7 +211,10 @@ export interface AuthDanceWebStorage {
  * const client = new AuthDanceClient({ baseUrl: "/auth", store: webStorageStore("auth-dance.tokens", localStorage) });
  * ```
  */
-export function webStorageStore<T>(key: string, storage: AuthDanceWebStorage): {
+export function webStorageStore<T>(
+	key: string,
+	storage: AuthDanceWebStorage,
+): {
 	/** Reads the entry, or `null` when it is absent or does not parse. */
 	get(): T | null;
 	/** Writes the entry as JSON. */
@@ -335,8 +338,8 @@ function toError(status: number, body: unknown, retryAfter: string | null): Erro
 		const seconds = retryAfter === null ? Number.NaN : Number(retryAfter);
 		return new RateLimitedError(Number.isFinite(seconds) ? seconds : undefined);
 	}
-	const constructor = errorsByCode[code];
-	return constructor ? new constructor() : new AuthDanceResponseError(status, code);
+	const ErrorClass = errorsByCode[code];
+	return ErrorClass ? new ErrorClass() : new AuthDanceResponseError(status, code);
 }
 
 // `expireAt` is a `Date` in the schemas and an ISO 8601 string on the wire.
@@ -591,9 +594,7 @@ export class AuthDanceClient {
 	 * opaque string the previous call returned.
 	 * @returns The next prompt, the minted tokens, or a bare success.
 	 */
-	async submitPrompt(
-		options: { name: string; value: unknown; state: string; signal?: AbortSignal },
-	): Promise<AuthDanceResponse> {
+	async submitPrompt(options: { name: string; value: unknown; state: string; signal?: AbortSignal }): Promise<AuthDanceResponse> {
 		const body = await this.request("/submit-prompt", {
 			body: { name: options.name, value: options.value, state: options.state },
 			signal: options.signal,
@@ -830,11 +831,7 @@ export class AuthDanceClientChoreography implements Disposable {
 			return new AuthDanceClientChoreography(client, stored, options?.store);
 		}
 		const step = await requestStep(client, definition, options?.name, options?.signal);
-		const choreography = new AuthDanceClientChoreography(
-			client,
-			{ flow, name: options?.name, steps: [step], trail: [] },
-			options?.store,
-		);
+		const choreography = new AuthDanceClientChoreography(client, { flow, name: options?.name, steps: [step], trail: [] }, options?.store);
 		// A snapshot of another flow must not outlive the dance it belonged to.
 		await choreography.#save();
 		return choreography;
@@ -890,7 +887,7 @@ export class AuthDanceClientChoreography implements Disposable {
 	/** The branches of the current step, or an empty array when the step holds one input. */
 	get choices(): AuthDancePromptInput[] {
 		const prompt = this.prompt;
-		if (!prompt || prompt.kind !== "choice") {
+		if (prompt?.kind !== "choice") {
 			return [];
 		}
 		return prompt.components.filter((branch): branch is AuthDancePromptInput => branch.kind === "input");
@@ -1141,10 +1138,13 @@ export class AuthDanceClientChoreography implements Disposable {
 		if (delay <= 0) {
 			return;
 		}
-		this.#timer = setTimeout(() => {
-			this.#timer = undefined;
-			this.#listeners.emit(this);
-		}, Math.min(delay, 2 ** 31 - 1));
+		this.#timer = setTimeout(
+			() => {
+				this.#timer = undefined;
+				this.#listeners.emit(this);
+			},
+			Math.min(delay, 2 ** 31 - 1),
+		);
 	}
 }
 

@@ -175,11 +175,7 @@ export type AuthDanceIdentityComponent = AuthDanceIdentityIdentification | AuthD
 
 /** Parses one stored component record of any kind. */
 export const AuthDanceIdentityComponent: v.GenericSchema<AuthDanceIdentityComponent> = v.pipe(
-	v.union([
-		AuthDanceIdentityIdentification,
-		AuthDanceIdentityChallenge,
-		AuthDanceIdentityChannel,
-	]),
+	v.union([AuthDanceIdentityIdentification, AuthDanceIdentityChallenge, AuthDanceIdentityChannel]),
 	v.title("IdentityComponent"),
 	v.description(
 		"An identity component object that can be either an identity identification, an identity challenge, or an identity channel.",
@@ -194,11 +190,7 @@ export type AuthDanceIdentityComponentPublic =
 
 /** Parses one component as a client may see it. The `/list-components` body holds an array of it. */
 export const AuthDanceIdentityComponentPublic: v.GenericSchema<AuthDanceIdentityComponentPublic> = v.pipe(
-	v.union([
-		AuthDanceIdentityIdentificationPublic,
-		AuthDanceIdentityChallengePublic,
-		AuthDanceIdentityChannelPublic,
-	]),
+	v.union([AuthDanceIdentityIdentificationPublic, AuthDanceIdentityChallengePublic, AuthDanceIdentityChannelPublic]),
 	v.title("IdentityComponentPublic"),
 	v.description(
 		"An identity component as disclosed to a client — an identification, a challenge or a channel — without the component's private data.",

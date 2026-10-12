@@ -49,7 +49,7 @@ export const AuthDancePromptChoice: v.GenericSchema<AuthDancePromptChoice> = v.l
 		}),
 		v.title("PromptChoice"),
 		v.description("A choice of prompt components"),
-	)
+	),
 );
 
 /** What the client renders next: one input, or a choice between branches. The `kind` field names the form. */

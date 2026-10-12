@@ -101,8 +101,9 @@ export class TotpAuthDanceComponent implements AuthDanceComponent {
 	// contexts of a sign-up, an enroll, a rotate and a recover put the collected record first, so a verification
 	// that follows a collection reads the new key and never the one it replaces.
 	#record(context: AuthDanceComponentContext, name: string): TotpRecord | undefined {
-		const stored = context.identity?.components
-			.find((c) => c.kind === "challenge" && c.component === name && typeof c.data?.key === "string");
+		const stored = context.identity?.components.find(
+			(c) => c.kind === "challenge" && c.component === name && typeof c.data?.key === "string",
+		);
 		if (!stored) {
 			return undefined;
 		}
@@ -139,7 +140,7 @@ export class TotpAuthDanceComponent implements AuthDanceComponent {
 	 * @throws {@link InvalidPromptValueError} When the value is not a base32 string with a length that is a multiple
 	 * of 8, or when it matches the key it replaces.
 	 */
-	// deno-lint-ignore require-await
+
 	async getIdentityComponent(
 		component: string,
 		value: unknown,
@@ -182,7 +183,7 @@ export class TotpAuthDanceComponent implements AuthDanceComponent {
 	 * `options.digits`, `options.period` and `options.algorithm` build the `otpauth://` URI.
 	 * @returns One input for the client to render.
 	 */
-	// deno-lint-ignore require-await
+
 	async getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput> {
 		return {
 			kind: "input",
@@ -255,7 +256,7 @@ export class TotpAuthDanceComponent implements AuthDanceComponent {
 	 * it derives that code from the key the flow just collected.
 	 * @returns The component that asks for the code. Its prompt carries the type `totp`.
 	 */
-	// deno-lint-ignore require-await
+
 	async verificationComponent(_context: AuthDanceComponentContext): Promise<AuthDanceComponent> {
 		const component = new TotpAuthDanceComponent({
 			digits: this.#digits,

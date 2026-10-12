@@ -1,0 +1,110 @@
+{
+	"name": "auth-dance",
+	"description": "A different approach to authentication",
+	"homepage": "https://auth.dance/",
+	"bugs": "https://github.com/grenierdev/auth-dance/issues",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/grenierdev/auth-dance.git"
+	},
+	"license": "MIT",
+	"engines": {
+		"node": ">=24.4.0"
+	},
+	"version": "0.1.0-rc.4",
+	"type": "module",
+	"workspaces": [
+		"demo"
+	],
+	"main": "./dist/src/mod.js",
+	"types": "./dist/src/mod.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/src/mod.d.ts",
+			"import": "./dist/src/mod.js"
+		},
+		"./client": {
+			"types": "./dist/src/client.d.ts",
+			"import": "./dist/src/client.js"
+		},
+		"./components/email": {
+			"types": "./dist/src/components/email.d.ts",
+			"import": "./dist/src/components/email.js"
+		},
+		"./components/otp": {
+			"types": "./dist/src/components/otp.d.ts",
+			"import": "./dist/src/components/otp.js"
+		},
+		"./components/password": {
+			"types": "./dist/src/components/password.d.ts",
+			"import": "./dist/src/components/password.js"
+		},
+		"./components/totp": {
+			"types": "./dist/src/components/totp.d.ts",
+			"import": "./dist/src/components/totp.js"
+		},
+		"./components/webauthn": {
+			"types": "./dist/src/components/webauthn.d.ts",
+			"import": "./dist/src/components/webauthn.js"
+		},
+		"./providers/cloudflare": {
+			"types": "./dist/src/providers/cloudflare.d.ts",
+			"import": "./dist/src/providers/cloudflare.js"
+		},
+		"./providers/deno": {
+			"types": "./dist/src/providers/deno.d.ts",
+			"import": "./dist/src/providers/deno.js"
+		},
+		"./providers/memory": {
+			"types": "./dist/src/providers/memory.d.ts",
+			"import": "./dist/src/providers/memory.js"
+		},
+		"./react": {
+			"types": "./dist/src/react.d.ts",
+			"import": "./dist/src/react.js"
+		}
+	},
+	"sideEffects": false,
+	"scripts": {
+		"lint": "biome check --write --unsafe .",
+		"check": "tsc --noEmit && npm run check --workspace demo",
+		"test": "vitest run",
+		"fmt": "biome format --write .",
+		"prebuild": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
+		"build": "tsc",
+		"prepack": "npm run build",
+		"publish": "npm publish --access public"
+	},
+	"dependencies": {
+		"@scure/base": "^2.4.0",
+		"@types/deno": "^2.7.0",
+		"hono": "^4.12.28",
+		"hono-openapi": "^1.3.1",
+		"jose": "^6.2.3",
+		"openapi-types": "^12.1.3",
+		"valibot": "^1.4.2",
+		"@cloudflare/workers-types": "^5.20260804.1",
+		"@valibot/to-json-schema": "^1.7.1"
+	},
+	"peerDependencies": {
+		"react": "^19.0.0"
+	},
+	"peerDependenciesMeta": {
+		"react": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.15",
+		"@deno/kv": "^0.14.0",
+		"@testing-library/react": "^16.3.2",
+		"@types/node": "^24.13.3",
+		"@types/react": "^19.2.17",
+		"@types/react-dom": "^19.2.3",
+		"jsdom": "^26.1.0",
+		"react": "^19.2.8",
+		"react-dom": "^19.2.8",
+		"typescript": "^7.0.2",
+		"vitest": "^5.0.3"
+	}
+}

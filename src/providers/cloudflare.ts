@@ -1,16 +1,18 @@
+/// <reference types="@cloudflare/workers-types" preserve="true" />
+
+import { DurableObject } from "cloudflare:workers";
+import { parse } from "valibot";
+import type { AuthDanceChannel, AuthDanceChannelContext } from "../channel.ts";
 import { AuthDanceIdentity, type AuthDanceIdentityChannel } from "../identity.ts";
+import type { AuthDanceMessage } from "../message.ts";
+import type { AuthDancePromptInput } from "../prompt.ts";
 import type {
 	AuthDanceIdentityProvider,
 	AuthDanceKvProvider,
 	AuthDanceRateLimiterProvider,
 	AuthDanceRateLimiterResult,
 } from "../provider.ts";
-import { DurableObject } from "cloudflare:workers";
-import { parse } from "valibot";
 import { AuthDanceStorage } from "../storage.ts";
-import type { AuthDanceChannel, AuthDanceChannelContext } from "../channel.ts";
-import type { AuthDanceMessage } from "../message.ts";
-import type { AuthDancePromptInput } from "../prompt.ts";
 
 interface KeyMetadata {
 	count: number;
@@ -25,7 +27,7 @@ export class CloudflareD1IdentityProvider implements AuthDanceIdentityProvider {
 	}
 
 	async list(cursor?: string, limit?: number): Promise<AuthDanceIdentity[]> {
-		// deno-fmt-ignore
+		// biome-ignore format: Keep the existing table or query layout.
 		const query = `SELECT "id", "data", "components" FROM identity ${cursor ? `WHERE id > ?` : ""} ORDER BY id ASC ${limit ? `LIMIT ?` : ""}`;
 		const params: (string | number)[] = [];
 		if (cursor) {
@@ -50,7 +52,7 @@ export class CloudflareD1IdentityProvider implements AuthDanceIdentityProvider {
 	}
 
 	async get(id: string): Promise<AuthDanceIdentity | undefined> {
-		// deno-fmt-ignore
+		// biome-ignore format: Keep the existing table or query layout.
 		const result = await this.#db
 			.prepare(`SELECT "id", "data", "components" FROM identity WHERE id = ?`)
 			.bind(id)
@@ -66,11 +68,8 @@ export class CloudflareD1IdentityProvider implements AuthDanceIdentityProvider {
 		return identity;
 	}
 
-	async getByIdentification(
-		component: string,
-		identification: string,
-	): Promise<AuthDanceIdentity | undefined> {
-		// deno-fmt-ignore
+	async getByIdentification(component: string, identification: string): Promise<AuthDanceIdentity | undefined> {
+		// biome-ignore format: Keep the existing table or query layout.
 		const result = await this.#db
 			.prepare(`SELECT "id", "data", "components" FROM identity I INNER JOIN mv_identity_identification II ON I.id = II.identity_id WHERE II.component = ? AND II.identification = ?`)
 			.bind(component, identification)
@@ -89,7 +88,7 @@ export class CloudflareD1IdentityProvider implements AuthDanceIdentityProvider {
 	async set(identity: AuthDanceIdentity): Promise<void> {
 		const data = identity.data ? JSON.stringify(identity.data) : null;
 		const components = JSON.stringify(identity.components);
-		// deno-fmt-ignore
+		// biome-ignore format: Keep the existing table or query layout.
 		await this.#db
 			.prepare(`INSERT INTO identity (id, data, components) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, components = excluded.components`)
 			.bind(identity.id, data, components)
@@ -97,9 +96,7 @@ export class CloudflareD1IdentityProvider implements AuthDanceIdentityProvider {
 	}
 
 	async delete(id: string): Promise<void> {
-		await this.#db.prepare(`DELETE FROM identity WHERE id = ?`)
-			.bind(id)
-			.run();
+		await this.#db.prepare(`DELETE FROM identity WHERE id = ?`).bind(id).run();
 	}
 }
 
@@ -115,11 +112,7 @@ export class CloudflareKvKvProvider implements AuthDanceKvProvider {
 		return result ?? undefined;
 	}
 
-	async list(
-		prefix: string,
-		offset?: number,
-		limit?: number,
-	): Promise<string[]> {
+	async list(prefix: string, offset?: number, limit?: number): Promise<string[]> {
 		// KV takes an opaque cursor, not a count of keys to skip. The skip happens here, so `limit` includes the skipped keys.
 		const start = offset ?? 0;
 		const result = await this.#kv.list({
@@ -141,19 +134,11 @@ export class CloudflareKvKvProvider implements AuthDanceKvProvider {
 export class CloudflareRateLimiterProvider implements AuthDanceRateLimiterProvider {
 	#durableObjectNamespace: DurableObjectNamespace<RateLimiterDurableObject>;
 
-	constructor(
-		durableObjectNamespace: DurableObjectNamespace<
-			RateLimiterDurableObject
-		>,
-	) {
+	constructor(durableObjectNamespace: DurableObjectNamespace<RateLimiterDurableObject>) {
 		this.#durableObjectNamespace = durableObjectNamespace;
 	}
 
-	limit(
-		key: string,
-		limit: number,
-		window: number,
-	): Promise<AuthDanceRateLimiterResult> {
+	limit(key: string, limit: number, window: number): Promise<AuthDanceRateLimiterResult> {
 		const id = this.#durableObjectNamespace.idFromName(key);
 		const stub = this.#durableObjectNamespace.get(id);
 		return stub.limit(limit, window);
@@ -167,7 +152,6 @@ export class CloudflareRateLimiterProvider implements AuthDanceRateLimiterProvid
 export class RateLimiterDurableObject extends DurableObject {
 	#meta: KeyMetadata;
 
-	// deno-lint-ignore no-explicit-any
 	constructor(ctx: DurableObjectState, env: any) {
 		super(ctx, env);
 		this.#meta = { count: 0, expireAt: 0 };
@@ -191,10 +175,12 @@ export class RateLimiterDurableObject extends DurableObject {
 		}
 		this.#meta.count++;
 		const meta = this.#meta;
-		this.ctx.waitUntil((async () => {
-			await this.ctx.storage.put("meta", meta);
-			await this.ctx.storage.setAlarm(meta.expireAt);
-		})());
+		this.ctx.waitUntil(
+			(async () => {
+				await this.ctx.storage.put("meta", meta);
+				await this.ctx.storage.setAlarm(meta.expireAt);
+			})(),
+		);
 		const result = {
 			allowed: meta.count <= limit,
 			retryAfter: meta.count > limit ? Math.ceil((meta.expireAt - Date.now()) / 1000) : undefined,
@@ -215,10 +201,7 @@ export class CloudflareSendMailAuthDanceChannel implements AuthDanceChannel {
 	#sendMail: SendEmail;
 	#options: Pick<EmailReplyMessageBuilder, "from" | "replyTo">;
 
-	constructor(
-		sendMail: SendEmail,
-		options: Pick<EmailReplyMessageBuilder, "from" | "replyTo">,
-	) {
+	constructor(sendMail: SendEmail, options: Pick<EmailReplyMessageBuilder, "from" | "replyTo">) {
 		this.#sendMail = sendMail;
 		this.#options = options;
 	}
@@ -239,10 +222,7 @@ export class CloudflareSendMailAuthDanceChannel implements AuthDanceChannel {
 		return Promise.resolve();
 	}
 
-	// deno-lint-ignore require-await
-	async getPrompt(
-		context: AuthDanceChannelContext,
-	): Promise<AuthDancePromptInput> {
+	async getPrompt(context: AuthDanceChannelContext): Promise<AuthDancePromptInput> {
 		return {
 			kind: "input",
 			name: context.name,
@@ -251,12 +231,7 @@ export class CloudflareSendMailAuthDanceChannel implements AuthDanceChannel {
 		};
 	}
 
-	// deno-lint-ignore require-await
-	async getIdentityChannel(
-		channel: string,
-		value: unknown,
-		confirmed: boolean = false,
-	): Promise<AuthDanceIdentityChannel> {
+	async getIdentityChannel(channel: string, value: unknown, confirmed: boolean = false): Promise<AuthDanceIdentityChannel> {
 		return {
 			kind: "channel",
 			component: channel,

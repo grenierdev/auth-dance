@@ -1,6 +1,10 @@
-import { ksuid } from "./id.ts";
+import { decode } from "jose/base64url";
+import { jwtDecrypt } from "jose/jwt/decrypt";
+import { EncryptJWT } from "jose/jwt/encrypt";
+import { SignJWT } from "jose/jwt/sign";
+import { jwtVerify } from "jose/jwt/verify";
+import { parse } from "valibot";
 import type { AuthDanceChannel } from "./channel.ts";
-import { OtpAuthDanceComponent } from "./components/otp.ts";
 import {
 	type AuthDanceChoreography,
 	type AuthDanceChoreographyChoice,
@@ -12,36 +16,7 @@ import {
 	walk,
 } from "./choreography.ts";
 import type { AuthDanceComponent, AuthDanceComponentContext } from "./component.ts";
-import type {
-	AuthDanceIdentity,
-	AuthDanceIdentityChallenge,
-	AuthDanceIdentityChannel,
-	AuthDanceIdentityComponent,
-	AuthDanceIdentityIdentification,
-} from "./identity.ts";
-import type { AuthDanceMessage } from "./message.ts";
-import {
-	AuthDanceState,
-	type AuthDanceStateDelete,
-	type AuthDanceStateEnroll,
-	type AuthDanceStateRecover,
-	type AuthDanceStateRotate,
-	type AuthDanceStateSignIn,
-	type AuthDanceStateSignUp,
-	type AuthDanceStateSubscribe,
-	type AuthDanceStateUnenroll,
-	type AuthDanceStateUnsubscribe,
-} from "./state.ts";
-import type { AuthDancePrompt } from "./prompt.ts";
-import { decode } from "jose/base64url";
-import { EncryptJWT } from "jose/jwt/encrypt";
-import { jwtDecrypt } from "jose/jwt/decrypt";
-import { SignJWT } from "jose/jwt/sign";
-import { jwtVerify } from "jose/jwt/verify";
-import { parse } from "valibot";
-import type { AuthDanceResponse, AuthDanceResponseResult, AuthDanceResponseState, AuthDanceResponseTokens } from "./response.ts";
-import type { AuthDanceSession } from "./session.ts";
-import type { AuthDanceStorage } from "./storage.ts";
+import { OtpAuthDanceComponent } from "./components/otp.ts";
 import {
 	AuthDanceError,
 	AuthDanceUnknownError,
@@ -74,12 +49,33 @@ import {
 	UnknownComponentError,
 	WouldLockOutError,
 } from "./error.ts";
+import { ksuid } from "./id.ts";
+import type {
+	AuthDanceIdentity,
+	AuthDanceIdentityChallenge,
+	AuthDanceIdentityChannel,
+	AuthDanceIdentityComponent,
+	AuthDanceIdentityIdentification,
+} from "./identity.ts";
+import type { AuthDanceMessage } from "./message.ts";
+import type { AuthDancePrompt } from "./prompt.ts";
+import type { AuthDanceResponse, AuthDanceResponseResult, AuthDanceResponseState, AuthDanceResponseTokens } from "./response.ts";
+import type { AuthDanceSession } from "./session.ts";
+import {
+	AuthDanceState,
+	type AuthDanceStateDelete,
+	type AuthDanceStateEnroll,
+	type AuthDanceStateRecover,
+	type AuthDanceStateRotate,
+	type AuthDanceStateSignIn,
+	type AuthDanceStateSignUp,
+	type AuthDanceStateSubscribe,
+	type AuthDanceStateUnenroll,
+	type AuthDanceStateUnsubscribe,
+} from "./state.ts";
+import type { AuthDanceStorage } from "./storage.ts";
 
-export type AuthDanceClaimJson =
-	| string
-	| number
-	| boolean
-	| null;
+export type AuthDanceClaimJson = string | number | boolean | null;
 // | { [key: string]: AuthDanceClaimJson }
 // | AuthDanceClaimJson[];
 
@@ -120,15 +116,7 @@ export interface AuthDanceAddressRateLimits {
 }
 
 /** The flows that change an identity. Each one reports the change to one of the three identity hooks. */
-export type AuthDanceIdentityEventFlow =
-	| "sign-up"
-	| "enroll"
-	| "unenroll"
-	| "rotate"
-	| "recover"
-	| "subscribe"
-	| "unsubscribe"
-	| "delete";
+export type AuthDanceIdentityEventFlow = "sign-up" | "enroll" | "unenroll" | "rotate" | "recover" | "subscribe" | "unsubscribe" | "delete";
 
 /**
  * What the library hands an identity hook.
@@ -364,18 +352,15 @@ export class AuthDanceApi {
 	 * @throws ChannelNotSubscribedError when the identity carries no channel component of that name.
 	 * @throws UnknownChannelError when `options.channels` declares no channel of that name.
 	 */
-	sendMessageTo(
-		identityId: string,
-		channel: string,
-		message: Omit<AuthDanceMessage, "recipient">,
-	): Promise<AuthDanceResponseResult> {
+	sendMessageTo(identityId: string, channel: string, message: Omit<AuthDanceMessage, "recipient">): Promise<AuthDanceResponseResult> {
 		return this.#guard("sendMessageTo", async () => {
 			const identity = await this.#options.storage.getIdentity(identityId);
 			if (!identity) {
 				throw new IdentityNotFoundError(identityId);
 			}
-			const identityChannel = identity.components
-				.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === channel);
+			const identityChannel = identity.components.find(
+				(c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === channel,
+			);
 			if (!identityChannel) {
 				throw new ChannelNotSubscribedError(channel);
 			}
@@ -400,9 +385,12 @@ export class AuthDanceApi {
 	}
 
 	// `aat` comes from the first pair and stays unchanged through every refresh. See #requireFreshSignIn.
-	async #generateTokens(
-		options: { identity: AuthDanceIdentity; scopes: string[]; session: AuthDanceSession; authTime?: number },
-	): Promise<AuthDanceResponseTokens> {
+	async #generateTokens(options: {
+		identity: AuthDanceIdentity;
+		scopes: string[];
+		session: AuthDanceSession;
+		authTime?: number;
+	}): Promise<AuthDanceResponseTokens> {
 		const authTime = options.authTime ?? Math.floor(Date.now() / 1000);
 
 		const claims = Object.entries(options.identity.data ?? {}).reduce((acc, [key, value]) => {
@@ -449,7 +437,10 @@ export class AuthDanceApi {
 	async #verifiedClaims(token: string, invalid: () => AuthDanceError): Promise<{ sub: string; authTime: number }> {
 		const payload = await jwtVerify(token, this.#decodedSecret, {
 			issuer: this.#options.tokens?.issuer ?? "acme",
-		}).then(({ payload }) => payload, () => undefined);
+		}).then(
+			({ payload }) => payload,
+			() => undefined,
+		);
 		if (!payload?.sub || typeof payload.aat !== "number") {
 			throw invalid();
 		}
@@ -598,19 +589,21 @@ export class AuthDanceApi {
 		identity: AuthDanceIdentity | undefined;
 	}): Promise<AuthDancePrompt> {
 		const components = "component" in options.choreography ? [options.choreography] : options.choreography.components;
-		const prompts = await Promise.all(components.map((component) => {
-			const authComponent = this.#options.components[component.component];
-			if (!authComponent) {
-				throw new UnknownComponentError(component.component);
-			}
-			return authComponent.getPrompt({
-				storage: this.#options.storage,
-				stateId: options.stateId,
-				name: component.component,
-				flow: options.flow,
-				identity: options.identity,
-			});
-		}));
+		const prompts = await Promise.all(
+			components.map((component) => {
+				const authComponent = this.#options.components[component.component];
+				if (!authComponent) {
+					throw new UnknownComponentError(component.component);
+				}
+				return authComponent.getPrompt({
+					storage: this.#options.storage,
+					stateId: options.stateId,
+					name: component.component,
+					flow: options.flow,
+					identity: options.identity,
+				});
+			}),
+		);
 
 		return prompts.length === 1 ? prompts[0] : { kind: "choice", components: prompts };
 	}
@@ -666,13 +659,10 @@ export class AuthDanceApi {
 				}
 			}
 			if (authFlow) {
-				const issued = await this.#issueTokens(
-					options.identity,
-					{
-						...options,
-						expireAt: new Date(Date.now() + (this.#options.durations?.refresh ?? 24 * 60 * 60) * 1000),
-					},
-				);
+				const issued = await this.#issueTokens(options.identity, {
+					...options,
+					expireAt: new Date(Date.now() + (this.#options.durations?.refresh ?? 24 * 60 * 60) * 1000),
+				});
 				await this.#emit("onSessionCreated", {
 					flow: options.flow === "sign-up" ? "sign-up" : "sign-in",
 					session: issued.session,
@@ -743,7 +733,10 @@ export class AuthDanceApi {
 	): Promise<{ identityId: string; sessionId: string; claims: AuthDanceClaims; authTime: number }> {
 		const payload = await jwtVerify(access_token, this.#decodedSecret, {
 			issuer: this.#options.tokens?.issuer ?? "acme",
-		}).then(({ payload }) => payload, () => undefined);
+		}).then(
+			({ payload }) => payload,
+			() => undefined,
+		);
 		const identityId = payload?.id;
 		const sessionId = payload?.sub;
 		const authTime = payload?.aat;
@@ -756,7 +749,7 @@ export class AuthDanceApi {
 
 	async #unrollAccessToken(access_token: string): Promise<{ session: AuthDanceSession; identity: AuthDanceIdentity; authTime: number }> {
 		const { sub, authTime } = await this.#verifiedClaims(access_token, () => new InvalidAccessTokenError());
-		return { ...await this.#getSessionAndIdentity(sub), authTime };
+		return { ...(await this.#getSessionAndIdentity(sub)), authTime };
 	}
 
 	async #getSessionAndIdentity(sessionId: string): Promise<{ session: AuthDanceSession; identity: AuthDanceIdentity }> {
@@ -818,8 +811,8 @@ export class AuthDanceApi {
 		components: AuthDanceIdentityComponent[],
 		component: string,
 	): AuthDanceIdentityIdentification | AuthDanceIdentityChallenge {
-		const identityComponent = components.find((c): c is AuthDanceIdentityIdentification | AuthDanceIdentityChallenge =>
-			c.kind !== "channel" && c.component === component
+		const identityComponent = components.find(
+			(c): c is AuthDanceIdentityIdentification | AuthDanceIdentityChallenge => c.kind !== "channel" && c.component === component,
 		);
 		if (!identityComponent) {
 			throw new ComponentNotCollectedError(component);
@@ -865,8 +858,7 @@ export class AuthDanceApi {
 			if (previous.kind !== "channel") {
 				return !replaced.has(previous.component);
 			}
-			const replacement = components
-				.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === previous.component);
+			const replacement = components.find((c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === previous.component);
 			if (!replacement) {
 				return true;
 			}
@@ -923,7 +915,10 @@ export class AuthDanceApi {
 	}
 
 	// First phase: prove control of the component the owner picked to identify with.
-	async #resolveRecoverControl(state: AuthDanceStateRecover, identity: AuthDanceIdentity): Promise<{
+	async #resolveRecoverControl(
+		state: AuthDanceStateRecover,
+		identity: AuthDanceIdentity,
+	): Promise<{
 		ctx: AuthDanceComponentContext;
 		verificationAuthDanceComponent: AuthDanceComponent;
 	}> {
@@ -954,7 +949,10 @@ export class AuthDanceApi {
 	}
 
 	// Second phase: validate the replacement.
-	async #resolveRecoverResetVerification(state: AuthDanceStateRecover, identity: AuthDanceIdentity): Promise<{
+	async #resolveRecoverResetVerification(
+		state: AuthDanceStateRecover,
+		identity: AuthDanceIdentity,
+	): Promise<{
 		identityComponent: AuthDanceIdentityIdentification | AuthDanceIdentityChallenge;
 		ctx: AuthDanceComponentContext;
 		verificationAuthDanceComponent: AuthDanceComponent;
@@ -980,7 +978,7 @@ export class AuthDanceApi {
 	): { components: Set<string>; channels: Set<string> } {
 		const components = new Set<string>(namespace === "channel" ? [] : [name]);
 		const channels = new Set<string>(namespace === "channel" ? [name] : []);
-		for (let grew = true; grew;) {
+		for (let grew = true; grew; ) {
 			grew = false;
 			for (const c of identity.components) {
 				const claimed = c.kind === "channel" ? channels : components;
@@ -1006,8 +1004,9 @@ export class AuthDanceApi {
 	// A removal must not lock the identity out. Pass the whole collateral set of #removalCollateral, never one name.
 	#isChoreographyCompletableWithout(identity: AuthDanceIdentity, removed: ReadonlySet<string>): boolean {
 		const surviving = identity.components
-			.filter((c): c is AuthDanceIdentityIdentification | AuthDanceIdentityChallenge =>
-				c.kind !== "channel" && c.confirmed && !removed.has(c.component)
+			.filter(
+				(c): c is AuthDanceIdentityIdentification | AuthDanceIdentityChallenge =>
+					c.kind !== "channel" && c.confirmed && !removed.has(c.component),
 			)
 			.map((c) => c.component);
 		for (const { component: nextMove, path } of walk(this.#options.choreography)) {
@@ -1018,7 +1017,10 @@ export class AuthDanceApi {
 		return false;
 	}
 
-	async #resolveVerification(state: AuthDanceStateSignUp, componentName?: string): Promise<{
+	async #resolveVerification(
+		state: AuthDanceStateSignUp,
+		componentName?: string,
+	): Promise<{
 		path: string[];
 		choreographyComponent: AuthDanceChoreographyComponent;
 		identityComponent: AuthDanceIdentityComponent;
@@ -1042,16 +1044,15 @@ export class AuthDanceApi {
 	// The issuer must travel as the `iss` claim. #decryptState checks that claim.
 	#encryptState(state: AuthDanceState, expireAt: Date): Promise<string> {
 		const issuer = this.#options.tokens?.issuer;
-		const jwt = new EncryptJWT({ state })
-			.setProtectedHeader({ alg: "dir", enc: "A256GCM" })
-			.setIssuedAt()
-			.setExpirationTime(expireAt);
+		const jwt = new EncryptJWT({ state }).setProtectedHeader({ alg: "dir", enc: "A256GCM" }).setIssuedAt().setExpirationTime(expireAt);
 		return (issuer === undefined ? jwt : jwt.setIssuer(issuer)).encrypt(this.#decodedSecret);
 	}
 
 	async #decryptState(value: string): Promise<{ state: AuthDanceState; expireAt: Date }> {
-		const payload = await jwtDecrypt(value, this.#decodedSecret, { issuer: this.#options.tokens?.issuer })
-			.then(({ payload }) => payload, () => undefined);
+		const payload = await jwtDecrypt(value, this.#decodedSecret, { issuer: this.#options.tokens?.issuer }).then(
+			({ payload }) => payload,
+			() => undefined,
+		);
 		if (!payload?.exp) {
 			throw new InvalidStateError();
 		}
@@ -1527,15 +1528,17 @@ export class AuthDanceApi {
 	 * @throws WouldLockOutError when the unenroll or the unsubscribe leaves no completable path through the choreography.
 	 * @throws SessionNotFoundError or IdentityNotFoundError when the session or the identity the state names is gone.
 	 */
-	submitPrompt(
-		options: { name: string; value: unknown; state: string; address?: string; userAgent?: string },
-	): Promise<AuthDanceResponse> {
+	submitPrompt(options: { name: string; value: unknown; state: string; address?: string; userAgent?: string }): Promise<AuthDanceResponse> {
 		return this.#guard("submitPrompt", () => this.#submitPrompt(options));
 	}
 
-	async #submitPrompt(
-		options: { name: string; value: unknown; state: string; address?: string; userAgent?: string },
-	): Promise<AuthDanceResponse> {
+	async #submitPrompt(options: {
+		name: string;
+		value: unknown;
+		state: string;
+		address?: string;
+		userAgent?: string;
+	}): Promise<AuthDanceResponse> {
 		const { state, expireAt } = await this.#decryptState(options.state);
 		// The method consumes the bucket before it reads the value, so a wrong value costs a slot.
 		await this.#consumeRateLimit("verify", this.#stateSubject(state));
@@ -1545,11 +1548,7 @@ export class AuthDanceApi {
 	}
 
 	// The bag both branches hand to #advance. Each branch overrides the keys its own flow decides.
-	#advanceBag(
-		state: AuthDanceState,
-		expireAt: Date,
-		options: { address?: string; userAgent?: string },
-	): AuthDanceAdvance {
+	#advanceBag(state: AuthDanceState, expireAt: Date, options: { address?: string; userAgent?: string }): AuthDanceAdvance {
 		return {
 			state,
 			path: [],
@@ -1604,11 +1603,10 @@ export class AuthDanceApi {
 			if (state.components.find((c) => c.kind !== "channel" && c.component === choreographyComponent.component)) {
 				throw new ComponentAlreadyCollectedError(choreographyComponent.component);
 			}
-			state.components.push(
-				...await authComponent.getIdentityComponent(choreographyComponent.component, options.value, false, ctx),
-			);
-			const identityComponent = state.components.find((c): c is AuthDanceIdentityIdentification | AuthDanceIdentityChallenge =>
-				c.kind !== "channel" && c.component === choreographyComponent.component
+			state.components.push(...(await authComponent.getIdentityComponent(choreographyComponent.component, options.value, false, ctx)));
+			const identityComponent = state.components.find(
+				(c): c is AuthDanceIdentityIdentification | AuthDanceIdentityChallenge =>
+					c.kind !== "channel" && c.component === choreographyComponent.component,
 			);
 			if (!identityComponent) {
 				throw new ComponentNotCollectedError(choreographyComponent.component);
@@ -1644,7 +1642,7 @@ export class AuthDanceApi {
 			// #enrollContext snapshots state.components. Build the verification context below only after the
 			// collection, so the verification targets the new value.
 			state.components.push(
-				...await authComponent.getIdentityComponent(state.component, options.value, false, this.#enrollContext(state, identity)),
+				...(await authComponent.getIdentityComponent(state.component, options.value, false, this.#enrollContext(state, identity))),
 			);
 			const identityComponent = this.#collectedIdentityComponent(state.components, state.component);
 			if (!identityComponent.confirmed && authComponent.verificationComponent) {
@@ -1676,7 +1674,7 @@ export class AuthDanceApi {
 			// The collection sees the identity as it stands, so a component can refuse a value identical to the
 			// current one.
 			state.components.push(
-				...await authComponent.getIdentityComponent(state.component, options.value, false, this.#rotateContext(state, identity)),
+				...(await authComponent.getIdentityComponent(state.component, options.value, false, this.#rotateContext(state, identity))),
 			);
 			const identityComponent = this.#collectedIdentityComponent(state.components, state.component);
 			if (!identityComponent.confirmed && authComponent.verificationComponent) {
@@ -1726,12 +1724,12 @@ export class AuthDanceApi {
 			}
 			const { authComponent } = this.#resolveRecoverReset(state, identity);
 			state.components.push(
-				...await authComponent.getIdentityComponent(
+				...(await authComponent.getIdentityComponent(
 					state.component,
 					options.value,
 					false,
 					this.#recoverContext(state, state.component, identity),
-				),
+				)),
 			);
 			const identityComponent = this.#collectedIdentityComponent(state.components, state.component);
 			if (!identityComponent.confirmed && authComponent.verificationComponent) {
@@ -1761,7 +1759,7 @@ export class AuthDanceApi {
 				throw new WouldLockOutError(state.component);
 			}
 			identity.components = identity.components.filter((c) =>
-				c.kind === "channel" ? !collateral.channels.has(c.component) : !collateral.components.has(c.component)
+				c.kind === "channel" ? !collateral.channels.has(c.component) : !collateral.components.has(c.component),
 			);
 			advanceOptions = {
 				...advanceOptions,
@@ -1792,7 +1790,7 @@ export class AuthDanceApi {
 				throw new WouldLockOutError(state.channel);
 			}
 			identity.components = identity.components.filter((c) =>
-				c.kind === "channel" ? !collateral.channels.has(c.component) : !collateral.components.has(c.component)
+				c.kind === "channel" ? !collateral.channels.has(c.component) : !collateral.components.has(c.component),
 			);
 			advanceOptions = {
 				...advanceOptions,
