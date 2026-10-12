@@ -16,7 +16,6 @@ it. You declare the steps one time.
 
 ```sh
 npm install auth-dance
-deno add npm:auth-dance
 ```
 
 ## The server
@@ -123,7 +122,7 @@ const client = new AuthDanceClient({ baseUrl: "http://local", fetch: auth.fetch 
 | `auth-dance/client`       | `AuthDanceClient` and the dance it hands out                                           |
 | `auth-dance/react`        | The React bindings                                                                     |
 | `auth-dance/components/*` | `email`, `otp`, `password`, `totp`, `webauthn`                                         |
-| `auth-dance/providers/*`  | `memory` for tests, `deno` for Deno KV, `cloudflare` for Workers                       |
+| `auth-dance/providers/*`  | `memory` for tests, `cloudflare` for Workers                                         |
 
 A step is a small interface. Implement `AuthDanceComponent` and your own factor works in every flow, including the flows you have not
 considered yet.
@@ -133,7 +132,6 @@ Full documentation lives at [auth.dance](https://auth.dance/). The tests beside 
 ## Contributing
 
 Contributors use Node.js 24.4 or newer and npm. The root package contains the library in `src/`; `demo/` is an npm workspace.
-Deno is not required to install dependencies, check types, run tests, format, lint, build, or publish.
 
 ```sh
 npm install
@@ -150,8 +148,7 @@ npm run build --workspace demo
 
 Layout: `src/mod.ts` is the entry point, `src/api.ts` holds the state machine, `src/app.ts` holds the Hono routes, `src/choreography.ts`
 holds the DSL, and `src/client.ts` plus `src/react.ts` hold the client half. `src/components/` and `src/providers/` hold the batteries.
-Tests sit beside their subjects. The shared provider suites run against memory storage and the Node-compatible `@deno/kv` in-memory
-client. The optional `auth-dance/providers/deno` export remains compatible with Deno KV; the core library uses web APIs and npm packages.
+Tests sit beside their subjects. The core library uses web APIs and npm packages.
 
 `npm run build` cleans `dist/` and compiles the library, tests, and tooling with `tsc` using `tsconfig.json`, emitting JavaScript,
 `.d.ts` declarations, and source maps. Library modules are emitted into `dist/src/`; `.npmignore` excludes tests and development
