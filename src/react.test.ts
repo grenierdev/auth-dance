@@ -41,6 +41,8 @@ Object.defineProperty(globalThis, "Uint8Array", {
 
 // One PBKDF2 pass, to keep the suites fast.
 const TEST_PASSWORD_HASHER = pbkdf2PasswordHasher(1);
+// 32 characters, above the 16-byte floor of the component.
+const TEST_PASSWORD_PEPPER = "tQ3vX9pL2mR7wK5nB8cF1hJ4dG6sA0zE";
 
 const h = createElement;
 
@@ -104,7 +106,7 @@ describe("React", () => {
 		channelSms = new MemoryAuthDanceChannel("phone");
 		email = new EmailAuthDanceComponent({ channel: "email", challenge: "otp" });
 		email2 = new EmailAuthDanceComponent({ channel: "email2", challenge: "otp2" });
-		password = new PasswordAuthDanceComponent("salty", TEST_PASSWORD_HASHER);
+		password = new PasswordAuthDanceComponent(TEST_PASSWORD_PEPPER, TEST_PASSWORD_HASHER);
 		storage = new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),
 			kv: new MemoryKvProvider(),

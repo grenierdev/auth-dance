@@ -697,6 +697,22 @@ export class AuthDanceApi {
 		return { choreographyComponent, authComponent };
 	}
 
+	// A sign-in step that accepted a value lets its component rewrite an old record, a password hash for example. The
+	// identity holds the same factors after the rewrite, so no identity hook fires.
+	async #upgradeIdentity(
+		authComponent: AuthDanceComponent,
+		value: unknown,
+		ctx: AuthDanceComponentContext,
+		identity: AuthDanceIdentity,
+	): Promise<void> {
+		const upgraded = await authComponent.upgradeIdentityComponent?.(value, { ...ctx, identity });
+		if (!upgraded?.length) {
+			return;
+		}
+		this.#applyReplacement(identity, upgraded);
+		await this.#options.storage.setIdentity(identity);
+	}
+
 	#signUpPath(state: AuthDanceStateSignUp): string[] {
 		return state.components
 			.filter((c): c is AuthDanceIdentityIdentification | AuthDanceIdentityChallenge => c.confirmed && c.kind !== "channel")
@@ -1595,6 +1611,7 @@ export class AuthDanceApi {
 				state.identityId = identityId;
 			}
 			identity ??= await this.#options.storage.getIdentity(state.identityId!);
+			await this.#upgradeIdentity(authComponent, options.value, ctx, identity!);
 			state.path.push(choreographyComponent.component);
 			advanceOptions = {
 				...advanceOptions,

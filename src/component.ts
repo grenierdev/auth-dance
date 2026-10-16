@@ -104,4 +104,16 @@ export interface AuthDanceComponent {
 	 * it is.
 	 */
 	verifyPrompt(value: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]>;
+	/**
+	 * Rewrites the records of an identity after a sign-in step accepts `value`. A component that stores a hash
+	 * declares this method to move an old record to its current parameters.
+	 *
+	 * The library replaces the records of the same name with what this method returns, and saves the identity before
+	 * it mints tokens. No identity hook fires, because the identity holds the same factors.
+	 *
+	 * @param value The value that `verifyPrompt` accepted.
+	 * @param context The context of the step. `context.identity` is the identity the step resolved.
+	 * @returns The replacement records, or nothing to keep the stored records.
+	 */
+	upgradeIdentityComponent?(value: unknown, context: AuthDanceComponentContext): Promise<AuthDanceIdentityComponent[] | undefined>;
 }

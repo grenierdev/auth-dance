@@ -1,18 +1,72 @@
 import { hex } from "@scure/base";
 import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
 import { IdentityNotResolvedError, InvalidPromptValueError } from "../error.ts";
-import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "../identity.ts";
+import type { AuthDanceIdentity, AuthDanceIdentityChallenge, AuthDanceIdentityComponent } from "../identity.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
 
 /**
- * Turns a salted password into the string that `PasswordAuthDanceComponent` keeps in `data.hash`. The function
- * must answer the same string for the same value every time. Make the function slow.
+ * Turns a salted password into the record that `PasswordAuthDanceComponent` keeps in `data.hash`, and checks a
+ * password against that record. Make `hash` and `verify` slow.
  */
-export type PasswordHasher = (value: string) => Promise<string>;
+export interface PasswordHasher {
+	/** Hashes the value with a fresh random salt. Two calls on one value give two different records. */
+	hash(value: string): Promise<string>;
+	/** Derives again with the parameters the record carries, and compares in constant time. */
+	verify(value: string, record: string): Promise<boolean>;
+	/** Whether the record uses older parameters than this hasher writes. */
+	needsRehash(record: string): boolean;
+}
+
+/** The tag in front of a record that `pbkdf2PasswordHasher` writes. */
+const PBKDF2_TAG = "pbkdf2-sha256";
+
+/** The most passes a record can ask for. A tampered record with a larger count would stall the worker. */
+const PBKDF2_MAX_ITERATIONS = 10_000_000;
+
+/** The parameters and the digest that one record holds. */
+interface Pbkdf2Record {
+	/** Whether the record has the 3-field form that versions before rc.5 wrote. */
+	legacy: boolean;
+	iterations: number;
+	salt: Uint8Array;
+	digest: string;
+}
+
+/** Reads a record. Returns `null` for a record in another form, and for an iteration count out of bounds. */
+function parsePbkdf2Record(record: string): Pbkdf2Record | null {
+	const parts = record.split(":");
+	const legacy = parts.length === 3;
+	if (!legacy && (parts.length !== 4 || parts[0] !== PBKDF2_TAG)) {
+		return null;
+	}
+	const [iterations, salt, digest] = legacy ? parts : parts.slice(1);
+	if (!/^[1-9][0-9]{0,7}$/.test(iterations) || !/^(?:[0-9a-f]{2})+$/.test(salt) || !/^[0-9a-f]{64}$/.test(digest)) {
+		return null;
+	}
+	const count = Number(iterations);
+	if (count > PBKDF2_MAX_ITERATIONS) {
+		return null;
+	}
+	return { legacy, iterations: count, salt: hex.decode(salt), digest };
+}
+
+/** Derives a 256-bit PBKDF2-HMAC-SHA256 digest, in hex. */
+async function pbkdf2(value: string, salt: Uint8Array, iterations: number): Promise<string> {
+	const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(value), { name: "PBKDF2" }, false, ["deriveBits"]);
+	const digest = await crypto.subtle.deriveBits(
+		{ name: "PBKDF2", salt: salt as Uint8Array<ArrayBuffer>, iterations, hash: "SHA-256" },
+		key,
+		256,
+	);
+	return hex.encode(new Uint8Array(digest));
+}
 
 /**
  * Builds a hasher that derives the record with PBKDF2-HMAC-SHA256 through `crypto.subtle`. The hasher writes
- * `<iterations>:<salt>:<digest>`, and the salt is the first 16 bytes of `SHA-256` over the value.
+ * `pbkdf2-sha256:<iterations>:<salt>:<digest>`. The salt is 16 random bytes, and each `hash` draws a new one.
+ *
+ * `verify` also reads the `<iterations>:<salt>:<digest>` record that versions before rc.5 wrote, and `needsRehash`
+ * reports that record. `verify` refuses a record that asks for fewer than 1 or more than 10000000 passes.
  *
  * @param iterations The passes that PBKDF2 makes over the password. The default of 600000 is the OWASP floor for
  * PBKDF2-HMAC-SHA256, and it costs about 200 milliseconds a hash. Lower it for a test suite only.
@@ -23,14 +77,32 @@ export type PasswordHasher = (value: string) => Promise<string>;
  * ```
  */
 export function pbkdf2PasswordHasher(iterations: number = 600_000): PasswordHasher {
-	return async (value: string): Promise<string> => {
-		const encoded = new TextEncoder().encode(value);
-		const salt = new Uint8Array(await crypto.subtle.digest("SHA-256", encoded), 0, 16);
-		const key = await crypto.subtle.importKey("raw", encoded, { name: "PBKDF2" }, false, ["deriveBits"]);
-		const digest = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations, hash: "SHA-256" }, key, 256);
-		return `${iterations}:${hex.encode(salt)}:${hex.encode(new Uint8Array(digest))}`;
+	if (!Number.isInteger(iterations) || iterations < 1 || iterations > PBKDF2_MAX_ITERATIONS) {
+		throw new RangeError(`iterations must be an integer from 1 to ${PBKDF2_MAX_ITERATIONS}`);
+	}
+	return {
+		async hash(value: string): Promise<string> {
+			const salt = crypto.getRandomValues(new Uint8Array(16));
+			return `${PBKDF2_TAG}:${iterations}:${hex.encode(salt)}:${await pbkdf2(value, salt, iterations)}`;
+		},
+		async verify(value: string, record: string): Promise<boolean> {
+			const parsed = parsePbkdf2Record(record);
+			if (!parsed) {
+				// A record in another form costs one derivation too, the same as a wrong password.
+				await pbkdf2(value, new Uint8Array(16), iterations);
+				return false;
+			}
+			return timingSafeEqual(await pbkdf2(value, parsed.salt, parsed.iterations), parsed.digest);
+		},
+		needsRehash(record: string): boolean {
+			const parsed = parsePbkdf2Record(record);
+			return !parsed || parsed.legacy || parsed.iterations < iterations;
+		},
 	};
 }
+
+/** The shortest pepper the component accepts, in UTF-8 bytes. */
+const MIN_PEPPER_BYTES = 16;
 
 /** What the component hashes when it holds no submission to hash. */
 const DECOY_PASSWORD = "decoy";
@@ -77,9 +149,8 @@ async function resolveConstantTimeEqual(): Promise<ConstantTimeEqual> {
 }
 
 /**
- * Compares two hashes in a time that says nothing about where they differ. The function signs each string with an
- * HMAC key that nothing outside this module holds, then it compares the two 32-byte signatures. A record that
- * another pepper, another hasher or an older version of this library wrote gives `false` here.
+ * Compares two digests in a time that says nothing about where they differ. The function signs each string with an
+ * HMAC key that nothing outside this module holds, then it compares the two 32-byte signatures.
  */
 async function timingSafeEqual(left: string, right: string): Promise<boolean> {
 	const [equals, key] = await Promise.all([
@@ -98,13 +169,13 @@ async function timingSafeEqual(left: string, right: string): Promise<boolean> {
 
 /**
  * A password component. It keeps the password as a hash in `data.hash`. `pbkdf2PasswordHasher`, the default,
- * writes `<iterations>:<salt>:<digest>`.
+ * writes `pbkdf2-sha256:<iterations>:<salt>:<digest>` with a random salt for each record.
  *
  * The component puts the pepper and the id of the identity in front of the password before it calls the hasher.
- * The hasher must answer the same string for the same input every time.
+ * The id binds a record to its owner, so a record copied to another identity does not verify.
  *
- * Keep the pepper in a secret store. A new pepper invalidates every record, and so does a new hasher. Only the
- * `rotate` and `recover` flows can rebuild one.
+ * Keep the pepper in a secret store, apart from the identity store. A new pepper invalidates every record. Only the
+ * `rotate` and `recover` flows can rebuild one. A sign-in rewrites a record that `needsRehash` reports.
  */
 export class PasswordAuthDanceComponent implements AuthDanceComponent {
 	/** A password only proves a claim against an identity, so it is a `challenge`. */
@@ -113,18 +184,25 @@ export class PasswordAuthDanceComponent implements AuthDanceComponent {
 	readonly verifiable = false;
 	#pepper: string;
 	#hasher: PasswordHasher;
+	#decoy: Promise<string> | undefined;
 
 	/**
 	 * Keeps the pepper and the hasher.
 	 *
-	 * @param pepper The secret that the component puts in front of every password. Keep it in a secret store.
-	 * @param hasher What turns the salted password into the stored string.
+	 * @param pepper The secret that the component puts in front of every password. It holds at least 16 bytes. Keep it
+	 * in a secret store, and make it with `openssl rand -base64 32`.
+	 * @param hasher What turns the salted password into the stored record, and checks a password against it.
+	 * @throws {TypeError} The pepper is not a string, or holds fewer than 16 bytes. An unset environment variable
+	 * gives this error.
 	 * @example
 	 * ```ts
 	 * new PasswordAuthDanceComponent(process.env.PASSWORD_PEPPER!, pbkdf2PasswordHasher(1_000_000));
 	 * ```
 	 */
 	constructor(pepper: string, hasher: PasswordHasher = pbkdf2PasswordHasher()) {
+		if (typeof pepper !== "string" || new TextEncoder().encode(pepper).length < MIN_PEPPER_BYTES) {
+			throw new TypeError(`pepper must be a string of at least ${MIN_PEPPER_BYTES} bytes; make one with openssl rand -base64 32`);
+		}
 		this.#pepper = pepper;
 		this.#hasher = hasher;
 	}
@@ -145,11 +223,21 @@ export class PasswordAuthDanceComponent implements AuthDanceComponent {
 		return `${this.#pepper}:${identityId}:${password}`;
 	}
 
-	#storedHash(context: AuthDanceComponentContext): string | undefined {
-		const stored = context.identity?.components.find(
-			(c) => c.kind === "challenge" && c.component === context.name && typeof c.data?.hash === "string",
+	#storedRecord(context: AuthDanceComponentContext): AuthDanceIdentityChallenge | undefined {
+		return context.identity?.components.find(
+			(c): c is AuthDanceIdentityChallenge => c.kind === "challenge" && c.component === context.name && typeof c.data?.hash === "string",
 		);
-		return stored?.data?.hash as string | undefined;
+	}
+
+	#storedHash(context: AuthDanceComponentContext): string | undefined {
+		return this.#storedRecord(context)?.data?.hash as string | undefined;
+	}
+
+	// The record a check runs against when the identity holds none. It costs the configured passes, so a missing
+	// record costs what a wrong password costs.
+	#decoyRecord(): Promise<string> {
+		this.#decoy ??= this.#hasher.hash(DECOY_PASSWORD);
+		return this.#decoy;
 	}
 
 	/**
@@ -178,9 +266,8 @@ export class PasswordAuthDanceComponent implements AuthDanceComponent {
 		if (!prepared) {
 			throw new InvalidPromptValueError("password must be a non-empty string");
 		}
-		const hash = await this.#hasher(prepared);
 		const stored = this.#storedHash(context);
-		if (stored && (await timingSafeEqual(hash, stored))) {
+		if (stored && (await this.#hasher.verify(prepared, stored))) {
 			throw new InvalidPromptValueError("password must differ from the one it replaces");
 		}
 		const password = (value as string).normalize("NFKC");
@@ -195,7 +282,7 @@ export class PasswordAuthDanceComponent implements AuthDanceComponent {
 				kind: "challenge",
 				component,
 				confirmed,
-				data: { hash },
+				data: { hash: await this.#hasher.hash(prepared) },
 			},
 		];
 	}
@@ -228,8 +315,26 @@ export class PasswordAuthDanceComponent implements AuthDanceComponent {
 	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]> {
 		const prepared = this.#prepare(response, context.identity?.id ?? "");
 		const stored = this.#storedHash(context);
-		const hash = await this.#hasher(prepared ?? DECOY_PASSWORD);
-		const matches = await timingSafeEqual(hash, stored ?? "");
+		const matches = await this.#hasher.verify(prepared ?? DECOY_PASSWORD, stored ?? (await this.#decoyRecord()));
 		return prepared !== null && stored !== undefined && matches;
+	}
+
+	/**
+	 * Rewrites a record that `needsRehash` reports, with the password a sign-in just accepted. The record keeps its
+	 * links and its other data.
+	 * @param value The password that `verifyPrompt` accepted.
+	 * @param context The context of the step, which carries the resolved identity.
+	 * @returns One confirmed challenge record, or nothing when the stored record is current.
+	 */
+	async upgradeIdentityComponent(value: unknown, context: AuthDanceComponentContext): Promise<AuthDanceIdentityComponent[] | undefined> {
+		const stored = this.#storedRecord(context);
+		if (!stored || !context.identity || !this.#hasher.needsRehash(stored.data!.hash as string)) {
+			return undefined;
+		}
+		const prepared = this.#prepare(value, context.identity.id);
+		if (!prepared) {
+			return undefined;
+		}
+		return [{ ...stored, confirmed: true, data: { ...stored.data, hash: await this.#hasher.hash(prepared) } }];
 	}
 }

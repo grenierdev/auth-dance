@@ -39,6 +39,7 @@ const auth = createAuthDance({
 		components: {
 			email: new EmailAuthDanceComponent({ channel: "email", challenge: "otp" }),
 			otp: new OtpAuthDanceComponent({ channel: "email" }),
+			// At least 16 bytes, kept apart from the identity store: openssl rand -base64 32
 			password: new PasswordAuthDanceComponent(process.env.PASSWORD_PEPPER!),
 		},
 		// Where the messages go.

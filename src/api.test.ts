@@ -1,4 +1,5 @@
 import { deepEqual, ok, rejects } from "node:assert";
+import { hex } from "@scure/base";
 import { decodeJwt } from "jose/jwt/decode";
 import { beforeEach, describe, it } from "vitest";
 import {
@@ -24,6 +25,8 @@ import { AuthDanceStorage } from "./storage.ts";
 
 // One PBKDF2 pass, to keep the suites fast.
 const TEST_PASSWORD_HASHER = pbkdf2PasswordHasher(1);
+// 32 characters, above the 16-byte floor of the component.
+const TEST_PASSWORD_PEPPER = "tQ3vX9pL2mR7wK5nB8cF1hJ4dG6sA0zE";
 
 describe("Api", () => {
 	let storage: AuthDanceStorage;
@@ -83,7 +86,7 @@ describe("Api", () => {
 		otp = new OtpAuthDanceComponent({ channel: "email" });
 		email2 = new EmailAuthDanceComponent({ channel: "email2", challenge: "otp2" });
 		otp2 = new OtpAuthDanceComponent({ channel: "email2" });
-		password = new PasswordAuthDanceComponent("salty", TEST_PASSWORD_HASHER);
+		password = new PasswordAuthDanceComponent(TEST_PASSWORD_PEPPER, TEST_PASSWORD_HASHER);
 		storage = new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),
 			kv: new MemoryKvProvider(),
@@ -185,6 +188,38 @@ describe("Api", () => {
 				}),
 			(error) => error instanceof AuthDanceError && error.code === "INVALID_PROMPT_VALUE",
 		);
+	});
+	it("should rewrite a password record of an earlier version on sign-in", async () => {
+		// The record that versions before rc.5 wrote: the salt is the first 16 bytes of SHA-256 over the hasher input.
+		async function legacyRecord(value: string): Promise<string> {
+			const encoded = new TextEncoder().encode(value);
+			const salt = new Uint8Array(await crypto.subtle.digest("SHA-256", encoded), 0, 16);
+			const key = await crypto.subtle.importKey("raw", encoded, { name: "PBKDF2" }, false, ["deriveBits"]);
+			const digest = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: 1, hash: "SHA-256" }, key, 256);
+			return `1:${hex.encode(salt)}:${hex.encode(new Uint8Array(digest))}`;
+		}
+		const identity = await seedIdentity({ name: "John Doe" }, async () => [
+			...(await email.getIdentityComponent("email", "john.doe@example.com", true)),
+		]);
+		const legacy = await legacyRecord(`${TEST_PASSWORD_PEPPER}:${identity.id}:foo`);
+		identity.components.push({ kind: "challenge", component: "password", confirmed: true, data: { hash: legacy } });
+		await storage.setIdentity(identity);
+		const storedHash = async () =>
+			(await storage.getIdentity(identity.id))?.components.find((c) => c.kind === "challenge" && c.component === "password")?.data?.hash;
+
+		// A wrong password changes nothing.
+		const wrong1 = await api.signIn();
+		const wrong2 = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: wrong1.state });
+		ok("state" in wrong2);
+		await rejects(() => api.submitPrompt({ name: "password", value: "bar", state: wrong2.state }));
+		deepEqual(await storedHash(), legacy);
+
+		await signInAsJohnDoe(api);
+		const rewritten = await storedHash();
+		ok(typeof rewritten === "string" && rewritten.startsWith("pbkdf2-sha256:"));
+		// The rewritten record still signs in.
+		await signInAsJohnDoe(api);
+		deepEqual(await storedHash(), rewritten);
 	});
 	it("should not sign-in with an unknown identification", async () => {
 		const result1 = await api.signIn();
