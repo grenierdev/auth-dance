@@ -235,6 +235,21 @@ describe("App", () => {
 		deepEqual(rejected.error, "INVALID_ACCESS_TOKEN");
 	});
 
+	it("should refuse to list the components with the access token of a signed-out session", async () => {
+		await seedIdentity({ name: "John Doe" }, async (seed) => [
+			...(await email.getIdentityComponent("email", "john.doe@example.com", true)),
+			...(await password.getIdentityComponent("password", "foo", true, seed("password"))),
+		]);
+		const session = await signIn();
+		await post("/sign-out", { others: false }, bearer(session.tokens.access_token));
+		const [status, rejected] = await post("/list-components", undefined, bearer(session.tokens.access_token));
+		deepEqual(status, 500);
+		deepEqual(rejected.error, "SESSION_NOT_FOUND");
+		const [sessionsStatus, sessionsRejected] = await post("/list-sessions", undefined, bearer(session.tokens.access_token));
+		deepEqual(sessionsStatus, 500);
+		deepEqual(sessionsRejected.error, "SESSION_NOT_FOUND");
+	});
+
 	it("should sign-up", async () => {
 		const [, result1] = await post("/sign-up");
 		deepEqual(result1.prompt.kind, "input");

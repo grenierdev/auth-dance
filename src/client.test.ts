@@ -308,6 +308,19 @@ describe("Client", () => {
 		deepEqual(eager.session?.id, client.session?.id);
 	});
 
+	it("should keep the rotated refresh token through two exchanges in a row", async () => {
+		await seedJohnDoe();
+		await signIn();
+		const original = client.credentials?.tokens.refresh_token;
+		await client.refreshTokens();
+		const rotated = client.credentials?.tokens.refresh_token;
+		ok(rotated && rotated !== original);
+		// A refresh token works one time, so the second exchange only goes through with the rotated one.
+		await client.refreshTokens();
+		ok(client.credentials?.tokens.refresh_token !== rotated);
+		ok(client.session?.id);
+	});
+
 	it("should share one exchange between two calls, and try again after a refused one", async () => {
 		await seedJohnDoe();
 		await signIn();

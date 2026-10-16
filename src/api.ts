@@ -138,8 +138,12 @@ export interface AuthDanceIdentityEvent<TFlow extends AuthDanceIdentityEventFlow
 	name?: string;
 }
 
-/** The flows that create, renew or delete a session. Each one reports the change to one of the three session hooks. */
-export type AuthDanceSessionEventFlow = "sign-in" | "sign-up" | "refresh" | "sign-out" | "delete";
+/**
+ * The flows that create, renew or delete a session. Each one reports the change to one of the three session hooks.
+ * `reuse` is a refresh token exchanged a second time. `rotate` and `recover` delete the other sessions of an identity
+ * after a reset.
+ */
+export type AuthDanceSessionEventFlow = "sign-in" | "sign-up" | "refresh" | "sign-out" | "delete" | "reuse" | "rotate" | "recover";
 
 /**
  * What the library hands a session hook. The event carries no token.
@@ -178,8 +182,12 @@ export interface AuthDanceApiHooks {
 	onSessionCreated?(event: AuthDanceSessionEvent<"sign-in" | "sign-up">): void | Promise<void>;
 	/** A refresh minted a new pair of tokens on a session that already existed. It keeps `aat` unchanged. */
 	onSessionRefreshed?(event: AuthDanceSessionEvent<"refresh">): void | Promise<void>;
-	/** The library deleted a session. A sign-out or a delete flow fires this hook one time for each session it takes. */
-	onSessionDeleted?(event: AuthDanceSessionEvent<"sign-out" | "delete">): void | Promise<void>;
+	/**
+	 * The library deleted a session. A sign-out, a delete, a completed rotate and a completed recover fire this hook
+	 * one time for each session they take. A refresh token exchanged a second time fires it with the flow `reuse`.
+	 * A rotate and a recover fire it after `onIdentityUpdated`.
+	 */
+	onSessionDeleted?(event: AuthDanceSessionEvent<"sign-out" | "delete" | "reuse" | "rotate" | "recover">): void | Promise<void>;
 	/** Another hook rejected. The library drops a rejection from this hook. */
 	onError?(event: AuthDanceHookErrorEvent): void | Promise<void>;
 }
@@ -243,6 +251,13 @@ export interface AuthDanceApiOptions {
 		/** How long a refresh token stays valid. @defaultValue 86400 */
 		refresh?: number;
 		/**
+		 * How long the refresh token that a rotation replaced still fails without harm. An exchange of it inside this
+		 * window raises `InvalidRefreshTokenError` and keeps the session, for another tab or a retry that lost a race.
+		 * Past this window, the exchange deletes the session.
+		 * @defaultValue 10
+		 */
+		refresh_leeway?: number;
+		/**
 		 * The window after a sign-in in which a session may still run a sensitive flow. Past this window `enroll`,
 		 * `unenroll`, `rotate`, `subscribe`, `unsubscribe` and `delete` raise `FreshSignInRequiredError`. A sign-out
 		 * needs no fresh sign-in. A refresh keeps `aat` unchanged and never re-opens the window.
@@ -271,6 +286,12 @@ export interface AuthDanceApiOptions {
 	 * @defaultValue No listener.
 	 */
 	hooks?: AuthDanceApiHooks;
+	/**
+	 * Whether a completed `rotate` or `recover` deletes the other sessions of the identity. A rotate keeps the session
+	 * that ran it. A recover runs with no session, so it deletes every session.
+	 * @defaultValue `true`
+	 */
+	revokeSessionsOnReset?: boolean;
 }
 
 /** The buckets `AuthDanceApi` uses when `limits.identity` omits one. */
@@ -291,6 +312,8 @@ interface AuthDanceAdvance {
 	persist?: boolean;
 	address?: string;
 	userAgent?: string;
+	// The session that ran a rotate. A reset deletes every other session of the identity.
+	keepSessionId?: string;
 }
 
 /**
@@ -555,11 +578,13 @@ export class AuthDanceApi {
 	}
 
 	// `aat` comes from the first pair and stays unchanged through every refresh. See #requireFreshSignIn.
+	// The refresh record names the one refresh token the session accepts, and the one it replaced.
 	async #generateTokens(options: {
 		identity: AuthDanceIdentity;
 		scopes: string[];
 		session: AuthDanceSession;
 		authTime?: number;
+		previous?: string;
 	}): Promise<AuthDanceResponseTokens> {
 		const authTime = options.authTime ?? Math.floor(Date.now() / 1000);
 
@@ -579,14 +604,20 @@ export class AuthDanceApi {
 			.setJti(ksuid())
 			.sign(this.#decodedSecret);
 
+		const refreshId = ksuid();
 		const refresh_token = await new SignJWT({ aat: authTime, scopes: options.scopes })
 			.setProtectedHeader({ alg: "HS256" })
 			.setIssuer(this.#options.tokens?.issuer ?? "acme")
 			.setIssuedAt()
 			.setExpirationTime(new Date(Date.now() + (this.#options.durations?.refresh ?? 24 * 60 * 60) * 1000))
 			.setSubject(options.session.id)
-			.setJti(ksuid())
+			.setJti(refreshId)
 			.sign(this.#decodedSecret);
+		await this.#options.storage.setRefreshRecord(
+			options.session.id,
+			{ current: refreshId, previous: options.previous, rotatedAt: Math.floor(Date.now() / 1000) },
+			new Date(options.session.expireAt),
+		);
 
 		const id_token = await new SignJWT({ claims })
 			.setProtectedHeader({ alg: "HS256" })
@@ -610,7 +641,7 @@ export class AuthDanceApi {
 		token: string,
 		kind: "claims" | "scopes",
 		invalid: () => AuthDanceError,
-	): Promise<{ sub: string; authTime: number }> {
+	): Promise<{ sub: string; authTime: number; jti: string | undefined }> {
 		const payload = await jwtVerify(token, this.#decodedSecret, {
 			issuer: this.#options.tokens?.issuer ?? "acme",
 		}).then(
@@ -620,7 +651,7 @@ export class AuthDanceApi {
 		if (!payload?.sub || typeof payload.aat !== "number" || payload[kind] === undefined) {
 			throw invalid();
 		}
-		return { sub: payload.sub, authTime: payload.aat };
+		return { sub: payload.sub, authTime: payload.aat, jti: payload.jti };
 	}
 
 	// A valid session is not enough for a management action. A refresh carries `aat` forward unchanged,
@@ -702,25 +733,39 @@ export class AuthDanceApi {
 	 * The new tokens keep the `aat` of the sign-in. A refresh needs no fresh sign-in and re-opens no window.
 	 * A completed exchange fires `onSessionRefreshed`.
 	 *
+	 * A refresh token works one time. The exchange replaces it, and the session then accepts only the new one. An
+	 * exchange of the token it replaced, inside `durations.refresh_leeway`, raises `InvalidRefreshTokenError` and
+	 * keeps the session. Any other exchange of an old token shows that two parties hold the session. The library
+	 * deletes the session, fires `onSessionDeleted` with the flow `reuse`, and raises `InvalidRefreshTokenError`.
+	 *
 	 * @returns A new access token, id token and refresh token, plus the session and the scoped identity data.
-	 * @throws InvalidRefreshTokenError when the token is tampered with, expired, or missing a claim.
+	 * @throws InvalidRefreshTokenError when the token is tampered with, expired, missing a claim, or already
+	 * exchanged.
 	 * @throws RateLimitedError when the `refresh` bucket of the session is empty.
 	 * @throws SessionNotFoundError when the session the token names has expired or was signed out.
 	 * @throws IdentityNotFoundError when storage holds no identity for that session.
 	 */
 	refreshToken(refresh_token: string): Promise<AuthDanceResponseTokens> {
 		return this.#guard("refreshToken", async () => {
-			const { sub, authTime } = await this.#verifiedClaims(refresh_token, "scopes", () => new InvalidRefreshTokenError());
+			const { sub, authTime, jti } = await this.#verifiedClaims(refresh_token, "scopes", () => new InvalidRefreshTokenError());
+			if (!jti) {
+				throw new InvalidRefreshTokenError();
+			}
 			await this.#consumeRateLimit("refresh", `session:${sub}`);
-			const session = await this.#options.storage.getSession(sub);
-			if (!session) {
-				throw new SessionNotFoundError(sub);
+			const { session, identity } = await this.#getSessionAndIdentity(sub);
+			// A session that predates the refresh record accepts one exchange, and the mint writes the record.
+			const record = await this.#options.storage.getRefreshRecord(session.id);
+			if (record && jti !== record.current) {
+				const leeway = this.#options.durations?.refresh_leeway ?? 10;
+				if (jti === record.previous && Date.now() / 1000 - record.rotatedAt <= leeway) {
+					// Another tab or a retry lost a race. Its store already holds the newer pair.
+					throw new InvalidRefreshTokenError("refresh token already exchanged");
+				}
+				await this.#options.storage.deleteSession(session.id);
+				await this.#emit("onSessionDeleted", { flow: "reuse", session, identity });
+				throw new InvalidRefreshTokenError("refresh token reused");
 			}
-			const identity = await this.#options.storage.getIdentity(session.identityId);
-			if (!identity) {
-				throw new IdentityNotFoundError(session.identityId);
-			}
-			const tokens = await this.#generateTokens({ identity, scopes: session.scopes, session, authTime });
+			const tokens = await this.#generateTokens({ identity, scopes: session.scopes, session, authTime, previous: record?.current });
 			await this.#emit("onSessionRefreshed", { flow: "refresh", session, identity });
 			return tokens;
 		});
@@ -827,6 +872,9 @@ export class AuthDanceApi {
 				this.#requireProof(options.path);
 			}
 			if (options.persist) {
+				// The sessions go first. If the write of the identity then fails, the old credential still stands and
+				// nobody keeps a session they should not have.
+				const revoked = await this.#revokeSessions(options);
 				await this.#options.storage.setIdentity(options.identity);
 				if (options.flow === "sign-up") {
 					await this.#emit("onIdentityCreated", { flow: options.flow, identity: options.identity });
@@ -836,6 +884,9 @@ export class AuthDanceApi {
 						identity: options.identity,
 						name: options.name,
 					});
+				}
+				for (const session of revoked) {
+					await this.#emit("onSessionDeleted", { flow: options.flow as "rotate" | "recover", session, identity: options.identity });
 				}
 			}
 			if (authFlow) {
@@ -853,6 +904,17 @@ export class AuthDanceApi {
 			return { success: true };
 		}
 		return this.#promptResponse(options.state, nextMove, options.expireAt, options.flow);
+	}
+
+	// A completed rotate or recover deletes the other sessions of the identity. A thief who holds a session loses it
+	// when the owner resets the credential.
+	async #revokeSessions(options: AuthDanceAdvance): Promise<AuthDanceSession[]> {
+		if ((options.flow !== "rotate" && options.flow !== "recover") || this.#options.revokeSessionsOnReset === false) {
+			return [];
+		}
+		const revoked = (await this.#options.storage.listSession(options.identity.id)).filter((s) => s.id !== options.keepSessionId);
+		await Promise.all(revoked.map((s) => this.#options.storage.deleteSession(s.id)));
+		return revoked;
 	}
 
 	#resolveStep(
@@ -921,12 +983,19 @@ export class AuthDanceApi {
 	/**
 	 * Verify an access token and return the identity id, the session id, the claims and the `aat` it carries.
 	 *
+	 * Without `options.session`, the check reads no storage. A token then stays valid for up to `durations.access`
+	 * after its session ends, by a sign-out, a delete or a reset. Lower `durations.access`, or pass `session: true`
+	 * where that window matters.
+	 *
 	 * @param access_token The access token to verify.
+	 * @param options `session: true` also reads the session the token names, and refuses a token whose session ended.
 	 * @returns The identity id, the session id, the claims and the `aat` the token carries.
 	 * @throws InvalidAccessTokenError when the token is tampered with, expired, or missing a claim.
+	 * @throws SessionNotFoundError with `session: true`, when the session of the token ended.
 	 */
 	async verifyAccessToken(
 		access_token: string,
+		options?: { session?: boolean },
 	): Promise<{ identityId: string; sessionId: string; claims: AuthDanceClaims; authTime: number }> {
 		const payload = await jwtVerify(access_token, this.#decodedSecret, {
 			issuer: this.#options.tokens?.issuer ?? "acme",
@@ -940,6 +1009,12 @@ export class AuthDanceApi {
 		const claims = (payload?.claims as AuthDanceClaims | undefined) ?? {};
 		if (!sessionId || typeof identityId !== "string" || typeof authTime !== "number") {
 			throw new InvalidAccessTokenError();
+		}
+		if (options?.session) {
+			const session = await this.#options.storage.getSession(sessionId);
+			if (!session || session.identityId !== identityId) {
+				throw new SessionNotFoundError(sessionId);
+			}
 		}
 		return { identityId, sessionId, claims, authTime };
 	}
@@ -1405,6 +1480,9 @@ export class AuthDanceApi {
 	 * A component that can verify itself proves control of the current value first, so the flow has two
 	 * validation rounds. A component that cannot is proven from the start and collects the replacement at once.
 	 *
+	 * A completed rotation deletes every other session of the identity, and keeps the session that ran it. Set
+	 * `options.revokeSessionsOnReset` to `false` to keep them all.
+	 *
 	 * @param options `name` is the component to replace.
 	 * @returns The encrypted state, the first prompt, and the moment the state expires.
 	 * @throws InvalidAccessTokenError, SessionNotFoundError or IdentityNotFoundError when the token resolves to nothing.
@@ -1456,7 +1534,8 @@ export class AuthDanceApi {
 	 * first step resolved.
 	 *
 	 * The flow then collects the replacement and validates it. It completes with a success result, never with
-	 * tokens. No prompt names a value, so the responses disclose nothing about the identity.
+	 * tokens. No prompt names a value, so the responses disclose nothing about the identity. A completed recovery
+	 * deletes every session of the identity, unless `options.revokeSessionsOnReset` is `false`.
 	 *
 	 * Nothing is recoverable when every path that holds the component needs it to resolve the identity or to prove
 	 * control. For example, in `choice(sequence("email", "password"), "passkey")` the passkey is not recoverable: the
@@ -1720,7 +1799,8 @@ export class AuthDanceApi {
 	 *
 	 * A step that completes a flow reports it to `options.hooks`. A sign-in fires `onSessionCreated`. A sign-up
 	 * fires `onIdentityCreated` and then `onSessionCreated`. A delete fires `onSessionDeleted` for each session and
-	 * then `onIdentityDeleted`. Any other flow fires `onIdentityUpdated`.
+	 * then `onIdentityDeleted`. Any other flow fires `onIdentityUpdated`. A rotate and a recover then fire
+	 * `onSessionDeleted` for each session they deleted.
 	 *
 	 * @param options `name` selects which component to answer when the current step is a choice. `value` is what
 	 * the client collected. `state` is the opaque string the previous call returned. The library stores `address`
@@ -1900,6 +1980,7 @@ export class AuthDanceApi {
 				flow: "rotate",
 				name: state.component,
 				persist: true,
+				keepSessionId: state.sessionId,
 			};
 		} else if (state.kind === "recover") {
 			if (!state.verified) {
@@ -2132,6 +2213,7 @@ export class AuthDanceApi {
 				flow: "rotate",
 				name: state.component,
 				persist: true,
+				keepSessionId: state.sessionId,
 			};
 		} else if (state.kind === "recover") {
 			const identity = await this.#recoverIdentity(state);

@@ -146,6 +146,17 @@ describe("Storage", () => {
 		deepEqual(fetched?.expireAt, session.expireAt);
 	});
 
+	it("should delete the refresh record together with its session", async () => {
+		const expireAt = new Date(Date.now() + 60_000);
+		const session = await storage.createSession({ identityId: "id_1", scopes: [], expireAt });
+		await storage.setRefreshRecord(session.id, { current: "a", rotatedAt: 1 }, expireAt);
+		deepEqual(await storage.getRefreshRecord(session.id), { current: "a", rotatedAt: 1 });
+		// The record sits outside the index of the identity, so a listing never reads it as a session.
+		deepEqual(await storage.listKv("sessions/id_1/"), [`sessions/id_1/${session.id}`]);
+		await storage.deleteSession(session.id);
+		deepEqual(await storage.getRefreshRecord(session.id), undefined);
+	});
+
 	it("should allow requests under the rate limit then block", async () => {
 		deepEqual(await storage.consumeRateLimit("key", 2, 60_000), { allowed: true, retryAfter: undefined });
 		deepEqual(await storage.consumeRateLimit("key", 2, 60_000), { allowed: true, retryAfter: undefined });

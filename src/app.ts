@@ -260,7 +260,7 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		// The sort by id keeps the order independent of the enumeration order of a KV provider. `localeCompare` orders
 		// by collation, not by the base62 value of the id, so two ids from different seconds can come out unsorted.
 		async (c) => {
-			const { identityId, sessionId } = await c.env.api.verifyAccessToken(bearer(c));
+			const { identityId, sessionId } = await c.env.api.verifyAccessToken(bearer(c), { session: true });
 			const sessions = await c.env.api.storage.listSession(identityId);
 			return c.json({ sessions: sessions.sort((a, b) => a.id.localeCompare(b.id)), current: sessionId });
 		},
@@ -283,7 +283,7 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 			},
 		}),
 		async (c) => {
-			const { identityId } = await c.env.api.verifyAccessToken(bearer(c));
+			const { identityId } = await c.env.api.verifyAccessToken(bearer(c), { session: true });
 			const identity = await c.env.api.storage.getIdentity(identityId);
 			if (!identity) {
 				throw new InvalidAccessTokenError();
@@ -296,7 +296,8 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		"/refresh-token",
 		describeRoute({
 			summary: "Refresh the tokens",
-			description: "Exchanges a refresh token for a freshly minted set of access, id and refresh tokens on the same session.",
+			description:
+				"Exchanges a refresh token for a freshly minted set of access, id and refresh tokens on the same session. A refresh token works one time. A second exchange of an old token ends the session, because two parties hold it.",
 			tags: ["Auth"],
 			responses: {
 				200: {
@@ -355,7 +356,7 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		describeRoute({
 			summary: "Rotate a component",
 			description:
-				"Replaces the value of an already enrolled component. Control of the current value is proven first, but only for components that can verify themselves: receiving a one-time code at the current address proves something, whereas re-typing a password proves nothing the access token has not already established, so such components go straight to the replacement.",
+				"Replaces the value of an already enrolled component. Control of the current value is proven first, but only for components that can verify themselves: receiving a one-time code at the current address proves something, whereas re-typing a password proves nothing the access token has not already established, so such components go straight to the replacement. A completed rotation signs out every other session of the identity.",
 			tags: ["Auth"],
 			security: [{ bearerAuth: [] }],
 			responses: {
@@ -375,7 +376,7 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		describeRoute({
 			summary: "Start a recovery",
 			description:
-				"The one flow open to a caller with no session at all. `name` is the component the owner can no longer provide. The owner first performs the recovery choreography of that component: a sign-in without it, through every complete path that holds it, or the choreography the deployment declared for it. An address in that dance counts only after its one-time code. The library then collects the replacement. A component with no recovery choreography is refused with COMPONENT_NOT_RECOVERABLE.",
+				"The one flow open to a caller with no session at all. `name` is the component the owner can no longer provide. The owner first performs the recovery choreography of that component: a sign-in without it, through every complete path that holds it, or the choreography the deployment declared for it. An address in that dance counts only after its one-time code. The library then collects the replacement, and signs out every session of the identity. A component with no recovery choreography is refused with COMPONENT_NOT_RECOVERABLE.",
 			tags: ["Auth"],
 			responses: {
 				200: {

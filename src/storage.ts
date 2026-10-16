@@ -1,4 +1,4 @@
-import { parse } from "valibot";
+import * as v from "valibot";
 import { ksuid } from "./id.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
 import type {
@@ -23,8 +23,29 @@ export interface AuthDanceStorageOptions {
 }
 
 /**
+ * Which refresh token a session accepts. The library keeps one record per session at `session/<id>/refresh`, and the
+ * record never reaches a client.
+ */
+export interface AuthDanceRefreshRecord {
+	/** The `jti` of the one refresh token the session accepts. */
+	current: string;
+	/** The `jti` of the refresh token that `current` replaced. */
+	previous?: string;
+	/** The moment the library minted `current`, in seconds since the epoch. */
+	rotatedAt: number;
+}
+
+// Parses a refresh record at runtime. Only this module reads the record.
+const RefreshRecordSchema: v.GenericSchema<AuthDanceRefreshRecord> = v.object({
+	current: v.string(),
+	previous: v.optional(v.string()),
+	rotatedAt: v.number(),
+});
+
+/**
  * The storage layer of the library. A session lives twice, at `session/<id>` and at
- * `sessions/<identityId>/<id>`. A pending one-time code lives at `otp/<stateId>/<name>`.
+ * `sessions/<identityId>/<id>`, and its refresh record lives at `session/<id>/refresh`. A pending one-time code lives
+ * at `otp/<stateId>/<name>`.
  */
 export class AuthDanceStorage {
 	#options: AuthDanceStorageOptions;
@@ -142,19 +163,44 @@ export class AuthDanceStorage {
 		if (!value) {
 			return undefined;
 		}
-		return parse(AuthDanceSession, JSON.parse(value));
+		return v.parse(AuthDanceSession, JSON.parse(value));
 	}
 
 	/**
-	 * Delete one session from both the `session/<id>` and the `sessions/<identityId>/<id>` key spaces. An id that
-	 * resolves to nothing does nothing.
+	 * Delete one session from both the `session/<id>` and the `sessions/<identityId>/<id>` key spaces, together with
+	 * its refresh record. An id that resolves to nothing does nothing.
 	 */
 	async deleteSession(id: string): Promise<void> {
 		const session = await this.getSession(id);
 		if (!session) {
 			return;
 		}
-		await Promise.all([this.unsetKv(`session/${session.id}`), this.unsetKv(`sessions/${session.identityId}/${session.id}`)]);
+		await Promise.all([
+			this.unsetKv(`session/${session.id}`),
+			this.unsetKv(`sessions/${session.identityId}/${session.id}`),
+			this.unsetKv(`session/${session.id}/refresh`),
+		]);
+	}
+
+	/**
+	 * Read the refresh record of one session from `session/<id>/refresh`. A record that does not match the
+	 * `AuthDanceRefreshRecord` schema makes the call fail. Returns `undefined` when the key holds nothing.
+	 */
+	async getRefreshRecord(sessionId: string): Promise<AuthDanceRefreshRecord | undefined> {
+		const value = await this.getKv(`session/${sessionId}/refresh`);
+		if (!value) {
+			return undefined;
+		}
+		return v.parse(RefreshRecordSchema, JSON.parse(value));
+	}
+
+	/**
+	 * Write the refresh record of one session to `session/<id>/refresh`. `expireAt` is the end of the session, and it
+	 * sets the time to live of the record, in seconds.
+	 */
+	setRefreshRecord(sessionId: string, record: AuthDanceRefreshRecord, expireAt: Date): Promise<void> {
+		const ttl = Math.max(1, Math.floor((expireAt.getTime() - Date.now()) / 1000));
+		return this.setKv(`session/${sessionId}/refresh`, JSON.stringify(record), ttl);
 	}
 
 	/**
@@ -164,7 +210,7 @@ export class AuthDanceStorage {
 	async listSession(identityId: string): Promise<AuthDanceSession[]> {
 		const keys = await this.#options.kv.list(`sessions/${identityId}/`);
 		const values = await Promise.all(keys.map((key) => this.getKv(key)));
-		return values.filter((value): value is string => value !== undefined).map((value) => parse(AuthDanceSession, JSON.parse(value)));
+		return values.filter((value): value is string => value !== undefined).map((value) => v.parse(AuthDanceSession, JSON.parse(value)));
 	}
 
 	/**

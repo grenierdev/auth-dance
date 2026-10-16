@@ -1775,6 +1775,144 @@ describe("Api", () => {
 		});
 	});
 
+	const failsWith = (code: string) => (error: unknown) => error instanceof AuthDanceError && error.code === code;
+
+	describe("refresh token", () => {
+		afterEach(() => vi.useRealTimers());
+
+		it("should end the session when a refresh token is exchanged a second time", async () => {
+			// The audit PoC: one refresh token minted new tokens for its whole lifetime, next to the owner.
+			vi.useFakeTimers({ toFake: ["Date"] });
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			const first = await api.refreshToken(signedIn.tokens.refresh_token);
+			vi.setSystemTime(Date.now() + 11_000);
+			await rejects(() => api.refreshToken(signedIn.tokens.refresh_token), failsWith("INVALID_REFRESH_TOKEN"));
+			deepEqual(await storage.getSession(signedIn.session.id), undefined);
+			// The token the first exchange returned dies with the session.
+			await rejects(() => api.refreshToken(first.tokens.refresh_token), failsWith("SESSION_NOT_FOUND"));
+		});
+
+		it("should keep the session for the token a rotation just replaced", async () => {
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			const first = await api.refreshToken(signedIn.tokens.refresh_token);
+			// Another tab lost the race. Its store already holds the newer pair.
+			await rejects(() => api.refreshToken(signedIn.tokens.refresh_token), failsWith("INVALID_REFRESH_TOKEN"));
+			ok(await storage.getSession(signedIn.session.id));
+			const second = await api.refreshToken(first.tokens.refresh_token);
+			ok(second.tokens.refresh_token);
+		});
+
+		it("should end the session for an old token two rotations back, inside the leeway too", async () => {
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			const first = await api.refreshToken(signedIn.tokens.refresh_token);
+			await api.refreshToken(first.tokens.refresh_token);
+			await rejects(() => api.refreshToken(signedIn.tokens.refresh_token), failsWith("INVALID_REFRESH_TOKEN"));
+			deepEqual(await storage.getSession(signedIn.session.id), undefined);
+		});
+
+		it("should accept one exchange on a session that predates the refresh record", async () => {
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			await storage.unsetKv(`session/${signedIn.session.id}/refresh`);
+			const refreshed = await api.refreshToken(signedIn.tokens.refresh_token);
+			const record = await storage.getRefreshRecord(signedIn.session.id);
+			deepEqual(record?.current, decodeJwt(refreshed.tokens.refresh_token).jti);
+		});
+
+		it("should drop the refresh record on sign-out", async () => {
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			ok(await storage.getKv(`session/${signedIn.session.id}/refresh`));
+			await api.signOut(signedIn.tokens.access_token);
+			deepEqual(await storage.getKv(`session/${signedIn.session.id}/refresh`), undefined);
+		});
+
+		it("should check the session of an access token only on demand", async () => {
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			await api.signOut(signedIn.tokens.access_token);
+			// Without a session read, the token answers until it expires. This is the documented window.
+			deepEqual((await api.verifyAccessToken(signedIn.tokens.access_token)).sessionId, signedIn.session.id);
+			await rejects(() => api.verifyAccessToken(signedIn.tokens.access_token, { session: true }), failsWith("SESSION_NOT_FOUND"));
+		});
+	});
+
+	describe("reset", () => {
+		// The address, its one-time code and the new password.
+		async function recoverPassword(on: AuthDanceApi): Promise<void> {
+			const result1 = await on.recover({ name: "password" });
+			const result2 = await on.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state });
+			ok("state" in result2);
+			await on.sendPrompt({ name: "email", locale: "en", state: result2.state });
+			const result3 = await on.submitPrompt({
+				name: "email",
+				value: channelEmail.messages.at(-1)!.content["text/x-code"],
+				state: result2.state,
+			});
+			ok("state" in result3);
+			const result4 = await on.submitPrompt({ name: "password", value: "bar", state: result3.state });
+			ok("success" in result4);
+		}
+
+		async function rotatePassword(on: AuthDanceApi, access_token: string): Promise<void> {
+			const result1 = await on.rotate({ name: "password", access_token });
+			const result2 = await on.submitPrompt({ name: "password", value: "bar", state: result1.state });
+			ok("success" in result2);
+		}
+
+		it("should end every session when the owner recovers the password", async () => {
+			// The audit PoC: a thief kept a session after the owner reset the password.
+			await johnDoe();
+			const owner = await signInAsJohnDoe(api);
+			const thief = await signInAsJohnDoe(api);
+			await recoverPassword(api);
+			await rejects(() => api.refreshToken(thief.tokens.refresh_token), failsWith("SESSION_NOT_FOUND"));
+			await rejects(() => api.refreshToken(owner.tokens.refresh_token), failsWith("SESSION_NOT_FOUND"));
+		});
+
+		it("should end every other session when the owner rotates the password", async () => {
+			await johnDoe();
+			const owner = await signInAsJohnDoe(api);
+			const thief = await signInAsJohnDoe(api);
+			await rotatePassword(api, owner.tokens.access_token);
+			await rejects(() => api.refreshToken(thief.tokens.refresh_token), failsWith("SESSION_NOT_FOUND"));
+			ok(await api.refreshToken(owner.tokens.refresh_token));
+			deepEqual(
+				(await storage.listSession(owner.identity.id)).map((session) => session.id),
+				[owner.session.id],
+			);
+		});
+
+		it("should keep the other sessions when the deployment opts out", async () => {
+			const keeping = new AuthDanceApi({ ...apiOptions, revokeSessionsOnReset: false });
+			await johnDoe();
+			const owner = await signInAsJohnDoe(keeping);
+			const other = await signInAsJohnDoe(keeping);
+			await rotatePassword(keeping, owner.tokens.access_token);
+			ok(await keeping.refreshToken(other.tokens.refresh_token));
+		});
+
+		it("should keep the other sessions when the owner enrolls a component", async () => {
+			await johnDoe();
+			const owner = await signInAsJohnDoe(api);
+			const other = await signInAsJohnDoe(api);
+			const result1 = await api.enroll({ name: "email2", access_token: owner.tokens.access_token });
+			const result2 = await api.submitPrompt({ name: "email2", value: "john.doe2@example.com", state: result1.state });
+			ok("state" in result2);
+			await api.sendPrompt({ name: "email2", locale: "en", state: result2.state });
+			const result3 = await api.submitPrompt({
+				name: "email2",
+				value: channelEmail2.messages[0].content["text/x-code"],
+				state: result2.state,
+			});
+			ok("success" in result3);
+			ok(await api.refreshToken(other.tokens.refresh_token));
+		});
+	});
+
 	// These buckets are keyed on the identity or session. Per-address buckets live at the edge, see app.test.ts.
 	describe("rate limit", () => {
 		function limitedApi(options: Pick<AuthDanceApiOptions, "durations" | "limits">): AuthDanceApi {
@@ -2181,6 +2319,54 @@ describe("Api", () => {
 			);
 			deepEqual(records[0].flow, "recover");
 			deepEqual(records[0].name, "password");
+		});
+
+		it("should report a refresh token exchanged a second time as a deleted session", async () => {
+			const { records, api } = recordingApi();
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			const first = await api.refreshToken(signedIn.tokens.refresh_token);
+			await api.refreshToken(first.tokens.refresh_token);
+			await rejects(() => api.refreshToken(signedIn.tokens.refresh_token));
+			const deleted = records.filter((r) => r.hook === "onSessionDeleted");
+			deepEqual(deleted, [{ hook: "onSessionDeleted", flow: "reuse", identityId: signedIn.identity.id, sessionId: signedIn.session.id }]);
+		});
+
+		it("should report the sessions a reset deletes after the identity it changed", async () => {
+			const { records, api } = recordingApi();
+			await johnDoe();
+			const owner = await signInAsJohnDoe(api);
+			const other = await signInAsJohnDoe(api);
+			records.length = 0;
+			const rotated = await api.rotate({ name: "password", access_token: owner.tokens.access_token });
+			ok("success" in (await api.submitPrompt({ name: "password", value: "bar", state: rotated.state })));
+			deepEqual(
+				records.map((r) => [r.hook, r.flow, r.sessionId]),
+				[
+					["onIdentityUpdated", "rotate", undefined],
+					["onSessionDeleted", "rotate", other.session.id],
+				],
+			);
+
+			records.length = 0;
+			const result1 = await api.recover({ name: "password" });
+			const result2 = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state });
+			ok("state" in result2);
+			await api.sendPrompt({ name: "email", locale: "en", state: result2.state });
+			const result3 = await api.submitPrompt({
+				name: "email",
+				value: channelEmail.messages.at(-1)!.content["text/x-code"],
+				state: result2.state,
+			});
+			ok("state" in result3);
+			ok("success" in (await api.submitPrompt({ name: "password", value: "baz", state: result3.state })));
+			deepEqual(
+				records.map((r) => [r.hook, r.flow, r.sessionId]),
+				[
+					["onIdentityUpdated", "recover", undefined],
+					["onSessionDeleted", "recover", owner.session.id],
+				],
+			);
 		});
 
 		it("should report every session of a delete before the identity itself", async () => {

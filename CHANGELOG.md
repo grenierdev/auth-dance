@@ -32,3 +32,16 @@
 - **A WebAuthn recovery step runs one ceremony (H2).** It proves control with its own signature, so the second ceremony is gone.
 - **`TotpAuthDanceComponent` asks for a code in a recovery step (H2).** In a `recover` flow, a prompt built without an identity has
   the type `totp`; the reset still collects a key with `totp-key`.
+- **Refresh tokens work one time (M3).** Each exchange replaces the refresh token, and the session keeps a record of the current one
+  at `session/<id>/refresh`. An exchange of the token just replaced, inside `durations.refresh_leeway` (default 10 seconds), raises
+  `INVALID_REFRESH_TOKEN` and keeps the session. Any other exchange of an old token deletes the session and fires
+  `onSessionDeleted` with the new flow `reuse`. A client that keeps the refresh token it gets from each exchange, as
+  `AuthDanceClient` does, sees no change. On Workers KV the detection works inside one location only.
+- **`verifyAccessToken` takes `{ session: true }` (M3).** With it, a token whose session ended raises `SESSION_NOT_FOUND`. Without
+  it, the check stays stateless, and a token stays valid for up to `durations.access` after a sign-out. `/list-sessions` and
+  `/list-components` now pass `session: true`.
+- **A reset signs out the other sessions (M5).** A completed `rotate` deletes every other session of the identity, and a completed
+  `recover` deletes every session. `onSessionDeleted` fires for each, with the new flows `rotate` and `recover`, after
+  `onIdentityUpdated`. Set `revokeSessionsOnReset: false` to keep them. Rotating an email address signs out the other devices too.
+- **`AuthDanceStorage.deleteSession` also deletes the refresh record (M3).** `AuthDanceStorage` gains `getRefreshRecord` and
+  `setRefreshRecord`.
