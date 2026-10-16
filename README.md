@@ -61,6 +61,13 @@ serve({ fetch: auth.fetch, port: 3000 });
 `auth.fetch` is the HTTP surface, `auth.app` is the Hono instance behind it, `auth.api` is the same state machine without HTTP, and
 `auth.generateOpenAPISchema()` documents the routes.
 
+The per-address rate limits key on the address of the caller, so tell the app where that address lives. By default it reads
+`cf-connecting-ip`, then the last entry of `x-forwarded-for`. Behind Cloudflare, pass `app: { address: cloudflareAddress }`. Behind a
+chain of proxies, pass `forwardedAddress(hops)`. With no proxy, as in the Node.js example above, no header can be trusted: pass
+`app: { address: (c) => getConnInfo(c).remote.address }`, with `getConnInfo` from `@hono/node-server/conninfo`. Every request with no
+address shares one bucket. A server that calls `auth.fetch` for its own users forwards each address in a header, and reads that header
+in its resolver.
+
 ## The dance
 
 `auth-dance/client` calls those routes. A flow is a loop: read the prompt, answer it, repeat until the library answers with tokens.

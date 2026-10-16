@@ -2053,6 +2053,76 @@ describe("Api", () => {
 			deepEqual(channelEmail.messages.length, 1);
 		});
 
+		it("should stop guessing a sign-up code once the verify bucket is exhausted, across replays", async () => {
+			const api = limitedApi({});
+			const result1 = await api.signUp();
+			// The address is the first hit on the identity the state carries.
+			const result2 = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state });
+			ok("state" in result2);
+			for (let attempt = 0; attempt < 9; attempt++) {
+				await rejects(
+					() => api.submitPrompt({ name: "email", value: "not-a-code", state: result2.state }),
+					(error) => error instanceof AuthDanceError && error.code === "INVALID_VALIDATION_VALUE",
+				);
+			}
+			await rejects(
+				() => api.submitPrompt({ name: "email", value: "not-a-code", state: result2.state }),
+				(error) => error instanceof AuthDanceError && error.code === "RATE_LIMITED",
+			);
+			// A replay of the first state keeps the identity id, and so the bucket.
+			await rejects(
+				() => api.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state }),
+				(error) => error instanceof AuthDanceError && error.code === "RATE_LIMITED",
+			);
+		});
+
+		it("should stop mailing one address from many sign-up states", async () => {
+			// The audit PoC: one sign-up state per message mailed one address without limit.
+			const api = limitedApi({});
+			const sendFromNewState = async (address: string) => {
+				const result1 = await api.signUp();
+				const result2 = await api.submitPrompt({ name: "email", value: address, state: result1.state });
+				ok("state" in result2);
+				return api.sendPrompt({ name: "email", locale: "en", state: result2.state });
+			};
+			for (let attempt = 0; attempt < 5; attempt++) {
+				ok((await sendFromNewState("victim@example.com")).success);
+			}
+			await rejects(
+				() => sendFromNewState("victim@example.com"),
+				(error) => error instanceof AuthDanceError && error.code === "RATE_LIMITED",
+			);
+			deepEqual(channelEmail.messages.length, 5);
+			// Another address keeps its own bucket.
+			ok((await sendFromNewState("other@example.com")).success);
+		});
+
+		it("should key the recipient bucket on a hash, never on the address", async () => {
+			const keys: string[] = [];
+			const limiter = new MemoryRateLimiterProvider();
+			const api = new AuthDanceApi({
+				...apiOptions,
+				storage: new AuthDanceStorage({
+					identity: new MemoryIdentityProvider(),
+					kv: new MemoryKvProvider(),
+					rate_limiter: {
+						limit: (key, limit, window) => {
+							keys.push(key);
+							return limiter.limit(key, limit, window);
+						},
+					},
+				}),
+			});
+			const result1 = await api.signUp();
+			const result2 = await api.submitPrompt({ name: "email", value: "victim@example.com", state: result1.state });
+			ok("state" in result2);
+			await api.sendPrompt({ name: "email", locale: "en", state: result2.state });
+			const recipientKeys = keys.filter((key) => key.startsWith("recipient:"));
+			deepEqual(recipientKeys.length, 1);
+			ok(/^recipient:[0-9a-f]{64}$/.test(recipientKeys[0]));
+			ok(!keys.some((key) => key.includes("@")));
+		});
+
 		it("should keep the retryAfter hint out of the serialised error", async () => {
 			const api = limitedApi({
 				limits: { identity: { refresh: { limit: 1, window: 60 } } },

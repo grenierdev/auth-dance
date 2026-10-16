@@ -1,3 +1,4 @@
+import { hex } from "@scure/base";
 import { decode } from "jose/base64url";
 import { jwtDecrypt } from "jose/jwt/decrypt";
 import { EncryptJWT } from "jose/jwt/encrypt";
@@ -90,7 +91,10 @@ export interface AuthDanceRateLimit {
 	window: number;
 }
 
-/** The buckets `AuthDanceApi` consumes. `AuthDanceApi` keys each one on the identity or the session a call belongs to. */
+/**
+ * The buckets `AuthDanceApi` consumes. `AuthDanceApi` keys each one on the identity or the session a call belongs to,
+ * and `recipient` on the recipient of a message.
+ */
 export interface AuthDanceIdentityRateLimits {
 	/** Each answer to a prompt or to a validation. @defaultValue `{ limit: 10, window: 300 }` */
 	verify?: AuthDanceRateLimit;
@@ -103,6 +107,12 @@ export interface AuthDanceIdentityRateLimits {
 	manage?: AuthDanceRateLimit;
 	/** Each exchange of a refresh token. @defaultValue `{ limit: 60, window: 300 }` */
 	refresh?: AuthDanceRateLimit;
+	/**
+	 * Each message the library delivers to one recipient, whatever the flow, the state or the identity. The key holds
+	 * a SHA-256 of the channel and the recipient, never the address itself.
+	 * @defaultValue `{ limit: 5, window: 900 }`
+	 */
+	recipient?: AuthDanceRateLimit;
 }
 
 /** The buckets the HTTP layer consumes. The HTTP layer keys each one on the address of the caller. */
@@ -300,6 +310,7 @@ export const IdentityRateLimits: Required<AuthDanceIdentityRateLimits> = {
 	send: { limit: 5, window: 5 * 60 },
 	manage: { limit: 20, window: 5 * 60 },
 	refresh: { limit: 60, window: 5 * 60 },
+	recipient: { limit: 5, window: 15 * 60 },
 };
 
 interface AuthDanceAdvance {
@@ -676,15 +687,39 @@ export class AuthDanceApi {
 		}
 	}
 
-	// The subject of a state. A sign-up has none, because it mints its own identity id.
+	// The subject of a state. A sign-up mints its identity id one time, and a replay of the state keeps it, so a
+	// replay does not reset the bucket.
 	#stateSubject(state: AuthDanceState): string | undefined {
 		if (state.kind === "sign-in" || state.kind === "recover") {
 			return state.identityId && `identity:${state.identityId}`;
 		}
 		if (state.kind === "sign-up") {
-			return undefined;
+			return `identity:${state.identityId}`;
 		}
 		return `session:${state.sessionId}`;
+	}
+
+	// The subject of the `recipient` bucket: a SHA-256 of the channel and the recipient, so no address reaches a rate
+	// limiter key. Sorted keys make two spellings of one record share a bucket.
+	async #recipientSubject(recipient: AuthDanceIdentityChannel): Promise<string> {
+		const canonical = (value: unknown): string => {
+			if (Array.isArray(value)) {
+				return `[${value.map(canonical).join(",")}]`;
+			}
+			if (value !== null && typeof value === "object") {
+				const record = value as Record<string, unknown>;
+				return `{${Object.keys(record)
+					.sort()
+					.map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
+					.join(",")}}`;
+			}
+			return JSON.stringify(value) ?? "null";
+		};
+		const digest = await crypto.subtle.digest(
+			"SHA-256",
+			new TextEncoder().encode(`${recipient.component}\n${canonical(recipient.data ?? {})}`),
+		);
+		return hex.encode(new Uint8Array(digest));
 	}
 
 	// The phase the flow waits in. Both step methods dispatch on it. A state that holds an unproven value takes
@@ -1366,7 +1401,8 @@ export class AuthDanceApi {
 	 * Starts a registration and returns the first prompt of the choreography.
 	 *
 	 * The state carries the new identity id from the start. Storage keeps nothing until the choreography
-	 * completes. This flow needs no access token and no fresh sign-in, and no per-identity bucket guards it.
+	 * completes. This flow needs no access token and no fresh sign-in. This call consumes no bucket, and each later
+	 * step consumes the per-identity buckets of the identity id the state carries.
 	 *
 	 * @returns The encrypted state, the first prompt, and the moment the state expires.
 	 * @throws ChoreographyEmptyError when the choreography is already over at its first step.
@@ -1715,7 +1751,8 @@ export class AuthDanceApi {
 	 * @param options `name` selects which component to deliver when the current step is a choice. `locale` picks
 	 * the language of the message. `state` is the opaque string the previous call returned.
 	 * @throws InvalidStateError when the state does not decrypt, carries no expiry, or no longer matches the schema.
-	 * @throws RateLimitedError when the `send` bucket of the subject is empty.
+	 * @throws RateLimitedError when the `send` bucket of the subject is empty, or the `recipient` bucket of the
+	 * recipient. The `recipient` bucket counts every message to one recipient, across states and identities.
 	 * @throws InvalidStateForFlowError when the flow holds nothing to deliver, for example a delete waiting on its
 	 * confirmation, or an enroll that has not collected its value yet.
 	 * @throws ComponentNotInChoreographyError when `name` is not a component the current step offers.
@@ -1744,6 +1781,8 @@ export class AuthDanceApi {
 		if (!message) {
 			throw new ComponentNotSendableError(options.name);
 		}
+		// A new state costs nothing, so the `send` bucket of one state does not stop a flood to one address.
+		await this.#consumeRateLimit("recipient", await this.#recipientSubject(message.recipient));
 		await this.#sendMessage(message);
 		return { success: true };
 	}

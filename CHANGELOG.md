@@ -45,3 +45,13 @@
   `onIdentityUpdated`. Set `revokeSessionsOnReset: false` to keep them. Rotating an email address signs out the other devices too.
 - **`AuthDanceStorage.deleteSession` also deletes the refresh record (M3).** `AuthDanceStorage` gains `getRefreshRecord` and
   `setRefreshRecord`.
+- **The default caller address is the last `x-forwarded-for` entry (M2).** It was the first, which the client writes. The new
+  `AuthDanceAppOptions.address` resolver picks the source; `cloudflareAddress` and `forwardedAddress(hops)` ship with the library. A
+  deployment behind two proxies sees all traffic under the inner proxy until it passes `forwardedAddress(2)`. The default still
+  reads `cf-connecting-ip` first, which a client writes off Cloudflare: pass a resolver there.
+- **Requests with no address share one bucket (M2).** They skipped the per-address buckets before. In-process use with
+  `auth.fetch` lands in that shared bucket (300 requests a minute by default).
+- **Sign-up steps are rate limited (M2).** A sign-up keys the `verify` and `send` buckets on the identity id its state carries, so a
+  replay of the state keeps the count.
+- **New `recipient` bucket (M2).** `limits.identity.recipient` (default 5 messages in 15 minutes) counts every message to one
+  recipient, across states and identities. The key holds a SHA-256 of the channel and the recipient, never the address.

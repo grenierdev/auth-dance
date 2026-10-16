@@ -99,8 +99,9 @@ export interface AuthDanceRateLimiterProvider {
 	 * Count one hit of a bucket, then report whether the call may continue.
 	 *
 	 * @param key The bucket that holds the count. `AuthDanceApi` keys a per-identity bucket as `<bucket>:<subject>`,
-	 * such as `verify:identity:id_2abc`. The HTTP layer keys its own buckets as `address:request:<address>` and
-	 * `address:send:<address>`.
+	 * such as `verify:identity:id_2abc`, and the bucket of a recipient as `recipient:<SHA-256 in hex>`. The HTTP layer
+	 * keys its own buckets as `address:request:<address>` and `address:send:<address>`, with the address `unknown`
+	 * for a request that carries none.
 	 * @param limit The number of hits the bucket allows inside one window.
 	 * @param window The length of the bucket window. The adapter decides the unit. Both callers in this library
 	 * multiply the configured window in seconds by 1000.

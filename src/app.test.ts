@@ -1,4 +1,4 @@
-import { deepEqual, ok } from "node:assert";
+import { deepEqual, ok, throws } from "node:assert";
 import { beforeEach, describe, it } from "vitest";
 import type { AuthDanceApiOptions } from "./api.ts";
 import { choice, sequence } from "./choreography.ts";
@@ -8,7 +8,7 @@ import { OtpAuthDanceComponent } from "./components/otp.ts";
 import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "./components/password.ts";
 import { ksuid } from "./id.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
-import { type AuthDance, createAuthDance } from "./mod.ts";
+import { type AuthDance, createAuthDance, forwardedAddress } from "./mod.ts";
 import type { AuthDanceKvProvider } from "./provider.ts";
 import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "./providers/memory.ts";
 import { AuthDanceStorage } from "./storage.ts";
@@ -865,12 +865,47 @@ describe("App", () => {
 				deepEqual((await post("/sign-in", undefined, from("198.51.100.4")))[0], 200);
 			});
 
-			// The library does not bucket a request that carries no address.
-			it("should not bucket a request that carries no address", async () => {
-				const post = limitedPost({ request: { limit: 1, window: 60 } });
-				for (let attempt = 0; attempt < 3; attempt++) {
-					deepEqual((await post("/sign-in"))[0], 200);
+			// A request with no address used to skip both buckets. Now every such request shares one bucket.
+			it("should put every request that carries no address in one shared bucket", async () => {
+				const post = limitedPost({ request: { limit: 2, window: 60 } });
+				deepEqual((await post("/sign-in"))[0], 200);
+				deepEqual((await post("/sign-in"))[0], 200);
+				deepEqual((await post("/sign-in"))[0], 429);
+				// An address of its own keeps its own bucket.
+				deepEqual((await post("/sign-in", undefined, from("203.0.113.7")))[0], 200);
+			});
+
+			it("should read the last entry of x-forwarded-for, the one the proxy appended", async () => {
+				// The audit PoC: a rotated first entry gave every request a fresh bucket.
+				const post = limitedPost({ request: { limit: 2, window: 60 } });
+				for (let attempt = 0; attempt < 2; attempt++) {
+					const headers = { "x-forwarded-for": `198.51.100.${attempt}, 203.0.113.7` };
+					deepEqual((await post("/sign-in", undefined, headers))[0], 200);
 				}
+				deepEqual((await post("/sign-in", undefined, { "x-forwarded-for": "198.51.100.99, 203.0.113.7" }))[0], 429);
+			});
+
+			it("should read the address from the resolver alone", async () => {
+				const post = client(
+					createAuthDance({
+						api: { ...apiOptions, limits: { address: { request: { limit: 1, window: 60 } } } },
+						app: { address: (c) => c.req.header("x-real-ip") },
+					}),
+				);
+				deepEqual((await post("/sign-in", undefined, { "x-real-ip": "203.0.113.7", "cf-connecting-ip": "198.51.100.1" }))[0], 200);
+				// The other headers change nothing, because the resolver never reads them.
+				deepEqual((await post("/sign-in", undefined, { "x-real-ip": "203.0.113.7", "cf-connecting-ip": "198.51.100.2" }))[0], 429);
+				deepEqual((await post("/sign-in", undefined, { "x-real-ip": "203.0.113.8", "x-forwarded-for": "203.0.113.7" }))[0], 200);
+			});
+
+			it("should read the entry a chain of proxies vouches for", async () => {
+				const read = (header: string | undefined, hops: number) =>
+					forwardedAddress(hops)({ req: { header: (name: string) => (name === "x-forwarded-for" ? header : undefined) } } as never);
+				deepEqual(read("1.1.1.1, 2.2.2.2, 3.3.3.3", 1), "3.3.3.3");
+				deepEqual(read("1.1.1.1, 2.2.2.2, 3.3.3.3", 2), "2.2.2.2");
+				deepEqual(read("3.3.3.3", 2), undefined);
+				deepEqual(read(undefined, 1), undefined);
+				throws(() => forwardedAddress(0), RangeError);
 			});
 
 			it("should bucket the sending route on top of the request bucket", async () => {

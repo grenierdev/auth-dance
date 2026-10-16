@@ -99,13 +99,45 @@ function localeOf(c: Context, fromBody?: string): string {
 	return fromBody ?? c.req.header("accept-language")?.split(",")[0]?.split(";")[0]?.trim() ?? "en";
 }
 
-// The address and the user agent always come from the headers, never from the body.
-function callerOf(c: Context): { address?: string; userAgent?: string } {
-	return {
-		address: c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim(),
-		userAgent: c.req.header("user-agent"),
+/**
+ * Reads the address of the caller from `cf-connecting-ip`. Cloudflare sets this header and drops a value the client
+ * sends. Use it only behind Cloudflare: anywhere else the client writes the header.
+ */
+export function cloudflareAddress(c: Context): string | undefined {
+	return c.req.header("cf-connecting-ip")?.trim() || undefined;
+}
+
+/**
+ * Builds a resolver that reads the address of the caller from `x-forwarded-for`, the entry `hops` positions from the
+ * right. Each proxy appends the address it saw, so behind `hops` trusted proxies that entry is the first one the
+ * client cannot write. A header with fewer entries gives no address.
+ *
+ * @param hops The number of trusted proxies in front of the app. @defaultValue `1`
+ * @throws {RangeError} When `hops` is not a positive integer.
+ */
+export function forwardedAddress(hops: number = 1): (c: Context) => string | undefined {
+	if (!Number.isInteger(hops) || hops < 1) {
+		throw new RangeError("hops must be a positive integer");
+	}
+	return (c) => {
+		const entries = (c.req.header("x-forwarded-for") ?? "")
+			.split(",")
+			.map((entry) => entry.trim())
+			.filter((entry) => entry !== "");
+		return entries.length >= hops ? entries[entries.length - hops] : undefined;
 	};
 }
+
+const lastForwardedAddress = forwardedAddress(1);
+
+// `cf-connecting-ip`, then the last entry of `x-forwarded-for`.
+function defaultAddress(c: Context): string | undefined {
+	return cloudflareAddress(c) ?? lastForwardedAddress(c);
+}
+
+// The bucket key of a request with no address. One shared bucket throttles a misconfiguration, or a client that
+// bypasses the proxy.
+const UNKNOWN_ADDRESS = "unknown";
 
 /** The default per-address rate limit buckets. */
 const AddressRateLimits: Required<AuthDanceAddressRateLimits> = {
@@ -124,6 +156,17 @@ export type AuthDanceApp = Hono<{ Bindings: { api: AuthDanceApi; rate_limit?: Au
 export interface AuthDanceAppOptions {
 	/** The prefix for every route, for example `/auth`. Without it the routes sit at the root. */
 	basePath?: string;
+	/**
+	 * Reads the address of the caller from a request. The per-address buckets key on it, and a session records it.
+	 *
+	 * Pass the resolver that matches the deployment. Behind Cloudflare, pass `cloudflareAddress`. Behind a chain of
+	 * proxies, pass `forwardedAddress(hops)`. With no proxy at all, no header can be trusted: on Node.js pass
+	 * `(c) => getConnInfo(c).remote.address` from `@hono/node-server/conninfo`.
+	 *
+	 * @defaultValue `cf-connecting-ip`, then the last entry of `x-forwarded-for`. Off Cloudflare, the client writes
+	 * `cf-connecting-ip`, so pass a resolver there.
+	 */
+	address?: (c: Context) => string | undefined;
 }
 
 /**
@@ -137,13 +180,24 @@ export interface AuthDanceAppOptions {
  * answers 429, and adds `Retry-After` in seconds when the rate limiter adapter reports the delay. Every other
  * `AuthDanceError` answers 500 with its own code. Anything else answers 500 with `UNKNOWN`.
  *
- * The app reads the caller address from `cf-connecting-ip`, or from the first entry of `x-forwarded-for`. It reads the
- * locale from the `locale` field of the body first, then from the first entry of `accept-language`, then uses `en`.
+ * The app reads the caller address with `options.address`. By default it reads `cf-connecting-ip`, then the last
+ * entry of `x-forwarded-for`. It reads the locale from the `locale` field of the body first, then from the first entry
+ * of `accept-language`, then uses `en`.
  *
  * A middleware consumes the per-address buckets before anything parses a body. `/send-prompt` consumes a second,
- * tighter bucket. Both middlewares leave a request with no caller address unbucketed.
+ * tighter bucket. A request with no caller address goes to one shared `unknown` bucket.
  */
 export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp {
+	const resolveAddress = options?.address ?? defaultAddress;
+
+	// The address and the user agent always come from the request, never from the body.
+	function callerOf(c: Context): { address?: string; userAgent?: string } {
+		return {
+			address: resolveAddress(c),
+			userAgent: c.req.header("user-agent"),
+		};
+	}
+
 	let app = new Hono<{ Bindings: { api: AuthDanceApi; rate_limit?: AuthDanceAddressRateLimits } }>();
 
 	if (options?.basePath) {
@@ -157,21 +211,18 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		return c.json({ error: err instanceof AuthDanceError ? err.code : "UNKNOWN" }, 500);
 	});
 
-	// These buckets stop one caller address from repeating the same abuse across many identities. A request with no
-	// caller address stays unbucketed. A shared key would let one caller block every such request.
+	// These buckets stop one caller address from repeating the same abuse across many identities. With a correct
+	// resolver, every request has an address. A request without one is a misconfiguration or a client that bypasses
+	// the proxy, and all such requests share one bucket.
 	app.use(async (c, next) => {
-		const { address } = callerOf(c);
-		if (address) {
-			await consumeAddressRateLimit(c, `request:${address}`, c.env.rate_limit?.request ?? AddressRateLimits.request);
-		}
+		const address = callerOf(c).address ?? UNKNOWN_ADDRESS;
+		await consumeAddressRateLimit(c, `request:${address}`, c.env.rate_limit?.request ?? AddressRateLimits.request);
 		await next();
 	});
 
 	app.use("/send-prompt", async (c, next) => {
-		const { address } = callerOf(c);
-		if (address) {
-			await consumeAddressRateLimit(c, `send:${address}`, c.env.rate_limit?.send ?? AddressRateLimits.send);
-		}
+		const address = callerOf(c).address ?? UNKNOWN_ADDRESS;
+		await consumeAddressRateLimit(c, `send:${address}`, c.env.rate_limit?.send ?? AddressRateLimits.send);
 		await next();
 	});
 
