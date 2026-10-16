@@ -212,8 +212,8 @@ export interface AuthDanceStateSubscribe {
 	/** The session the owner started the subscription from, and the subject the rate limit buckets key on. */
 	sessionId: string;
 	/**
-	 * The pending channel record, unconfirmed for as long as the dance runs. The library stores the submitted recipient in
-	 * the private `data` of the record, keyed by the channel name.
+	 * The pending channel record, unconfirmed for as long as the dance runs. Once the owner submits the recipient, it
+	 * is the record that `getIdentityChannel` of the channel returned.
 	 */
 	channel: AuthDanceIdentityChannel;
 	/** True once the library accepts the recipient. After that, `submitPrompt` reads the value it gets as the one-time code. */

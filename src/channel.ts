@@ -28,10 +28,16 @@ export interface AuthDanceChannel {
 	getPrompt(context: AuthDanceChannelContext): Promise<AuthDancePromptInput>;
 	/**
 	 * Converts a collected recipient into the channel record an identity holds. The recipient goes in the private
-	 * `data` bag of that record, and the library never discloses that bag to a client. No flow calls this method.
+	 * `data` bag of that record, and the library never discloses that bag to a client.
+	 *
+	 * `subscribe` calls this method with the recipient the owner submitted. Throw `InvalidPromptValueError` for a
+	 * recipient the channel cannot deliver to. Normalize the value here, because the one-time code goes to what this
+	 * method returns. The library refuses a record of another kind or under another name, and turns any other error
+	 * into `InvalidPromptValueError`.
 	 *
 	 * @param channel The name to store the record under.
-	 * @param value The recipient the owner submitted.
+	 * @param value The recipient the owner submitted, trimmed: a string of 1 to 320 characters with no control
+	 * character.
 	 * @param confirmed Whether the owner already proved control of `value`.
 	 */
 	getIdentityChannel(channel: string, value: unknown, confirmed: boolean): Promise<AuthDanceIdentityChannel>;

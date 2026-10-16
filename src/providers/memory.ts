@@ -1,5 +1,5 @@
 import type { AuthDanceChannel, AuthDanceChannelContext } from "../channel.ts";
-import { ComponentAlreadyEnrolledError, IdentificationTakenError } from "../error.ts";
+import { ComponentAlreadyEnrolledError, IdentificationTakenError, InvalidPromptValueError } from "../error.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityChannel, AuthDanceIdentityIdentification } from "../identity.ts";
 import type { AuthDanceMessage } from "../message.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
@@ -265,9 +265,13 @@ export class MemoryAuthDanceChannel implements AuthDanceChannel, Disposable {
 	/**
 	 * Builds the channel component that a flow stores on the identity. The channel writes `value` under the `sms` key of `data`.
 	 * @param confirmed Whether control of the recipient is already proven. The default is `false`.
+	 * @throws {InvalidPromptValueError} The value is not a string.
 	 */
 
 	async getIdentityChannel(channel: string, value: unknown, confirmed: boolean = false): Promise<AuthDanceIdentityChannel> {
+		if (typeof value !== "string") {
+			throw new InvalidPromptValueError(channel);
+		}
 		return {
 			kind: "channel",
 			component: channel,

@@ -55,3 +55,15 @@
   replay of the state keeps the count.
 - **New `recipient` bucket (M2).** `limits.identity.recipient` (default 5 messages in 15 minutes) counts every message to one
   recipient, across states and identities. The key holds a SHA-256 of the channel and the recipient, never the address.
+- **Email addresses are normalized (L2).** `EmailAuthDanceComponent` stores and looks up each address trimmed, in NFC, and in lower
+  case, the local part included. `Victim@Example.com` and `victim@example.com` now name one identity. Set `preserveLocalCase: true`
+  for a mail system where the local part depends on its case. A value that is not one address raises `INVALID_PROMPT_VALUE`; it
+  became the empty address before. The new `normalizeEmailAddress` is exported from `auth-dance/components/email`. Stored
+  mixed-case addresses stop matching: run `normalizeEmailIdentifications(storage, "email")` once. It rewrites every address it can
+  and reports, without touching them, the identities that would collide.
+- **`subscribe` validates the recipient (M4).** The library refuses a recipient that is not a string of 1 to 320 characters, or
+  that holds a control character, then calls `getIdentityChannel` of the channel and stores the record it returns. A third-party
+  channel must now implement `getIdentityChannel` properly: validate and normalize the recipient, and throw
+  `InvalidPromptValueError` for one it cannot deliver to. Any other error becomes `INVALID_PROMPT_VALUE`.
+  `CloudflareSendMailAuthDanceChannel` normalizes the address and refuses a stored recipient with a line break, and a mail channel
+  under a name other than `email` now delivers to its subscribed recipient. `MemoryAuthDanceChannel` refuses a non-string.

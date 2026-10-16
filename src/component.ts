@@ -76,6 +76,9 @@ export interface AuthDanceComponent {
 	/**
 	 * Converts a submitted value into the records the identity holds. One component can return more than one record.
 	 *
+	 * An identification normalizes `value` here the same way it does in `verifyPrompt`, so a lookup finds what a
+	 * sign-up stored.
+	 *
 	 * @param component The name to store the record under. The choreography uses the same name.
 	 * @param value What the owner submitted.
 	 * @param confirmed Whether control of `value` is already proven. The library always passes `false`. It confirms
@@ -109,6 +112,8 @@ export interface AuthDanceComponent {
 	 *
 	 * On a verification component the library accepts `true` alone. Any other answer raises
 	 * `InvalidValidationValueError`.
+	 *
+	 * An identification normalizes `value` the same way it does in `getIdentityComponent` before the lookup.
 	 *
 	 * @returns `true` to accept the value without resolving anyone. An identity id to accept it and say who it is.
 	 * Any other answer, `false` and `undefined` included, rejects the value.

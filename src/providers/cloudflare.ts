@@ -3,6 +3,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { parse } from "valibot";
 import type { AuthDanceChannel, AuthDanceChannelContext } from "../channel.ts";
+import { normalizeEmailAddress } from "../email-address.ts";
+import { InvalidPromptValueError } from "../error.ts";
 import { AuthDanceIdentity, type AuthDanceIdentityChannel } from "../identity.ts";
 import type { AuthDanceMessage } from "../message.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
@@ -220,6 +222,10 @@ export class CloudflareSendMailAuthDanceChannel implements AuthDanceChannel {
 		if (!email || typeof email !== "string") {
 			throw new Error("Recipient does not have an email address");
 		}
+		// A record stored before the channel validated its recipients can still hold a header injection.
+		if (/[\r\n]/.test(email)) {
+			throw new Error("Recipient address holds a line break");
+		}
 		const _result = await this.#sendMail.send({
 			from: this.#options.from,
 			to: email,
@@ -240,12 +246,20 @@ export class CloudflareSendMailAuthDanceChannel implements AuthDanceChannel {
 		};
 	}
 
+	/**
+	 * Builds the channel record of one address, in the form `normalizeEmailAddress` gives, under `data.email`.
+	 * @throws {InvalidPromptValueError} The value is not one address.
+	 */
 	async getIdentityChannel(channel: string, value: unknown, confirmed: boolean = false): Promise<AuthDanceIdentityChannel> {
+		const email = normalizeEmailAddress(value);
+		if (email === null) {
+			throw new InvalidPromptValueError(channel);
+		}
 		return {
 			kind: "channel",
 			component: channel,
 			confirmed,
-			data: { email: value },
+			data: { email },
 		};
 	}
 }

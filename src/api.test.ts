@@ -10,6 +10,7 @@ import {
 	type AuthDanceIdentityEvent,
 	type AuthDanceSessionEvent,
 } from "./api.ts";
+import type { AuthDanceChannel } from "./channel.ts";
 import { choice, sequence } from "./choreography.ts";
 import type { AuthDanceComponent, AuthDanceComponentContext } from "./component.ts";
 import { EmailAuthDanceComponent } from "./components/email.ts";
@@ -1910,6 +1911,128 @@ describe("Api", () => {
 			});
 			ok("success" in result3);
 			ok(await api.refreshToken(other.tokens.refresh_token));
+		});
+	});
+
+	describe("email address", () => {
+		// The three steps of a sign-up through sequence("email", "password").
+		async function signUp(address: unknown): Promise<AuthDanceResponseTokens> {
+			const result1 = await api.signUp();
+			const result2 = await api.submitPrompt({ name: "email", value: address, state: result1.state });
+			ok("state" in result2);
+			await api.sendPrompt({ name: "email", locale: "en", state: result2.state });
+			const result3 = await api.submitPrompt({
+				name: "email",
+				value: channelEmail.messages.at(-1)!.content["text/x-code"],
+				state: result2.state,
+			});
+			ok("state" in result3);
+			const result4 = await api.submitPrompt({ name: "password", value: "foo", state: result3.state });
+			ok("tokens" in result4);
+			return result4;
+		}
+
+		it("should refuse a second identity for one mailbox", async () => {
+			// The audit PoC: Victim@Example.com and victim@example.com were two identities for one inbox.
+			await signUp("Victim@Example.com");
+			await rejects(() => signUp("victim@example.com"), failsWith("IDENTIFICATION_TAKEN"));
+		});
+
+		it("should sign in with another spelling of the address", async () => {
+			const signedUp = await signUp("victim@example.com");
+			const result1 = await api.signIn();
+			const result2 = await api.submitPrompt({ name: "email", value: "  VICTIM@example.COM ", state: result1.state });
+			ok("state" in result2);
+			const result3 = await api.submitPrompt({ name: "password", value: "foo", state: result2.state });
+			ok("tokens" in result3);
+			deepEqual(result3.identity.id, signedUp.identity.id);
+		});
+
+		it("should refuse a value that is not one address", async () => {
+			const result1 = await api.signUp();
+			await rejects(() => api.submitPrompt({ name: "email", value: {}, state: result1.state }), failsWith("INVALID_PROMPT_VALUE"));
+		});
+
+		it("should send the code to the normalized address", async () => {
+			const signedUp = await signUp("Victim@Example.com");
+			deepEqual(channelEmail.messages[0].recipient.data, { email: "victim@example.com" });
+			const identity = await storage.getIdentity(signedUp.identity.id);
+			ok(identity?.components.some((c) => c.kind === "identification" && c.identification === "victim@example.com"));
+			ok(identity?.components.some((c) => c.kind === "challenge" && c.component === "otp" && c.data?.recipient === "victim@example.com"));
+		});
+	});
+
+	describe("subscribe recipient", () => {
+		async function startSubscribe(on: AuthDanceApi, name: string): Promise<AuthDanceResponseState> {
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(on);
+			return on.subscribe({ name, access_token: signedIn.tokens.access_token });
+		}
+
+		it("should refuse a recipient that is not one clean string", async () => {
+			// The audit PoC: an array and a header injection reached the delivery adapter as they came.
+			const started = await startSubscribe(api, "sms");
+			for (const value of [["a@x", "b@x"], { to: "a@x" }, "victim@example.com\r\nBcc: other@example.com", "", "x".repeat(321)]) {
+				await rejects(() => api.submitPrompt({ name: "sms", value, state: started.state }), failsWith("INVALID_PROMPT_VALUE"));
+			}
+			deepEqual(channelSms.messages, []);
+		});
+
+		it("should store the record the channel builds, and send the code to it", async () => {
+			const received: unknown[] = [];
+			const spy: AuthDanceChannel = {
+				sendMessage: (message) => channelSms.sendMessage(message),
+				getPrompt: (context) => channelSms.getPrompt(context),
+				getIdentityChannel: async (channel, value, confirmed) => {
+					received.push(value);
+					return { kind: "channel", component: channel, confirmed, data: { phone: `+1${value}` } };
+				},
+			};
+			const spied = new AuthDanceApi({ ...apiOptions, channels: { ...apiOptions.channels, sms: spy } });
+			const started = await startSubscribe(spied, "sms");
+			const result1 = await spied.submitPrompt({ name: "sms", value: " 5551234567 ", state: started.state });
+			ok("state" in result1);
+			// The library trims the value before the channel reads it.
+			deepEqual(received, ["5551234567"]);
+			await spied.sendPrompt({ name: "sms", locale: "en", state: result1.state });
+			deepEqual(channelSms.messages[0].recipient.data, { phone: "+15551234567" });
+			const result2 = await spied.submitPrompt({ name: "sms", value: channelSms.messages[0].content["text/x-code"], state: result1.state });
+			ok("success" in result2);
+			const identity = await storage.getIdentityByIdentification("email", "john.doe@example.com");
+			deepEqual(
+				identity?.components.find((c) => c.kind === "channel" && c.component === "sms"),
+				{ kind: "channel", component: "sms", confirmed: true, data: { phone: "+15551234567" } },
+			);
+		});
+
+		it("should refuse a recipient when the channel fails on it", async () => {
+			const broken: AuthDanceChannel = {
+				sendMessage: () => Promise.resolve(),
+				getPrompt: (context) => channelSms.getPrompt(context),
+				getIdentityChannel: () => Promise.reject(new Error("the channel holds the raw value 5551234567")),
+			};
+			const api2 = new AuthDanceApi({ ...apiOptions, channels: { ...apiOptions.channels, sms: broken } });
+			const started = await startSubscribe(api2, "sms");
+			await rejects(
+				() => api2.submitPrompt({ name: "sms", value: "5551234567", state: started.state }),
+				(error) => error instanceof AuthDanceError && error.code === "INVALID_PROMPT_VALUE" && error.cause === undefined,
+			);
+		});
+
+		it("should refuse a record under another name", async () => {
+			const renaming: AuthDanceChannel = {
+				sendMessage: () => Promise.resolve(),
+				getPrompt: (context) => channelSms.getPrompt(context),
+				getIdentityChannel: async (_channel, value, confirmed) => ({
+					kind: "channel",
+					component: "email",
+					confirmed,
+					data: { email: value },
+				}),
+			};
+			const api2 = new AuthDanceApi({ ...apiOptions, channels: { ...apiOptions.channels, sms: renaming } });
+			const started = await startSubscribe(api2, "sms");
+			await rejects(() => api2.submitPrompt({ name: "sms", value: "5551234567", state: started.state }), failsWith("INVALID_PROMPT_VALUE"));
 		});
 	});
 

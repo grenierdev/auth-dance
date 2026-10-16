@@ -1071,6 +1071,17 @@ export class AuthDanceApi {
 		return { session, identity };
 	}
 
+	// The guard every recipient passes before any channel reads it, so a channel that forgets to validate still gets a
+	// clean value: a string of 1 to 320 characters, the longest email address, with no control character and no line
+	// or paragraph separator.
+	#recipientValue(name: string, value: unknown): string {
+		const recipient = typeof value === "string" ? value.trim() : "";
+		if (recipient.length < 1 || recipient.length > 320 || /[\p{Cc}\u2028\u2029]/u.test(recipient)) {
+			throw new InvalidPromptValueError(name);
+		}
+		return recipient;
+	}
+
 	// The pending channel comes before the components of the identity. The one-time code goes to the new recipient.
 	#subscribeContext(state: AuthDanceStateSubscribe, identity: AuthDanceIdentity): AuthDanceComponentContext {
 		return {
@@ -1611,9 +1622,11 @@ export class AuthDanceApi {
 	 *
 	 * This flow needs a fresh sign-in. Past the elevated window it raises `FreshSignInRequiredError`.
 	 *
-	 * The prompt collects the recipient, a phone number for example. The library then confirms the new channel
-	 * with a one-time code. It delivers that code over the channel being subscribed, to the recipient it just
-	 * collected, so the validation proves control of that recipient.
+	 * The prompt collects the recipient, a phone number for example. The library refuses a recipient that is not a
+	 * string of 1 to 320 characters, or that holds a control character. It then hands the recipient to
+	 * `getIdentityChannel` of the channel, and stores the record that method returns. The library then confirms the
+	 * new channel with a one-time code. It delivers that code over the channel being subscribed, to that record, so
+	 * the validation proves control of that recipient.
 	 *
 	 * @param options `name` is the channel to subscribe, as `options.channels` declares it.
 	 * @returns The encrypted state, the prompt of the channel, and the moment the state expires.
@@ -2104,9 +2117,21 @@ export class AuthDanceApi {
 			};
 		} else if (state.kind === "subscribe") {
 			// Only the recipient is collected here. The one-time code that confirms it goes to the validation
-			// branch.
+			// branch, to the record the channel built.
 			const { identity } = await this.#getSessionAndIdentity(state.sessionId);
-			state.channel.data = { ...(state.channel.data ?? {}), [state.channel.component]: options.value };
+			const channel = this.#options.channels[state.channel.component];
+			if (!channel) {
+				throw new UnknownChannelError(state.channel.component);
+			}
+			const recipient = this.#recipientValue(state.channel.component, options.value);
+			const record = await channel.getIdentityChannel(state.channel.component, recipient, false).catch((cause) => {
+				// A channel bug surfaces as a refused value, never as UNKNOWN with the raw recipient in its cause.
+				throw cause instanceof InvalidPromptValueError ? cause : new InvalidPromptValueError(state.channel.component);
+			});
+			if (record?.kind !== "channel" || record.component !== state.channel.component) {
+				throw new InvalidPromptValueError(state.channel.component);
+			}
+			state.channel = { ...record, confirmed: false };
 			state.validating = true;
 			const prompt = await new OtpAuthDanceComponent({ channel: state.channel.component }).getPrompt(
 				this.#subscribeContext(state, identity),
