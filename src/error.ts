@@ -125,6 +125,14 @@ export class ComponentNotRecoverableError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"COMPONENT_NOT_RECOVERABLE"}`. */
 	readonly code: "COMPONENT_NOT_RECOVERABLE" = "COMPONENT_NOT_RECOVERABLE";
 }
+/**
+ * The choreography, or a recovery choreography, declares a path the library refuses to run. The constructor raises
+ * it. A sign-in or a sign-up also raises it before it mints tokens on a path with no step that proves control.
+ */
+export class InvalidChoreographyError extends AuthDanceError {
+	/** The app layer answers HTTP 500 with `{"error":"INVALID_CHOREOGRAPHY"}`. */
+	readonly code: "INVALID_CHOREOGRAPHY" = "INVALID_CHOREOGRAPHY";
+}
 /** `signIn` or `signUp` found no first step in the choreography. */
 export class ChoreographyEmptyError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"CHOREOGRAPHY_EMPTY"}`. */
@@ -262,6 +270,7 @@ export const Errors = {
 	IDENTITY_NOT_FOUND: IdentityNotFoundError,
 	IDENTITY_NOT_RESOLVED: IdentityNotResolvedError,
 	INVALID_ACCESS_TOKEN: InvalidAccessTokenError,
+	INVALID_CHOREOGRAPHY: InvalidChoreographyError,
 	INVALID_PROMPT_VALUE: InvalidPromptValueError,
 	INVALID_REFRESH_TOKEN: InvalidRefreshTokenError,
 	INVALID_STATE_FOR_FLOW: InvalidStateForFlowError,

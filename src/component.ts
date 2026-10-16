@@ -52,6 +52,14 @@ export interface AuthDanceComponent {
 	 * `ComponentNotRecoverableError`.
 	 */
 	verifiable: boolean;
+	/**
+	 * Whether a value that `verifyPrompt` accepts proves that the owner holds the factor, and does not only name an
+	 * identity. When you omit it, a `challenge` proves and an `identification` does not.
+	 *
+	 * Every complete path of the choreography needs one step that proves. A third-party identification that checks a
+	 * secret, a signature for example, sets this to `true`.
+	 */
+	proves?: boolean;
 	/** Builds the prompt the client renders for this step. */
 	getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput>;
 	/**
@@ -93,15 +101,16 @@ export interface AuthDanceComponent {
 	 *
 	 * When a component answers `true` and the dance has resolved nobody, the library raises
 	 * `IdentityNotResolvedError`. When the id contradicts an id an earlier step resolved, it raises
-	 * `IdentityMismatchError`. In a sign-in an answer of `false` raises `InvalidPromptValueError`.
+	 * `IdentityMismatchError`. Any other answer raises `InvalidPromptValueError`, and so does an id that names no
+	 * stored identity.
 	 *
 	 * A recovery needs an identity id from the first submit. Any other answer raises `IdentityNotResolvedError`.
 	 *
 	 * On a verification component the library accepts `true` alone. Any other answer raises
 	 * `InvalidValidationValueError`.
 	 *
-	 * @returns `false` to reject the value. `true` to accept it without resolving anyone. An identity id to say who
-	 * it is.
+	 * @returns `true` to accept the value without resolving anyone. An identity id to accept it and say who it is.
+	 * Any other answer, `false` and `undefined` included, rejects the value.
 	 */
 	verifyPrompt(value: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]>;
 	/**

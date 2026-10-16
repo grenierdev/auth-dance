@@ -126,7 +126,10 @@ const client = new AuthDanceClient({ baseUrl: "http://local", fetch: auth.fetch 
 | `auth-dance/providers/*`  | `memory` for tests, `cloudflare` for Workers                                         |
 
 A step is a small interface. Implement `AuthDanceComponent` and your own factor works in every flow, including the flows you have not
-considered yet.
+considered yet. Two rules apply. `verifyPrompt` accepts a value only with `true` or an identity id: any other answer, `undefined`
+included, rejects it. And every complete path of the choreography needs a step that proves control: a challenge, or an
+identification that sets `proves: true` because it checks a secret, as WebAuthn does. An address alone proves nothing, so
+`choice("email", "passkey")` fails at startup. Sign in by address and code with `sequence("email", "otp")`.
 
 Full documentation lives at [auth.dance](https://auth.dance/). The tests beside each module are the reference until then.
 

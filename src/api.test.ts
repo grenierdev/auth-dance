@@ -1,4 +1,4 @@
-import { deepEqual, ok, rejects } from "node:assert";
+import { deepEqual, ok, rejects, throws } from "node:assert";
 import { hex } from "@scure/base";
 import { decodeJwt } from "jose/jwt/decode";
 import { beforeEach, describe, it } from "vitest";
@@ -11,10 +11,11 @@ import {
 	type AuthDanceSessionEvent,
 } from "./api.ts";
 import { choice, sequence } from "./choreography.ts";
-import type { AuthDanceComponentContext } from "./component.ts";
+import type { AuthDanceComponent, AuthDanceComponentContext } from "./component.ts";
 import { EmailAuthDanceComponent } from "./components/email.ts";
 import { OtpAuthDanceComponent } from "./components/otp.ts";
 import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "./components/password.ts";
+import { WebAuthnAuthDanceComponent } from "./components/webauthn.ts";
 import { AuthDanceError, SessionNotFoundError } from "./error.ts";
 import { ksuid } from "./id.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
@@ -474,7 +475,7 @@ describe("Api", () => {
 	it("should unsubscribe a channel together with the components linked to it", async () => {
 		const api = new AuthDanceApi({
 			...apiOptions,
-			choreography: choice(sequence("email", "password"), "email2"),
+			choreography: choice(sequence("email", "password"), sequence("email2", "otp2")),
 		});
 		await seedIdentity({ name: "John Doe" }, async (seed) => [
 			...(await email.getIdentityComponent("email", "john.doe@example.com", true)),
@@ -651,10 +652,10 @@ describe("Api", () => {
 		ok(identity?.components.find((c) => c.kind === "challenge" && c.component === "password"));
 	});
 	it("should unenroll a component a choice makes optional", async () => {
-		// "email2" alone is an alternative to the email + password path, so "password" becomes droppable.
+		// "email2" and its code are an alternative to the email + password path, so "password" becomes droppable.
 		const api = new AuthDanceApi({
 			...apiOptions,
-			choreography: choice(sequence("email", "password"), "email2"),
+			choreography: choice(sequence("email", "password"), sequence("email2", "otp2")),
 		});
 		await seedIdentity({ name: "John Doe" }, async (seed) => [
 			...(await email.getIdentityComponent("email", "john.doe@example.com", true)),
@@ -692,10 +693,10 @@ describe("Api", () => {
 		ok(!identity.components.find((c) => c.kind !== "channel" && c.component === "password"));
 	});
 	it("should unenroll the channel the component links to", async () => {
-		// "email2" alone is an alternative to the email + password path, so "email" becomes droppable.
+		// "email2" and its code are an alternative to the email + password path, so "email" becomes droppable.
 		const api = new AuthDanceApi({
 			...apiOptions,
-			choreography: choice(sequence("email", "password"), "email2"),
+			choreography: choice(sequence("email", "password"), sequence("email2", "otp2")),
 		});
 		await seedIdentity({ name: "John Doe" }, async (seed) => [
 			...(await email.getIdentityComponent("email", "john.doe@example.com", true)),
@@ -725,7 +726,7 @@ describe("Api", () => {
 	it("should not unenroll a component whose collateral the choreography cannot do without", async () => {
 		const api = new AuthDanceApi({
 			...apiOptions,
-			choreography: choice(sequence("email", "password"), "email2"),
+			choreography: choice(sequence("email", "password"), sequence("email2", "otp2")),
 		});
 		await seedIdentity({ name: "John Doe" }, async (seed) => [
 			...(await email.getIdentityComponent("email", "john.doe@example.com", true)),
@@ -1424,6 +1425,158 @@ describe("Api", () => {
 				}),
 			(error) => error instanceof AuthDanceError && error.code === "UNKNOWN" && error.cause === boom,
 		);
+	});
+
+	// A component whose `verifyPrompt` gives one fixed answer, whatever the owner submits.
+	function stubComponent(kind: "identification" | "challenge", answer: () => unknown, proves?: boolean): AuthDanceComponent {
+		return {
+			kind,
+			verifiable: false,
+			proves,
+			getPrompt: async (ctx) => ({ kind: "input", name: ctx.name, type: "pin", sendable: false }),
+			getIdentityComponent: async (component, _value, confirmed) => [{ kind: "challenge", component, confirmed, data: {} }],
+			verifyPrompt: async () => answer() as boolean | string,
+		};
+	}
+
+	describe("step result", () => {
+		// The audit PoC: a component that forgets `return false` signed anyone in once an earlier step resolved the identity.
+		const cases: Array<{ label: string; answer: (ids: { john: string; jane: string }) => unknown; expected: string }> = [
+			{ label: "undefined", answer: () => undefined, expected: "INVALID_PROMPT_VALUE" },
+			{ label: "null", answer: () => null, expected: "INVALID_PROMPT_VALUE" },
+			{ label: "0", answer: () => 0, expected: "INVALID_PROMPT_VALUE" },
+			{ label: "an empty string", answer: () => "", expected: "INVALID_PROMPT_VALUE" },
+			{ label: "an object", answer: () => ({}), expected: "INVALID_PROMPT_VALUE" },
+			{ label: "false", answer: () => false, expected: "INVALID_PROMPT_VALUE" },
+			{ label: "true", answer: () => true, expected: "tokens" },
+			{ label: "the id of the resolved identity", answer: ({ john }) => john, expected: "tokens" },
+			{ label: "the id of another stored identity", answer: ({ jane }) => jane, expected: "IDENTITY_MISMATCH" },
+		];
+		for (const { label, answer, expected } of cases) {
+			it(`should answer ${expected} when the step answers ${label}`, async () => {
+				const john = await seedIdentity({ name: "John Doe" }, async () => [
+					...(await email.getIdentityComponent("email", "john.doe@example.com", true)),
+				]);
+				const jane = await seedIdentity({ name: "Jane Doe" }, async () => [
+					...(await email.getIdentityComponent("email", "jane.doe@example.com", true)),
+				]);
+				const api = new AuthDanceApi({
+					...apiOptions,
+					choreography: sequence("email", "pin"),
+					components: { ...apiOptions.components, pin: stubComponent("challenge", () => answer({ john: john.id, jane: jane.id })) },
+				});
+				const result1 = await api.signIn();
+				const result2 = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state });
+				ok("state" in result2);
+				const submit = () => api.submitPrompt({ name: "pin", value: "0000", state: result2.state });
+				if (expected === "tokens") {
+					const result3 = await submit();
+					ok("tokens" in result3);
+					deepEqual(result3.identity.id, john.id);
+				} else {
+					await rejects(submit, (error) => error instanceof AuthDanceError && error.code === expected);
+					deepEqual(await storage.listSession(john.id), []);
+				}
+			});
+		}
+
+		it("should refuse an identity id that names no stored identity", async () => {
+			const api = new AuthDanceApi({
+				...apiOptions,
+				choreography: sequence("ghost", "password"),
+				components: { ...apiOptions.components, ghost: stubComponent("identification", () => "id_nobody") },
+			});
+			const result1 = await api.signIn();
+			await rejects(
+				() => api.submitPrompt({ name: "ghost", value: "anything", state: result1.state }),
+				(error) => error instanceof AuthDanceError && error.code === "INVALID_PROMPT_VALUE",
+			);
+		});
+	});
+
+	describe("choreography check", () => {
+		const webauthn = () => new WebAuthnAuthDanceComponent({ rp: { id: "example.com", name: "Example" } });
+
+		it("should refuse a path that only names an identity", () => {
+			// The audit PoC: choice("email", "webauthn") minted tokens for typing a known address.
+			throws(
+				() =>
+					new AuthDanceApi({
+						...apiOptions,
+						choreography: choice("email", "webauthn"),
+						components: { ...apiOptions.components, webauthn: webauthn() },
+					}),
+				(error) => error instanceof AuthDanceError && error.code === "INVALID_CHOREOGRAPHY",
+			);
+		});
+
+		it("should accept every path that holds a proving step", () => {
+			const components = { ...apiOptions.components, webauthn: webauthn() };
+			new AuthDanceApi({ ...apiOptions, choreography: sequence("email", "password"), components });
+			new AuthDanceApi({ ...apiOptions, choreography: choice(sequence("email", "password"), "webauthn"), components });
+			new AuthDanceApi({ ...apiOptions, choreography: sequence("email", "otp"), components });
+		});
+
+		it("should read the proves flag of a third-party identification", () => {
+			new AuthDanceApi({
+				...apiOptions,
+				choreography: sequence("badge"),
+				components: { ...apiOptions.components, badge: stubComponent("identification", () => false, true) },
+			});
+			throws(
+				() =>
+					new AuthDanceApi({
+						...apiOptions,
+						choreography: sequence("badge"),
+						components: { ...apiOptions.components, badge: stubComponent("identification", () => false) },
+					}),
+				(error) => error instanceof AuthDanceError && error.code === "INVALID_CHOREOGRAPHY",
+			);
+		});
+
+		it("should refuse an undeclared step at construction", () => {
+			throws(
+				() => new AuthDanceApi({ ...apiOptions, choreography: sequence("email", "nothing") }),
+				(error) => error instanceof AuthDanceError && error.code === "UNKNOWN_COMPONENT",
+			);
+		});
+
+		it("should refuse to mint tokens when the choreography changes after construction", async () => {
+			await johnDoe();
+			apiOptions.components.webauthn = webauthn();
+			const api = new AuthDanceApi(apiOptions);
+			apiOptions.choreography = choice("email", "webauthn");
+			const result1 = await api.signIn();
+			await rejects(
+				() => api.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state }),
+				(error) => error instanceof AuthDanceError && error.code === "INVALID_CHOREOGRAPHY",
+			);
+			const identity = await storage.getIdentityByIdentification("email", "john.doe@example.com");
+			ok(identity);
+			deepEqual(await storage.listSession(identity.id), []);
+		});
+
+		it("should sign up by address and code alone", async () => {
+			const api = new AuthDanceApi({ ...apiOptions, choreography: sequence("email", "otp") });
+			const result1 = await api.signUp();
+			const result2 = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state });
+			ok("state" in result2);
+			await api.sendPrompt({ name: "email", locale: "en", state: result2.state });
+			const result3 = await api.submitPrompt({
+				name: "email",
+				value: channelEmail.messages[0].content["text/x-code"],
+				state: result2.state,
+			});
+			ok("state" in result3);
+			ok(result3.prompt.kind === "input" && result3.prompt.name === "otp");
+			// A second code, for the step that proves control in a sign-in.
+			await api.sendPrompt({ name: "otp", locale: "en", state: result3.state });
+			deepEqual(channelEmail.messages.length, 2);
+			const result4 = await api.submitPrompt({ name: "otp", value: channelEmail.messages[1].content["text/x-code"], state: result3.state });
+			ok("tokens" in result4);
+			const identity = await storage.getIdentity(result4.identity.id);
+			ok(identity?.components.find((c) => c.kind === "challenge" && c.component === "otp" && c.confirmed));
+		});
 	});
 
 	// These buckets are keyed on the identity or session. Per-address buckets live at the edge, see app.test.ts.

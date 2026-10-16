@@ -37,6 +37,7 @@ import {
 	IdentityNotFoundError,
 	IdentityNotResolvedError,
 	InvalidAccessTokenError,
+	InvalidChoreographyError,
 	InvalidPromptValueError,
 	InvalidRefreshTokenError,
 	InvalidStateError,
@@ -187,7 +188,14 @@ export interface AuthDanceApiHooks {
 export interface AuthDanceApiOptions {
 	/** Where the library delivers a message, keyed by the channel name a component asks for. */
 	channels: Record<string, AuthDanceChannel>;
-	/** The declaration the sign-in, the sign-up, the recover and the unenroll flow read. */
+	/**
+	 * The declaration the sign-in, the sign-up, the recover and the unenroll flow read.
+	 *
+	 * Every complete path needs one step that proves control, a challenge or a component that sets `proves`. An
+	 * address alone names an identity and proves nothing, so `choice("email", "passkey")` is refused. The
+	 * constructor raises `InvalidChoreographyError` for such a path, and `UnknownComponentError` for a step that
+	 * `components` does not declare.
+	 */
 	choreography: AuthDanceChoreography;
 	/** What each step does, keyed by the name the choreography and the prompts use. */
 	components: Record<string, AuthDanceComponent>;
@@ -292,10 +300,72 @@ export class AuthDanceApi {
 	#options: AuthDanceApiOptions;
 	#decodedSecret: Uint8Array;
 
-	/** Builds the state machine from a policy. It decodes `options.secret` one time and keeps the raw key. */
+	/**
+	 * Builds the state machine from a policy. It decodes `options.secret` one time and keeps the raw key.
+	 *
+	 * @throws UnknownComponentError when a step of the choreography names a component `options.components` does not
+	 * declare.
+	 * @throws InvalidChoreographyError when a complete path of the choreography has no step that proves control.
+	 */
 	constructor(options: AuthDanceApiOptions) {
 		this.#options = options;
 		this.#decodedSecret = decode(this.#options.secret);
+		for (const { component, path } of walk(options.choreography)) {
+			if (component && !options.components[component.component]) {
+				throw new UnknownComponentError(component.component);
+			}
+			if (!component) {
+				this.#requireProof(path.map((c) => c.component));
+			}
+		}
+	}
+
+	// Whether an accepted value of the component proves control, and does not only name an identity.
+	#proves(name: string): boolean {
+		const authComponent = this.#options.components[name];
+		return authComponent !== undefined && (authComponent.proves ?? authComponent.kind === "challenge");
+	}
+
+	// A complete path with no proving step mints tokens for anyone who knows an identifier.
+	#requireProof(path: string[]): void {
+		if (!path.some((name) => this.#proves(name))) {
+			throw new InvalidChoreographyError(
+				`path ${path.join(" -> ")} has no step that proves control; add a challenge, for example sequence("email", "otp")`,
+			);
+		}
+	}
+
+	// Judges one answer to a step. Only `true` and a non-empty identity id accept the value. Every other answer,
+	// `undefined` included, rejects it. An id that names no stored identity rejects it too, with the same code as a
+	// wrong value, so a prober cannot tell which component answers with a stale id.
+	async #acceptStep(
+		authComponent: AuthDanceComponent,
+		name: string,
+		value: unknown,
+		ctx: AuthDanceComponentContext,
+		identity: AuthDanceIdentity | undefined,
+	): Promise<AuthDanceIdentity> {
+		const answer: unknown = await authComponent.verifyPrompt(value, ctx);
+		if (answer === true) {
+			if (!identity) {
+				throw new IdentityNotResolvedError(name);
+			}
+			return identity;
+		}
+		if (typeof answer !== "string" || answer === "") {
+			throw new InvalidPromptValueError(name);
+		}
+		if (identity) {
+			if (answer !== identity.id) {
+				throw new IdentityMismatchError(name);
+			}
+			return identity;
+		}
+		const resolved = await this.#options.storage.getIdentity(answer);
+		if (!resolved) {
+			throw new InvalidPromptValueError(name);
+		}
+		return resolved;
 	}
 
 	/** The storage this instance reads and writes. */
@@ -652,6 +722,10 @@ export class AuthDanceApi {
 		const authFlow = options.flow === "sign-in" || options.flow === "sign-up";
 		const nextMove = authFlow ? peek(this.#options.choreography, options.path) : null;
 		if (nextMove === null) {
+			if (authFlow) {
+				// `options.choreography` can change after the constructor checked it.
+				this.#requireProof(options.path);
+			}
 			if (options.persist) {
 				await this.#options.storage.setIdentity(options.identity);
 				if (options.flow === "sign-up") {
@@ -1056,6 +1130,11 @@ export class AuthDanceApi {
 			throw new ComponentNotCollectedError(choreographyComponent.component);
 		}
 		const ctx = this.#signUpContext(state, choreographyComponent.component);
+		// An earlier step can contribute the record, under a component that is its own proof: the one-time code
+		// challenge an address contributes, for example.
+		if (!authComponent.verifiable) {
+			return { path, choreographyComponent, identityComponent, ctx, verificationAuthDanceComponent: authComponent };
+		}
 		if (!authComponent.verificationComponent) {
 			throw new ComponentNotVerifiableError(choreographyComponent.component);
 		}
@@ -1538,8 +1617,11 @@ export class AuthDanceApi {
 	 * before it reads the value, so a wrong password costs a slot.
 	 * @throws InvalidStateForFlowError when the state carries a `kind` the schema does not know about.
 	 * @throws ComponentNotInChoreographyError or UnknownComponentError when `name` is not the step the flow expects.
-	 * @throws InvalidPromptValueError when a sign-in step rejects the value.
+	 * @throws InvalidPromptValueError when a sign-in step rejects the value. A step rejects every answer other than
+	 * `true` or the id of a stored identity.
 	 * @throws InvalidValidationValueError when a verification rejects the value.
+	 * @throws InvalidChoreographyError when `options.choreography` changed after the constructor checked it, and the
+	 * completed path has no step that proves control.
 	 * @throws IdentityNotResolvedError when no step has resolved an identity and the value resolves none either.
 	 * @throws IdentityMismatchError when two components of one dance resolve two different identities.
 	 * @throws ComponentAlreadyCollectedError when the step already holds a confirmed value.
@@ -1593,29 +1675,18 @@ export class AuthDanceApi {
 		let advanceOptions = this.#advanceBag(state, expireAt, options);
 		if (state.kind === "sign-in") {
 			const { choreographyComponent, authComponent } = this.#resolveStep(state.path, options.name);
-			let identity = state.identityId ? await this.#options.storage.getIdentity(state.identityId) : undefined;
-			const ctx = this.#signInContext(state, choreographyComponent.component, identity!);
-			const identityId = await authComponent.verifyPrompt(options.value, ctx);
-			// Verification failed. Keep this check on its own. The guard below no longer fires once an earlier step
-			// put an identityId in the state, and a rejected value would walk straight to the tokens.
-			if (identityId === false) {
-				throw new InvalidPromptValueError(choreographyComponent.component);
+			const known = state.identityId ? await this.#options.storage.getIdentity(state.identityId) : undefined;
+			if (state.identityId && !known) {
+				throw new IdentityNotFoundError(state.identityId);
 			}
-			if (!identity && identityId === true) {
-				throw new IdentityNotResolvedError(choreographyComponent.component);
-			}
-			if (identity && typeof identityId === "string" && identityId !== identity.id) {
-				throw new IdentityMismatchError(choreographyComponent.component);
-			}
-			if (typeof identityId === "string") {
-				state.identityId = identityId;
-			}
-			identity ??= await this.#options.storage.getIdentity(state.identityId!);
-			await this.#upgradeIdentity(authComponent, options.value, ctx, identity!);
+			const ctx = this.#signInContext(state, choreographyComponent.component, known);
+			const identity = await this.#acceptStep(authComponent, choreographyComponent.component, options.value, ctx, known);
+			state.identityId = identity.id;
+			await this.#upgradeIdentity(authComponent, options.value, ctx, identity);
 			state.path.push(choreographyComponent.component);
 			advanceOptions = {
 				...advanceOptions,
-				identity: identity!,
+				identity,
 				flow: "sign-in",
 				path: state.path,
 			};

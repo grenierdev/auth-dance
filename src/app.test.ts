@@ -469,12 +469,12 @@ describe("App", () => {
 	});
 
 	it("should unenroll a component a choice makes optional", async () => {
-		// "email2" alone is an alternative to the email + password path, so "password" becomes droppable.
+		// "email2" and its code are an alternative to the email + password path, so "password" becomes droppable.
 		post = client(
 			createAuthDance({
 				api: {
 					...apiOptions,
-					choreography: choice(sequence("email", "password"), "email2"),
+					choreography: choice(sequence("email", "password"), sequence("email2", "otp2")),
 				},
 			}),
 		);

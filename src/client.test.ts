@@ -176,7 +176,7 @@ describe("Client", () => {
 	});
 
 	it("should pick a branch of a choice", async () => {
-		build({ choreography: choice(sequence("email", "password"), "email2") });
+		build({ choreography: choice(sequence("email", "password"), sequence("email2", "otp2")) });
 		await seedIdentity(async (seed) => [
 			...(await email.getIdentityComponent("email", "john.doe@example.com", true)),
 			...(await password.getIdentityComponent("password", "foo", true, seed("password"))),
@@ -199,6 +199,11 @@ describe("Client", () => {
 		deepEqual(choreography.current?.name, "email2");
 
 		await choreography.submitPrompt("john.doe2@example.com");
+		// The address names the owner. The code under "otp2" proves control.
+		deepEqual(choreography.current?.name, "otp2");
+		ok(choreography.sendable);
+		await choreography.sendPrompt();
+		await choreography.submitPrompt(lastCode(channelEmail2));
 		ok(choreography.done);
 		deepEqual(client.identity?.data?.name, "John Doe");
 	});
@@ -351,7 +356,7 @@ describe("Client", () => {
 	});
 
 	it("should unenroll a component a choice makes optional", async () => {
-		build({ choreography: choice(sequence("email", "password"), "email2") });
+		build({ choreography: choice(sequence("email", "password"), sequence("email2", "otp2")) });
 		const identity = await seedIdentity(async (seed) => [
 			...(await email.getIdentityComponent("email", "john.doe@example.com", true)),
 			...(await password.getIdentityComponent("password", "foo", true, seed("password"))),

@@ -11,3 +11,12 @@
 - **The password pepper has a floor (H1).** `PasswordAuthDanceComponent` throws a `TypeError` for a pepper that is not a string or
   holds fewer than 16 bytes. An unset `process.env.PASSWORD_PEPPER` now fails at startup. Make a pepper with
   `openssl rand -base64 32`.
+- **Only `true` or an identity id accepts a step (M1).** A sign-in step whose `verifyPrompt` answers anything else, `undefined`
+  included, raises `INVALID_PROMPT_VALUE`. So does an identity id that names no stored identity. A component that answered
+  `undefined` for success now fails; it also accepted every wrong value.
+- **Every path needs a step that proves control (H3).** `AuthDanceComponent` gains `proves?: boolean`. A challenge proves by
+  default, an identification does not. `EmailAuthDanceComponent` sets `proves = false` and `WebAuthnAuthDanceComponent` sets
+  `proves = true`. The `AuthDanceApi` constructor raises the new `InvalidChoreographyError` (`INVALID_CHOREOGRAPHY`) for a complete
+  path with no proving step, for example `choice("email", "passkey")`, and `UnknownComponentError` for an undeclared step. Sign in
+  by address and code with `sequence("email", "otp")`, where `otp` is the `challenge` name of the email component. A sign-up now
+  completes through that choreography.

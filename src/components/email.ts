@@ -5,9 +5,13 @@ import { OtpAuthDanceComponent, type OtpAuthDanceComponentOptions } from "./otp.
 
 export interface EmailAuthDanceComponentOptions extends OtpAuthDanceComponentOptions {
 	/**
-	 * The name the one-time code component is registered under in `AuthDanceApiOptions.components`. Give it a name
-	 * of its own. A name that also sits after this component in the same dance is collected twice in one sign-up,
-	 * which fails with `ComponentAlreadyCollectedError`.
+	 * The name the one-time code challenge is stored under. Register an `OtpAuthDanceComponent` under the same name in
+	 * `AuthDanceApiOptions.components`.
+	 *
+	 * For a sign-in by address and code, put the step of this name right after the address:
+	 * `sequence("email", "otp")` with `challenge: "otp"`. A sign-up then proves the address, and asks for a second
+	 * code for the `otp` step. A code step under a name of its own fails in a sign-up, because the sign-up then
+	 * collects the code as a value.
 	 */
 	challenge: string;
 }
@@ -17,12 +21,17 @@ export interface EmailAuthDanceComponentOptions extends OtpAuthDanceComponentOpt
  *
  * The component contributes three records that `linkedTo` binds into one set: the identification that holds the
  * address, the channel that reaches it, and the one-time code challenge under `options.challenge`.
+ *
+ * In a sign-in the address names an identity and proves nothing. Follow it with a step that proves control, a
+ * password or the one-time code step under `options.challenge`.
  */
 export class EmailAuthDanceComponent implements AuthDanceComponent {
 	/** The record the component contributes to an identity. An `identification` resolves an identity on its own. */
 	readonly kind: AuthDanceIdentityComponent["kind"] = "identification";
 	/** The address can prove control of itself. `verificationComponent` returns the component that sends the code. */
 	readonly verifiable = true;
+	/** Anyone can type an address, so an accepted value names an identity and proves nothing. */
+	readonly proves = false;
 
 	#options: EmailAuthDanceComponentOptions;
 

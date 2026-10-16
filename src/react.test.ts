@@ -172,7 +172,7 @@ describe("React", () => {
 	});
 
 	it("should take one branch of a choice", async () => {
-		build({ choreography: choice(sequence("email", "password"), "email2") });
+		build({ choreography: choice(sequence("email", "password"), sequence("email2", "otp2")) });
 		await seedIdentity(async (seed) => [
 			...(await email2.getIdentityComponent("email2", "john.doe@example.com", true)),
 			...(await password.getIdentityComponent("password", "foo", true, seed("password"))),
@@ -184,6 +184,11 @@ describe("React", () => {
 
 		await waitFor(() => ok(screen.queryByTestId("prompt-email2")));
 		await answer("email2", "john.doe@example.com");
+		// The address names the owner. The code under "otp2" proves control.
+		await waitFor(() => ok(screen.queryByTestId("prompt-otp2")));
+		await gesture(() => fireEvent.click(screen.getByTestId("send")));
+		await waitFor(() => deepEqual(channelEmail2.messages.length, 1));
+		await answer("otp2", lastCode(channelEmail2));
 		await waitFor(() => ok(screen.queryByTestId("done")));
 	});
 

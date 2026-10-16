@@ -336,6 +336,8 @@ export class WebAuthnAuthDanceComponent implements AuthDanceComponent {
 	readonly kind: AuthDanceIdentityComponent["kind"] = "identification";
 	/** A credential proves control of itself with a signature, so `verificationComponent` returns the component that asks for one. */
 	readonly verifiable = true;
+	/** `verifyPrompt` checks a signature before it names the owner, so an accepted value proves control. */
+	readonly proves = true;
 
 	#options: WebAuthnAuthDanceComponentOptions;
 	#origins: string[];
