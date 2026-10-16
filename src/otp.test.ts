@@ -4,12 +4,13 @@ import { generateKey, hotp, totp } from "./otp.ts";
 
 describe("One Time Password", () => {
 	it("generateKey", async () => {
+		deepEqual((await generateKey()).length, 32);
 		deepEqual((await generateKey(16)).length, 16);
 		deepEqual((await generateKey(100)).length, 100);
 	});
 
 	it("hotp", async () => {
-		const key = await generateKey(16);
+		const key = await generateKey();
 		const c1 = await hotp({ counter: 1, key, digits: 6 });
 		const c2 = await hotp({ counter: 1, key, digits: 6 });
 		deepEqual(c1, c2);

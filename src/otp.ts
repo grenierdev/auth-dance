@@ -131,7 +131,7 @@ function truncate(hmac: Uint8Array): number {
  * @throws {Error} When `key` is not a string, and not a `CryptoKey` with the `HMAC` algorithm.
  * @example
  * ```ts
- * const code = await hotp({ key: generateKey(16), counter: 1 });
+ * const code = await hotp({ key: generateKey(), counter: 1 });
  * ```
  */
 export async function hotp({
@@ -171,7 +171,7 @@ export async function hotp({
  * @returns The code as a string of `digits` characters, with leading zeros.
  * @example
  * ```ts
- * const code = await totp({ key: generateKey(16), period: 30 });
+ * const code = await totp({ key: generateKey(), period: 30 });
  * ```
  */
 export function totp({ key, time = Date.now() / 1000, period = 60, algorithm, digits }: TOTPOptions & { time?: number }): Promise<string> {
@@ -193,11 +193,12 @@ export function otp({ digits = 6 }: { digits?: number } = {}): string {
 /**
  * Generates a random shared key for {@link hotp} and {@link totp}.
  * Give a `length` that is a multiple of 8, because `hotp` rejects a string key of any other length.
- * @param length The number of characters in the key. Defaults to `16`.
+ * `TotpAuthDanceComponent` refuses a key under 32 characters.
+ * @param length The number of characters in the key. Defaults to `32`, which holds 160 bits, the RFC 4226 advice.
  * @param alphabet The characters that the function picks. Defaults to the base32 alphabet, `"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"`.
  * @returns The key as a string of `length` characters.
  */
-export function generateKey(length = 16, alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"): string {
+export function generateKey(length = 32, alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"): string {
 	const buffer = new Uint8Array(length);
 	crypto.getRandomValues(buffer);
 	let key = "";
@@ -246,7 +247,7 @@ export type OTPAuthDanceURIOptions =
  * @throws {Error} When `period`, `digits`, or `algorithm` has a value of the wrong type.
  * @example
  * ```ts
- * toURI({ type: "totp", secret: generateKey(16), label: "john.doe@example.com" });
+ * toURI({ type: "totp", secret: generateKey(), label: "john.doe@example.com" });
  * // otpauth://totp/john.doe%40example.com?digits=6&algorithm=SHA-1&period=30&secret=…
  * ```
  */

@@ -67,3 +67,7 @@
   `InvalidPromptValueError` for one it cannot deliver to. Any other error becomes `INVALID_PROMPT_VALUE`.
   `CloudflareSendMailAuthDanceChannel` normalizes the address and refuses a stored recipient with a line break, and a mail channel
   under a name other than `email` now delivers to its subscribed recipient. `MemoryAuthDanceChannel` refuses a non-string.
+- **TOTP keys have a floor (L1).** `TotpAuthDanceComponent` refuses a key under 32 base32 characters (160 bits), or with fewer than
+  8 distinct symbols, with `INVALID_PROMPT_VALUE`. The new `minKeyLength` option raises the floor; the constructor throws a
+  `RangeError` for a value under 32 or not a multiple of 8. A key enrolled before the change keeps verifying, and the floor applies
+  at the next rotate. `generateKey()` now defaults to 32 characters; a caller that passes 16 must change.

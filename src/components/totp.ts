@@ -22,6 +22,15 @@ const KEY_PATTERN = /^[A-Z2-7]+$/;
 /** The characters of a code. */
 const CODE_PATTERN = /^[0-9]+$/;
 
+/** The shortest key the component accepts, in base32 characters. 32 characters hold 160 bits, the RFC 4226 advice. */
+const MIN_KEY_LENGTH = 32;
+
+/**
+ * The fewest distinct symbols a key holds. It refuses `AAAA…` and `ABAB…`. A random 32-character key holds fewer with a
+ * probability of about 3 × 10⁻¹⁵.
+ */
+const MIN_KEY_SYMBOLS = 8;
+
 /** Options for {@link TotpAuthDanceComponent}. Every key has a default, so the component takes no options at all. */
 export interface TotpAuthDanceComponentOptions {
 	/** The number of digits in the code. @defaultValue `6` */
@@ -41,6 +50,13 @@ export interface TotpAuthDanceComponentOptions {
 	 * window of `1` with the default period accepts a code for 90 seconds. @defaultValue `1`
 	 */
 	window?: number;
+	/**
+	 * The shortest key the component accepts, in base32 characters. 32 characters hold 160 bits. The value is a
+	 * multiple of 8 and at least 32, so the option can only raise the floor. A key enrolled before a change keeps
+	 * verifying, and the floor applies at the next rotate.
+	 * @defaultValue `32`
+	 */
+	minKeyLength?: number;
 }
 
 /**
@@ -81,6 +97,7 @@ export class TotpAuthDanceComponent implements AuthDanceComponent {
 	#period: number;
 	#algorithm: OTPAlgorithm;
 	#window: number;
+	#minKeyLength: number;
 	// Whether this instance is the verification `verificationComponent` returns. It always asks for a code.
 	#validation = false;
 
@@ -89,13 +106,18 @@ export class TotpAuthDanceComponent implements AuthDanceComponent {
 	 *
 	 * A change of `digits`, of `period` or of `algorithm` reaches new records only. Each record carries the values
 	 * that built it, and a verification reads them from the record.
-	 * @param options The number of digits, the length of a time step, the hash and the drift window.
+	 * @param options The number of digits, the length of a time step, the hash, the drift window and the shortest key.
+	 * @throws {RangeError} When `options.minKeyLength` is under 32 or is not a multiple of 8.
 	 */
 	constructor(options: TotpAuthDanceComponentOptions = {}) {
 		this.#digits = options.digits ?? 6;
 		this.#period = options.period ?? 30;
 		this.#algorithm = options.algorithm ?? "SHA-1";
 		this.#window = options.window ?? 1;
+		this.#minKeyLength = options.minKeyLength ?? MIN_KEY_LENGTH;
+		if (!Number.isInteger(this.#minKeyLength) || this.#minKeyLength < MIN_KEY_LENGTH || this.#minKeyLength % 8 !== 0) {
+			throw new RangeError(`minKeyLength must be a multiple of 8 of at least ${MIN_KEY_LENGTH}`);
+		}
 	}
 
 	// The record the identity holds under `name`, with the defaults of this component for a value it omits. The
@@ -119,13 +141,14 @@ export class TotpAuthDanceComponent implements AuthDanceComponent {
 
 	// The submitted key as the store holds it. The method drops the spaces of a key that a human copied, and it
 	// puts the key in upper case. `hotp` reads a string key as base32 and refuses a length that is not a multiple
-	// of 8, so the method refuses one here, where the failure still names the step.
+	// of 8, so the method refuses one here, where the failure still names the step. The client makes the key, so the
+	// method also refuses a key too short or too regular to come from a random source.
 	#prepareKey(value: unknown): string | null {
 		if (typeof value !== "string") {
 			return null;
 		}
 		const key = value.replaceAll(" ", "").toUpperCase();
-		if (!key || key.length % 8 !== 0 || !KEY_PATTERN.test(key)) {
+		if (key.length < this.#minKeyLength || key.length % 8 !== 0 || !KEY_PATTERN.test(key) || new Set(key).size < MIN_KEY_SYMBOLS) {
 			return null;
 		}
 		return key;
@@ -135,11 +158,12 @@ export class TotpAuthDanceComponent implements AuthDanceComponent {
 	 * Turns a submitted key into the challenge record the identity holds. The `sign-up`, `enroll`, `rotate` and
 	 * `recover` flows call this method. The record starts unconfirmed, and the code of the verification confirms it.
 	 * @param component The component name the record carries.
-	 * @param value The shared key in base32. Its length must be a multiple of 8.
+	 * @param value The shared key in base32. It holds at least `options.minKeyLength` characters, 32 by default, a
+	 * multiple of 8, with at least 8 distinct symbols. `generateKey()` makes one.
 	 * @param confirmed Whether the record starts as confirmed.
 	 * @returns One challenge record. `data` holds the key, the hash, the number of digits and the length of a step.
-	 * @throws {@link InvalidPromptValueError} When the value is not a base32 string with a length that is a multiple
-	 * of 8, or when it matches the key it replaces.
+	 * @throws {@link InvalidPromptValueError} When the value is not such a key, or when it matches the key it
+	 * replaces.
 	 */
 
 	async getIdentityComponent(
@@ -150,7 +174,9 @@ export class TotpAuthDanceComponent implements AuthDanceComponent {
 	): Promise<AuthDanceIdentityComponent[]> {
 		const key = this.#prepareKey(value);
 		if (!key) {
-			throw new InvalidPromptValueError("totp key must be a base32 string with a length that is a multiple of 8");
+			throw new InvalidPromptValueError(
+				`totp key must hold at least ${this.#minKeyLength} base32 characters from a random source; use generateKey()`,
+			);
 		}
 		if (this.#record(context, component)?.key === key) {
 			throw new InvalidPromptValueError("totp key must differ from the one it replaces");
@@ -266,6 +292,7 @@ export class TotpAuthDanceComponent implements AuthDanceComponent {
 			period: this.#period,
 			algorithm: this.#algorithm,
 			window: this.#window,
+			minKeyLength: this.#minKeyLength,
 		});
 		component.#validation = true;
 		return component;

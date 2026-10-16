@@ -1,4 +1,4 @@
-import { deepEqual, ok, rejects } from "node:assert";
+import { throws as assertThrows, deepEqual, ok, rejects } from "node:assert";
 import { afterEach, describe, it, vi, assert as vitestAssert } from "vitest";
 
 import type { AuthDanceComponentContext } from "../component.ts";
@@ -36,7 +36,7 @@ function keyOf(components: AuthDanceIdentityComponent[]): string {
 describe("TotpAuthDanceComponent", () => {
 	it("should store the key and the shape of its codes", async () => {
 		const component = new TotpAuthDanceComponent({ digits: 8, period: 60 });
-		const key = generateKey(16);
+		const key = generateKey();
 		const components = await component.getIdentityComponent("totp", key, false, context());
 		deepEqual(components.length, 1);
 		deepEqual(components[0].kind, "challenge");
@@ -47,7 +47,10 @@ describe("TotpAuthDanceComponent", () => {
 
 	it("should drop the spaces of a key and put it in upper case", async () => {
 		const component = new TotpAuthDanceComponent();
-		deepEqual(keyOf(await component.getIdentityComponent("totp", "abcdefgh ijklmnop", false, context())), "ABCDEFGHIJKLMNOP");
+		deepEqual(
+			keyOf(await component.getIdentityComponent("totp", "abcdefgh ijklmnop qrstuvwx yz234567", false, context())),
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
+		);
 	});
 
 	it("should refuse a key that is not base32 of a length that is a multiple of 8", async () => {
@@ -57,20 +60,49 @@ describe("TotpAuthDanceComponent", () => {
 		}
 	});
 
-	it("should refuse a key that matches the one it replaces", async () => {
+	it("should refuse a key too short or too regular to come from a random source", async () => {
+		const component = new TotpAuthDanceComponent();
+		// The audit PoC: 40 bits, all one symbol, enrolled as a second factor.
+		await rejects(() => component.getIdentityComponent("totp", "AAAAAAAA", false, context()), InvalidPromptValueError);
+		await rejects(() => component.getIdentityComponent("totp", generateKey(16), false, context()), InvalidPromptValueError);
+		await rejects(() => component.getIdentityComponent("totp", "A".repeat(32), false, context()), InvalidPromptValueError);
+		await rejects(() => component.getIdentityComponent("totp", "AB".repeat(16), false, context()), InvalidPromptValueError);
+		ok(await component.getIdentityComponent("totp", generateKey(), false, context()));
+	});
+
+	it("should let the deployment raise the key floor, never lower it", async () => {
+		const strict = new TotpAuthDanceComponent({ minKeyLength: 40 });
+		await rejects(() => strict.getIdentityComponent("totp", generateKey(32), false, context()), InvalidPromptValueError);
+		ok(await strict.getIdentityComponent("totp", generateKey(40), false, context()));
+		assertThrows(() => new TotpAuthDanceComponent({ minKeyLength: 16 }), RangeError);
+		assertThrows(() => new TotpAuthDanceComponent({ minKeyLength: 36 }), RangeError);
+	});
+
+	it("should keep verifying a short key enrolled before the floor", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(1_700_000_000_000);
 		const component = new TotpAuthDanceComponent();
 		const key = generateKey(16);
+		const enrolled: AuthDanceIdentityComponent[] = [
+			{ kind: "challenge", component: "totp", confirmed: true, data: { key, algorithm: "SHA-1", digits: 6, period: 30 } },
+		];
+		deepEqual(await component.verifyPrompt(await totp({ key, period: 30 }), context(enrolled)), true);
+	});
+
+	it("should refuse a key that matches the one it replaces", async () => {
+		const component = new TotpAuthDanceComponent();
+		const key = generateKey();
 		const enrolled = await component.getIdentityComponent("totp", key, true, context());
 		await rejects(() => component.getIdentityComponent("totp", key, false, context(enrolled, "rotate")), InvalidPromptValueError);
 		// Another key rotates.
-		ok(await component.getIdentityComponent("totp", generateKey(16), false, context(enrolled, "rotate")));
+		ok(await component.getIdentityComponent("totp", generateKey(), false, context(enrolled, "rotate")));
 	});
 
 	it("should verify the code of the enrolled key", async () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
 		vi.setSystemTime(1_700_000_000_000);
 		const component = new TotpAuthDanceComponent();
-		const key = generateKey(16);
+		const key = generateKey();
 		const enrolled = await component.getIdentityComponent("totp", key, true, context());
 		const code = await totp({ key, period: 30 });
 		deepEqual(await component.verifyPrompt(code, context(enrolled)), true);
@@ -98,7 +130,7 @@ describe("TotpAuthDanceComponent", () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
 		vi.setSystemTime(1_700_000_000_000);
 		const component = new TotpAuthDanceComponent({ window: 1 });
-		const key = generateKey(16);
+		const key = generateKey();
 		const enrolled = await component.getIdentityComponent("totp", key, true, context());
 		const previous = await totp({ key, time: Date.now() / 1000 - 30, period: 30 });
 		const stale = await totp({ key, time: Date.now() / 1000 - 90, period: 30 });
@@ -110,7 +142,7 @@ describe("TotpAuthDanceComponent", () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
 		vi.setSystemTime(1_700_000_000_000);
 		const component = new TotpAuthDanceComponent();
-		const key = generateKey(16);
+		const key = generateKey();
 		const enrolled = await component.getIdentityComponent("totp", key, true, context());
 		// One context, so both calls read the same key value store.
 		const ctx = context(enrolled);
@@ -123,7 +155,7 @@ describe("TotpAuthDanceComponent", () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
 		vi.setSystemTime(1_700_000_000_000);
 		const component = new TotpAuthDanceComponent();
-		const key = generateKey(16);
+		const key = generateKey();
 		const enrolled = await component.getIdentityComponent("totp", key, true, context());
 		for (const value of ["000000", "12345", "abcdef", "", 42, null, undefined]) {
 			vitestAssert.isFalse(await component.verifyPrompt(value, context(enrolled)));
@@ -134,7 +166,7 @@ describe("TotpAuthDanceComponent", () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
 		vi.setSystemTime(1_700_000_000_000);
 		const component = new TotpAuthDanceComponent();
-		vitestAssert.isFalse(await component.verifyPrompt(await totp({ key: generateKey(16), period: 30 }), context()));
+		vitestAssert.isFalse(await component.verifyPrompt(await totp({ key: generateKey(), period: 30 }), context()));
 	});
 
 	it("should prompt for the key of a collection, and for a code everywhere else", async () => {
@@ -148,6 +180,9 @@ describe("TotpAuthDanceComponent", () => {
 		// A sign-in verifies a code against the key the identity holds, and collects nothing.
 		const signIn = context([], "sign-in");
 		deepEqual(await component.getPrompt(signIn), { kind: "input", name: "totp", type: "totp", sendable: false, options });
+		// A step of a recovery dance does too. The library builds its prompt without an identity.
+		const { identity: _, ...recoveryStep } = context([], "recover");
+		deepEqual(await component.getPrompt(recoveryStep), { kind: "input", name: "totp", type: "totp", sendable: false, options });
 		// The verification of a collected key asks for the code, whatever flow collected it.
 		const enroll = context([], "enroll");
 		const verification = await component.verificationComponent(enroll);
@@ -158,10 +193,10 @@ describe("TotpAuthDanceComponent", () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
 		vi.setSystemTime(1_700_000_000_000);
 		const component = new TotpAuthDanceComponent();
-		const key = generateKey(16);
+		const key = generateKey();
 		// The enroll flow puts the collected record in front of the components of the identity.
 		const collected = await component.getIdentityComponent("totp", key, false, context());
-		const enrolled = await component.getIdentityComponent("totp", generateKey(16), true, context());
+		const enrolled = await component.getIdentityComponent("totp", generateKey(), true, context());
 		const ctx = context([...collected, ...enrolled], "enroll");
 		const verification = await component.verificationComponent(ctx);
 		deepEqual(await verification.verifyPrompt(await totp({ key, period: 30 }), ctx), true);
