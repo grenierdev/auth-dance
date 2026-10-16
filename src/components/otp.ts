@@ -14,10 +14,27 @@ export interface OtpAuthDanceComponentOptions {
 	text?: Record<string, string | ((code: string, context: AuthDanceComponentContext) => string)>;
 }
 
+// What `sendPrompt` keeps under `otp/<stateId>/<name>`. The client holds the state and can replay an earlier one, and a
+// replay keeps the same stateId. A replay can resolve another identity or collect another address, so the code alone
+// proves nothing. The record also holds the identity and the recipient the code went to.
+interface PendingCode {
+	code: string;
+	identityId: string;
+	recipient: string;
+}
+
+// Who a code goes to: the channel the identity holds under the configured name, and the identity itself.
+interface CodeTarget {
+	channel: AuthDanceIdentityChannel;
+	identityId: string;
+	recipient: string;
+}
+
 /**
  * A one-time code that the library delivers over a channel. A verifiable component uses it to prove control of its own value.
- * `sendPrompt` writes the code to KV under `otp/<stateId>/<name>`. `verifyPrompt` deletes that key on a match, so a code works
- * one time only. The key-value store drops a code that nobody submits at the end of the time to live.
+ * `sendPrompt` writes the code to KV under `otp/<stateId>/<name>`, together with the identity and the recipient it goes to.
+ * `verifyPrompt` accepts the code for that identity and that recipient only, and it deletes the key on a match, so a code
+ * works one time only. The key-value store drops a code that nobody submits at the end of the time to live.
  */
 export class OtpAuthDanceComponent implements AuthDanceComponent {
 	/** The record kind the component contributes to an identity. A `challenge` proves a claim, and never resolves an identity. */
@@ -66,22 +83,28 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 	}
 
 	/**
-	 * Compares the submitted code with the one in KV, then deletes the key so a code works one time only.
-	 * @returns `true` when the code matches. `false` in every other case, which includes an expired code and a used code.
+	 * Compares the submitted code with the one in KV, then deletes the key so a code works one time only. The code must
+	 * also go to the same identity and the same recipient as the context names now.
+	 * @returns `true` when the code matches. `false` in every other case, which includes an expired code, a used code, and
+	 * a code that went to another identity or another recipient.
 	 */
 	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]> {
 		const value = typeof response === "string" ? response : null;
 		if (!value) {
 			return false;
 		}
-		const code = await context.storage.getKv(`otp/${context.stateId}/${context.name}`);
-		if (!code) {
+		const target = this.#target(context);
+		const pending = await this.#pending(context);
+		if (
+			!target ||
+			!pending ||
+			pending.code !== value ||
+			pending.identityId !== target.identityId ||
+			pending.recipient !== target.recipient
+		) {
 			return false;
 		}
-		if (code !== value) {
-			return false;
-		}
-		await context.storage.unsetKv(`otp/${context.stateId}/${context.name}`);
+		await context.storage.unsetKv(this.#key(context));
 		return true;
 	}
 
@@ -93,14 +116,13 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 	 * the configured name.
 	 */
 	async sendPrompt(_locale: string, context: AuthDanceComponentContext): Promise<AuthDanceMessage> {
-		const identityChannel = context.identity?.components.find(
-			(c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === this.#options.channel,
-		);
-		if (!identityChannel) {
+		const target = this.#target(context);
+		if (!target) {
 			throw new ChannelNotSubscribedError(this.#options.channel);
 		}
 		const code = otp({ digits: this.#options.digits ?? 6 });
-		await context.storage.setKv(`otp/${context.stateId}/${context.name}`, code, this.#options.ttl ?? 300);
+		const pending: PendingCode = { code, identityId: target.identityId, recipient: target.recipient };
+		await context.storage.setKv(this.#key(context), JSON.stringify(pending), this.#options.ttl ?? 300);
 		const subject =
 			this.#options.subject?.en instanceof Function
 				? this.#options.subject?.en(code, context)
@@ -114,7 +136,7 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 				? this.#options.html?.en(code, context)
 				: (this.#options.html?.en ?? `<p>Your one-time code is: <strong>${code}</strong></p>`);
 		return {
-			recipient: identityChannel,
+			recipient: target.channel,
 			subject,
 			content: {
 				"text/x-code": code,
@@ -131,5 +153,40 @@ export class OtpAuthDanceComponent implements AuthDanceComponent {
 
 	async verificationComponent?(context: AuthDanceComponentContext): Promise<AuthDanceComponent> {
 		throw new ComponentNotVerifiableError(context.name);
+	}
+
+	// The key of the code that waits for this dance and this step.
+	#key(context: AuthDanceComponentContext): string {
+		return `otp/${context.stateId}/${context.name}`;
+	}
+
+	// `sendPrompt` and `verifyPrompt` both read the target from the context. A sign-up, an enroll, a rotate and a recover put
+	// the collected channel first, so both calls read the new recipient. Returns `undefined` when the identity holds no
+	// channel under the configured name.
+	#target(context: AuthDanceComponentContext): CodeTarget | undefined {
+		const channel = context.identity?.components.find(
+			(c): c is AuthDanceIdentityChannel => c.kind === "channel" && c.component === this.#options.channel,
+		);
+		if (!context.identity || !channel) {
+			return undefined;
+		}
+		return { channel, identityId: context.identity.id, recipient: JSON.stringify(channel.data ?? {}) };
+	}
+
+	// The code `sendPrompt` wrote for this dance and this step. Returns `null` once the time to live passes, and for a value
+	// in another shape, for example a bare code that an earlier version of this component wrote.
+	async #pending(context: AuthDanceComponentContext): Promise<PendingCode | null> {
+		const raw = await context.storage.getKv(this.#key(context));
+		if (!raw) {
+			return null;
+		}
+		try {
+			const parsed = JSON.parse(raw);
+			return typeof parsed?.code === "string" && typeof parsed.identityId === "string" && typeof parsed.recipient === "string"
+				? { code: parsed.code, identityId: parsed.identityId, recipient: parsed.recipient }
+				: null;
+		} catch {
+			return null;
+		}
 	}
 }

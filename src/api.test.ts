@@ -259,6 +259,40 @@ describe("Api", () => {
 			(error) => error instanceof AuthDanceError && error.code === "INVALID_VALIDATION_VALUE",
 		);
 	});
+	it("should not confirm an address with a code sent to the address of a replayed sign-up", async () => {
+		const result1 = await api.signUp();
+		const own = await api.submitPrompt({ name: "email", value: "jane.doe@example.com", state: result1.state });
+		ok("state" in own);
+		await api.sendPrompt({ name: "email", locale: "en", state: own.state });
+		const code = channelEmail.messages[0].content["text/x-code"];
+		ok(code);
+		// The replay keeps the stateId, so the code sits under the same key. It went to another recipient.
+		const replayed = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state });
+		ok("state" in replayed);
+		await rejects(
+			() => api.submitPrompt({ name: "email", value: code, state: replayed.state }),
+			(error) => error instanceof AuthDanceError && error.code === "INVALID_VALIDATION_VALUE",
+		);
+		// The code still proves the address it went to.
+		ok("state" in (await api.submitPrompt({ name: "email", value: code, state: own.state })));
+	});
+	it("should not sign-in with a code sent to the identity of a replayed sign-in", async () => {
+		const api = new AuthDanceApi({ ...apiOptions, choreography: sequence("email", "otp") });
+		await johnDoe();
+		await seedIdentity({}, async () => email.getIdentityComponent("email", "jane.doe@example.com", true));
+		const result1 = await api.signIn();
+		const own = await api.submitPrompt({ name: "email", value: "jane.doe@example.com", state: result1.state });
+		ok("state" in own);
+		await api.sendPrompt({ name: "otp", locale: "en", state: own.state });
+		const code = channelEmail.messages[0].content["text/x-code"];
+		ok(code);
+		const replayed = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state });
+		ok("state" in replayed);
+		await rejects(
+			() => api.submitPrompt({ name: "otp", value: code, state: replayed.state }),
+			(error) => error instanceof AuthDanceError && error.code === "INVALID_PROMPT_VALUE",
+		);
+	});
 	it("should subscribe", async () => {
 		await seedIdentity({ name: "John Doe" }, async (seed) => [
 			...(await email.getIdentityComponent("email", "john.doe@example.com", true)),
@@ -1061,6 +1095,22 @@ describe("Api", () => {
 		const passwordComponent2 = identity2?.components.find((c) => c.kind === "challenge" && c.component === "password");
 		ok(passwordComponent1?.data?.hash !== passwordComponent2?.data?.hash);
 	});
+	it("should not recover with a code sent to the identity of a replayed recovery", async () => {
+		await johnDoe();
+		await seedIdentity({}, async () => email.getIdentityComponent("email", "jane.doe@example.com", true));
+		const result1 = await api.recover({ name: "password" });
+		const own = await api.submitPrompt({ name: "email", value: "jane.doe@example.com", state: result1.state });
+		ok("state" in own);
+		await api.sendPrompt({ name: "email", locale: "en", state: own.state });
+		const code = channelEmail.messages[0].content["text/x-code"];
+		ok(code);
+		const replayed = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state });
+		ok("state" in replayed);
+		await rejects(
+			() => api.submitPrompt({ name: "email", value: code, state: replayed.state }),
+			(error) => error instanceof AuthDanceError && error.code === "INVALID_VALIDATION_VALUE",
+		);
+	});
 	it("should offer every component a recovery can be proven through", async () => {
 		// Two components identify and verify on their own, so the owner picks which one to prove.
 		const api = new AuthDanceApi({
@@ -1171,6 +1221,25 @@ describe("Api", () => {
 		// A refresh extends how long the session may be used, never how recently the owner proved who they are.
 		deepEqual(decodeJwt(refreshed.tokens.access_token).aat, signedInAt);
 		deepEqual(decodeJwt(refreshed.tokens.refresh_token).aat, signedInAt);
+	});
+	it("should not exchange an access token for new tokens", async () => {
+		await johnDoe();
+		const { tokens } = await signInAsJohnDoe(api);
+		await rejects(
+			() => api.refreshToken(tokens.access_token),
+			(error) => error instanceof AuthDanceError && error.code === "INVALID_REFRESH_TOKEN",
+		);
+	});
+	it("should not accept a refresh token in place of an access token", async () => {
+		await johnDoe();
+		const { tokens, session } = await signInAsJohnDoe(api);
+		await rejects(
+			() => api.delete({ access_token: tokens.refresh_token }),
+			(error) => error instanceof AuthDanceError && error.code === "INVALID_ACCESS_TOKEN",
+		);
+		// A sign-out hides an invalid token, so check that the session survived it.
+		await api.signOut(tokens.refresh_token);
+		ok(await storage.getSession(session.id));
 	});
 	it("should require a fresh sign-in for a sensitive action once the elevated window has elapsed", async () => {
 		await seedIdentity({ name: "John Doe" }, async (seed) => [

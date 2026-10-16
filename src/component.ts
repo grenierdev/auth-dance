@@ -7,7 +7,12 @@ import type { AuthDanceStorage } from "./storage.ts";
 export interface AuthDanceComponentContext {
 	/** The store the component reads and writes through. A component keeps its own records in the key-value part. */
 	storage: AuthDanceStorage;
-	/** The id of the dance in progress. A component that keeps a value between two calls keys the record on this id. */
+	/**
+	 * The id of the dance in progress. A component that keeps a value between two calls keys the record on this id.
+	 *
+	 * The client can replay an earlier state, and the replay keeps this id. A replay can resolve another identity or
+	 * collect another value. Keep the identity or the recipient in the record, and compare them when you read it back.
+	 */
 	stateId: string;
 	/**
 	 * The name of the step in progress.

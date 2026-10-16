@@ -433,15 +433,21 @@ export class AuthDanceApi {
 	}
 
 	// Every failure reads the same to the caller. Every token this class mints carries `sub` and `aat`,
-	// so a token that misses either one is invalid.
-	async #verifiedClaims(token: string, invalid: () => AuthDanceError): Promise<{ sub: string; authTime: number }> {
+	// so a token that misses either one is invalid. The access token and the refresh token share the key, the
+	// issuer and `sub`. Only `claims` (access) and `scopes` (refresh) tell them apart, so each verification asks
+	// for the claim of its own kind.
+	async #verifiedClaims(
+		token: string,
+		kind: "claims" | "scopes",
+		invalid: () => AuthDanceError,
+	): Promise<{ sub: string; authTime: number }> {
 		const payload = await jwtVerify(token, this.#decodedSecret, {
 			issuer: this.#options.tokens?.issuer ?? "acme",
 		}).then(
 			({ payload }) => payload,
 			() => undefined,
 		);
-		if (!payload?.sub || typeof payload.aat !== "number") {
+		if (!payload?.sub || typeof payload.aat !== "number" || payload[kind] === undefined) {
 			throw invalid();
 		}
 		return { sub: payload.sub, authTime: payload.aat };
@@ -534,7 +540,7 @@ export class AuthDanceApi {
 	 */
 	refreshToken(refresh_token: string): Promise<AuthDanceResponseTokens> {
 		return this.#guard("refreshToken", async () => {
-			const { sub, authTime } = await this.#verifiedClaims(refresh_token, () => new InvalidRefreshTokenError());
+			const { sub, authTime } = await this.#verifiedClaims(refresh_token, "scopes", () => new InvalidRefreshTokenError());
 			await this.#consumeRateLimit("refresh", `session:${sub}`);
 			const session = await this.#options.storage.getSession(sub);
 			if (!session) {
@@ -748,7 +754,7 @@ export class AuthDanceApi {
 	}
 
 	async #unrollAccessToken(access_token: string): Promise<{ session: AuthDanceSession; identity: AuthDanceIdentity; authTime: number }> {
-		const { sub, authTime } = await this.#verifiedClaims(access_token, () => new InvalidAccessTokenError());
+		const { sub, authTime } = await this.#verifiedClaims(access_token, "claims", () => new InvalidAccessTokenError());
 		return { ...(await this.#getSessionAndIdentity(sub)), authTime };
 	}
 
