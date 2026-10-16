@@ -31,6 +31,14 @@ import { AuthDanceStorage } from "./storage.ts";
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+// The jsdom environment of vitest replaces the global `Uint8Array` with the one of the jsdom window. `TextEncoder` still
+// returns the `Uint8Array` of Node, so `jose` refuses the payload of every state. Put the constructor of Node back.
+Object.defineProperty(globalThis, "Uint8Array", {
+	value: Object.getPrototypeOf(new TextEncoder().encode("")).constructor,
+	configurable: true,
+	writable: true,
+});
+
 // One PBKDF2 pass, to keep the suites fast.
 const TEST_PASSWORD_HASHER = pbkdf2PasswordHasher(1);
 
