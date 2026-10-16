@@ -118,8 +118,9 @@ export class ComponentNotSendableError extends AuthDanceError {
 	readonly code: "COMPONENT_NOT_SENDABLE" = "COMPONENT_NOT_SENDABLE";
 }
 /**
- * `recover` named a component the flow cannot reset. One step of the choreography must carry that name, and another
- * step must both resolve an identity and prove control of it.
+ * `recover` named a component the flow cannot reset. The deployment marked the component `false` in
+ * `AuthDanceApiOptions.recovery`, or no complete path of the choreography stays a recovery path without it. A
+ * recovery path starts with an identification and holds a step that proves control.
  */
 export class ComponentNotRecoverableError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"COMPONENT_NOT_RECOVERABLE"}`. */
@@ -220,19 +221,19 @@ export class InvalidValidationValueError extends AuthDanceError {
 	readonly code: "INVALID_VALIDATION_VALUE" = "INVALID_VALIDATION_VALUE";
 }
 /**
- * A step needs an identity, but no step resolved one and the state holds none. A recovery component that resolves the
- * identity on its own also raises this for a rejected value, because the step accepts only an identity id.
+ * A step needs an identity, but no step resolved one and the state holds none. A first step that answers `true`
+ * instead of an identity id raises it, in a sign-in and in a recovery.
  */
 export class IdentityNotResolvedError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"IDENTITY_NOT_RESOLVED"}`. */
 	readonly code: "IDENTITY_NOT_RESOLVED" = "IDENTITY_NOT_RESOLVED";
 }
-/** A sign-in step resolved one identity, but an earlier step of the same dance already resolved a different one. */
+/** A sign-in or recovery step resolved one identity, but an earlier step of the same dance already resolved a different one. */
 export class IdentityMismatchError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"IDENTITY_MISMATCH"}`. */
 	readonly code: "IDENTITY_MISMATCH" = "IDENTITY_MISMATCH";
 }
-/** A recovery step needs the identity, but the owner has not answered the identification yet. */
+/** A recovery step needs the identity, but the owner has not answered the first step of the recovery yet. */
 export class RecoveryNotIdentifiedError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"RECOVERY_NOT_IDENTIFIED"}`. */
 	readonly code: "RECOVERY_NOT_IDENTIFIED" = "RECOVERY_NOT_IDENTIFIED";

@@ -26,7 +26,8 @@ export interface AuthDanceComponentContext {
 	 * The identity as it stands, when the library holds one.
 	 *
 	 * The library omits it on the first step of a sign-in and of a recovery. It also omits it from every prompt it
-	 * builds from the choreography, so `getPrompt` in a sign-in or a sign-up never reads one.
+	 * builds from the choreography or from a recovery choreography, so `getPrompt` in a sign-in, a sign-up or a step
+	 * of a recovery dance never reads one. In a `recover` flow, a prompt with an identity collects the replacement.
 	 */
 	identity?: AuthDanceIdentity;
 }
@@ -47,9 +48,9 @@ export interface AuthDanceComponent {
 	 * A component that sets this to `true` must also declare `verificationComponent`. Without that method a recovery
 	 * raises `ComponentNotVerifiableError` on the first submit.
 	 *
-	 * `recover` is the only flow that reads this flag. It offers the components of the choreography that are an
-	 * `identification` and carry this flag, the one being recovered excluded. With none left it raises
-	 * `ComponentNotRecoverableError`.
+	 * A recovery runs the verification of a non-proving identification that carries this flag, after `verifyPrompt`
+	 * resolves the identity. The step counts as proof only once that verification succeeds. The one-time code to an
+	 * address is an example.
 	 */
 	verifiable: boolean;
 	/**

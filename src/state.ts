@@ -154,7 +154,8 @@ export const AuthDanceStateRotate: v.GenericSchema<AuthDanceStateRotate> = v.pip
 
 /**
  * The in-progress dance of an owner with no session who recovers one component of an identity.
- * The owner picks another component to prove control through. The flow completes with a success result, never with tokens.
+ * The owner first performs the recovery choreography of that component: a sign-in without it. The flow then
+ * collects the replacement. It completes with a success result, never with tokens.
  */
 export interface AuthDanceStateRecover {
 	/** The id of this dance, a ksuid with an `st_` prefix. */
@@ -163,14 +164,19 @@ export interface AuthDanceStateRecover {
 	kind: "recover";
 	/**
 	 * The name of the component the recovery resets, as the owner named it.
-	 * The library answers `COMPONENT_NOT_RECOVERABLE` when no other step can identify the owner and prove control on its own.
+	 * The library answers `COMPONENT_NOT_RECOVERABLE` when that component has no recovery choreography.
 	 */
 	component: string;
-	/** The name of the component the owner proves control through, absent until the owner picks one. */
-	identification?: string;
-	/** The identity the picked component resolved. A validation call before that step fails with `RECOVERY_NOT_IDENTIFIED`. */
+	/** The identity the first step resolved. A validation call before that step fails with `RECOVERY_NOT_IDENTIFIED`. */
 	identityId?: string;
-	/** True once the owner proves control of the picked component. Before that, `submitPrompt` reads a value as the proof. */
+	/** The names of the recovery steps the owner completed and proved, oldest first. */
+	path: string[];
+	/**
+	 * An identification that resolved the identity but proves nothing on its own. While it is set, `submitPrompt` reads
+	 * a value as the proof of control of that identification, the one-time code for an address for example.
+	 */
+	proving?: string;
+	/** True once the owner completes the recovery choreography. After that, `submitPrompt` collects the replacement. */
 	verified: boolean;
 	/** The replacement the recovered component produced, plus any channel it also yields. The library writes it by name. */
 	components: AuthDanceIdentityComponent[];
@@ -182,14 +188,15 @@ export const AuthDanceStateRecover: v.GenericSchema<AuthDanceStateRecover> = v.p
 		id: v.string(),
 		kind: v.literal("recover"),
 		component: v.string(),
-		identification: v.optional(v.string()),
 		identityId: v.optional(v.string()),
+		path: v.array(v.string()),
+		proving: v.optional(v.string()),
 		verified: v.boolean(),
 		components: v.array(AuthDanceIdentityComponent),
 	}),
 	v.title("AuthDanceStateRecover"),
 	v.description(
-		"An authentication state object that represents the recovery of one component of an identity, including the state id, kind, the name of the component being recovered, the component the caller proves control through, the identity that component resolved to, whether control of it has been proven, and the replacement collected so far.",
+		"An authentication state object that represents the recovery of one component of an identity, including the state id, kind, the name of the component being recovered, the identity the first step resolved, the recovery steps completed so far, the identification whose proof is outstanding, whether the recovery choreography is complete, and the replacement collected so far.",
 	),
 );
 

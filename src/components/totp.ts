@@ -50,14 +50,15 @@ export interface TotpAuthDanceComponentOptions {
  * The component collects the key and it verifies the code, and the type of the prompt names the value the flow
  * asks for:
  *
- * - A `sign-up`, an `enroll`, a `rotate` and a `recover` collect the key, through a prompt of the type `totp-key`.
+ * - A `sign-up`, an `enroll`, a `rotate` and the reset of a `recover` collect the key, through a prompt of the type
+ *   `totp-key`.
  *   The client generates the key, keeps it, and submits it. `generateKey` and `toURI` of the `auth-dance` module
  *   build the key and the `otpauth://` URI that the authenticator app reads, and the library never sees either one.
  * - The component is verifiable, so each of those flows then asks for a code that the collected key derives,
  *   through a prompt of the type `totp`. Until that code lands the record stays unconfirmed, and a key that reached
  *   nobody enrolls nobody.
- * - A `sign-in` asks for a code, with the same prompt type `totp`, and verifies it against the key the identity
- *   holds.
+ * - A `sign-in`, and a step of a recovery dance, ask for a code with the same prompt type `totp`, and verify it
+ *   against the key the identity holds.
  *
  * The store holds the key in base32 under `data.key`, which `/list-components` drops. Anybody that reads the
  * identity store derives every code, so protect that store the way you protect a password store.
@@ -171,8 +172,10 @@ export class TotpAuthDanceComponent implements AuthDanceComponent {
 
 	// A sign-in verifies a code against the key the identity already holds, so the prompt of that flow asks for the
 	// code. Every other flow collects the key, and the verification that follows it asks for the code.
+	// The library builds the prompt of a sign-in, and of a step of a recovery dance, without an identity. Both ask for
+	// a code. The reset of a recovery holds an identity and collects a key.
 	#promptType(context: AuthDanceComponentContext): "totp-key" | "totp" {
-		return this.#validation || context.flow === "sign-in" ? "totp" : "totp-key";
+		return this.#validation || context.flow === "sign-in" || (context.flow === "recover" && !context.identity) ? "totp" : "totp-key";
 	}
 
 	/**

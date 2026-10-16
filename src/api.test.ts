@@ -1,7 +1,7 @@
 import { deepEqual, ok, rejects, throws } from "node:assert";
 import { hex } from "@scure/base";
 import { decodeJwt } from "jose/jwt/decode";
-import { beforeEach, describe, it } from "vitest";
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
 	AuthDanceApi,
 	type AuthDanceApiHooks,
@@ -15,13 +15,15 @@ import type { AuthDanceComponent, AuthDanceComponentContext } from "./component.
 import { EmailAuthDanceComponent } from "./components/email.ts";
 import { OtpAuthDanceComponent } from "./components/otp.ts";
 import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "./components/password.ts";
+import { TotpAuthDanceComponent } from "./components/totp.ts";
 import { WebAuthnAuthDanceComponent } from "./components/webauthn.ts";
 import { AuthDanceError, SessionNotFoundError } from "./error.ts";
 import { ksuid } from "./id.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
+import { generateKey, totp as totpCode } from "./otp.ts";
 import type { AuthDanceKvProvider } from "./provider.ts";
 import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "./providers/memory.ts";
-import type { AuthDanceResponseTokens } from "./response.ts";
+import type { AuthDanceResponseState, AuthDanceResponseTokens } from "./response.ts";
 import { AuthDanceStorage } from "./storage.ts";
 
 // One PBKDF2 pass, to keep the suites fast.
@@ -1576,6 +1578,200 @@ describe("Api", () => {
 			ok("tokens" in result4);
 			const identity = await storage.getIdentity(result4.identity.id);
 			ok(identity?.components.find((c) => c.kind === "challenge" && c.component === "otp" && c.confirmed));
+		});
+	});
+
+	describe("recovery policy", () => {
+		let totp: TotpAuthDanceComponent;
+		let key: string;
+
+		beforeEach(() => {
+			vi.useFakeTimers({ toFake: ["Date"] });
+			vi.setSystemTime(1_700_000_000_000);
+			totp = new TotpAuthDanceComponent();
+			key = generateKey(32);
+		});
+		afterEach(() => vi.useRealTimers());
+
+		function threeFactorApi(options: Partial<AuthDanceApiOptions> = {}): AuthDanceApi {
+			return new AuthDanceApi({
+				...apiOptions,
+				choreography: sequence("email", "password", "totp"),
+				components: { ...apiOptions.components, totp, badge: stubComponent("identification", () => false) },
+				...options,
+			});
+		}
+
+		async function seedThreeFactor(address = "john.doe@example.com", totpKey = key): Promise<AuthDanceIdentity> {
+			return seedIdentity({ name: "John Doe" }, async (seed) => [
+				...(await email.getIdentityComponent("email", address, true)),
+				...(await password.getIdentityComponent("password", "foo", true, seed("password"))),
+				...(await totp.getIdentityComponent("totp", totpKey, true, seed("totp"))),
+			]);
+		}
+
+		// A six-digit code that no step of the drift window accepts.
+		async function wrongCode(totpKey: string): Promise<string> {
+			const now = Date.now() / 1000;
+			const accepted = await Promise.all([-30, 0, 30].map((offset) => totpCode({ key: totpKey, time: now + offset, period: 30 })));
+			let candidate = 0;
+			while (accepted.includes(candidate.toString().padStart(6, "0"))) {
+				candidate++;
+			}
+			return candidate.toString().padStart(6, "0");
+		}
+
+		// The address and its one-time code: the part of a recovery that the owner of the inbox alone can do.
+		async function proveInbox(
+			api: AuthDanceApi,
+			start: AuthDanceResponseState,
+			address = "john.doe@example.com",
+		): Promise<AuthDanceResponseState> {
+			const result2 = await api.submitPrompt({ name: "email", value: address, state: start.state });
+			ok("state" in result2);
+			ok(result2.prompt.kind === "input" && result2.prompt.type === "otp");
+			await api.sendPrompt({ name: "email", locale: "en", state: result2.state });
+			const result3 = await api.submitPrompt({
+				name: "email",
+				value: channelEmail.messages.at(-1)!.content["text/x-code"],
+				state: result2.state,
+			});
+			ok("state" in result3);
+			return result3;
+		}
+
+		function factorsOf(identity: AuthDanceIdentity | undefined): unknown[] {
+			return (identity?.components ?? []).filter((c) => c.kind === "challenge").map((c) => c.data);
+		}
+
+		it("should not recover the password through the inbox alone", async () => {
+			// The audit PoC: control of the inbox reset the password, then the TOTP key, then signed in through all three.
+			const identity = await seedThreeFactor();
+			const before = factorsOf(await storage.getIdentity(identity.id));
+			const api = threeFactorApi();
+			const result1 = await api.recover({ name: "password" });
+			ok(result1.prompt.kind === "input" && result1.prompt.name === "email");
+			const result3 = await proveInbox(api, result1);
+			// The inbox proves the address. The dance then asks for the factor that is left.
+			ok(result3.prompt.kind === "input" && result3.prompt.name === "totp" && result3.prompt.type === "totp");
+			await rejects(
+				async () => api.submitPrompt({ name: "totp", value: await wrongCode(key), state: result3.state }),
+				(error) => error instanceof AuthDanceError && error.code === "INVALID_PROMPT_VALUE",
+			);
+			await rejects(
+				() => api.submitPrompt({ name: "password", value: "bar", state: result3.state }),
+				(error) => error instanceof AuthDanceError && error.code === "COMPONENT_NOT_IN_CHOREOGRAPHY",
+			);
+			deepEqual(factorsOf(await storage.getIdentity(identity.id)), before);
+		});
+
+		it("should not recover the TOTP key through the inbox alone", async () => {
+			const identity = await seedThreeFactor();
+			const before = factorsOf(await storage.getIdentity(identity.id));
+			const api = threeFactorApi();
+			const result3 = await proveInbox(api, await api.recover({ name: "totp" }));
+			ok(result3.prompt.kind === "input" && result3.prompt.name === "password");
+			await rejects(
+				() => api.submitPrompt({ name: "password", value: "bar", state: result3.state }),
+				(error) => error instanceof AuthDanceError && error.code === "INVALID_PROMPT_VALUE",
+			);
+			deepEqual(factorsOf(await storage.getIdentity(identity.id)), before);
+		});
+
+		it("should recover the password through the inbox and the TOTP code", async () => {
+			await seedThreeFactor();
+			const api = threeFactorApi();
+			const result3 = await proveInbox(api, await api.recover({ name: "password" }));
+			const result4 = await api.submitPrompt({ name: "totp", value: await totpCode({ key, period: 30 }), state: result3.state });
+			ok("state" in result4);
+			ok(result4.prompt.kind === "input" && result4.prompt.name === "password");
+			const result5 = await api.submitPrompt({ name: "password", value: "bar", state: result4.state });
+			ok("success" in result5 && result5.success);
+
+			// The next time step, because a TOTP code works one time.
+			vi.setSystemTime(Date.now() + 30_000);
+			const signIn1 = await api.signIn();
+			const signIn2 = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: signIn1.state });
+			ok("state" in signIn2);
+			const signIn3 = await api.submitPrompt({ name: "password", value: "bar", state: signIn2.state });
+			ok("state" in signIn3);
+			const signIn4 = await api.submitPrompt({ name: "totp", value: await totpCode({ key, period: 30 }), state: signIn3.state });
+			ok("tokens" in signIn4);
+		});
+
+		it("should not recover a component the author marked as not recoverable", async () => {
+			await seedThreeFactor();
+			const api = threeFactorApi({ recovery: { totp: false } });
+			await rejects(
+				() => api.recover({ name: "totp" }),
+				(error) => error instanceof AuthDanceError && error.code === "COMPONENT_NOT_RECOVERABLE",
+			);
+			// The other components keep the derived rule.
+			ok((await api.recover({ name: "password" })).prompt);
+		});
+
+		it("should run the recovery choreography the author declared in place of the derived one", async () => {
+			const identity = await seedThreeFactor();
+			const api = threeFactorApi({ recovery: { password: sequence("email") } });
+			const result3 = await proveInbox(api, await api.recover({ name: "password" }));
+			ok(result3.prompt.kind === "input" && result3.prompt.name === "password" && result3.prompt.type === "password");
+			const result4 = await api.submitPrompt({ name: "password", value: "bar", state: result3.state });
+			ok("success" in result4 && result4.success);
+			ok(
+				await password.verifyPrompt("bar", {
+					storage,
+					stateId: "st_check",
+					name: "password",
+					flow: "sign-in",
+					identity: await storage.getIdentity(identity.id),
+				}),
+			);
+		});
+
+		it("should refuse a recovery choreography it cannot run", () => {
+			const refused = (recovery: AuthDanceApiOptions["recovery"]) =>
+				throws(
+					() => threeFactorApi({ recovery }),
+					(error) => error instanceof AuthDanceError && error.code === "INVALID_CHOREOGRAPHY",
+				);
+			// It names the component it resets.
+			refused({ password: sequence("email", "password") });
+			// It names an undeclared component.
+			refused({ password: sequence("email", "nothing") });
+			// It starts with a challenge, so nothing resolves the identity.
+			refused({ password: sequence("totp", "email") });
+			// It proves nothing.
+			refused({ password: sequence("badge") });
+			// Its key is not a step of the choreography.
+			refused({ otp2: false });
+		});
+
+		it("should refuse a TOTP code of another identity after the address of the first", async () => {
+			await seedThreeFactor();
+			const janeKey = generateKey(32);
+			await seedThreeFactor("jane.doe@example.com", janeKey);
+			const api = threeFactorApi();
+			const result3 = await proveInbox(api, await api.recover({ name: "password" }));
+			const janeCode = await totpCode({ key: janeKey, period: 30 });
+			// A code of Jane that is also a code of John proves John, so the case needs two different codes.
+			ok(janeCode !== (await totpCode({ key, period: 30 })));
+			await rejects(
+				() => api.submitPrompt({ name: "totp", value: janeCode, state: result3.state }),
+				(error) => error instanceof AuthDanceError && (error.code === "INVALID_PROMPT_VALUE" || error.code === "IDENTITY_MISMATCH"),
+			);
+		});
+
+		it("should not recover a passkey that another path can do without", async () => {
+			// The owner signs in through email + password, and enrolls a new passkey.
+			const api = new AuthDanceApi({
+				...apiOptions,
+				choreography: choice(sequence("email", "password"), "passkey"),
+				components: { ...apiOptions.components, passkey: new WebAuthnAuthDanceComponent({ rp: { id: "example.com", name: "Example" } }) },
+			});
+			await rejects(
+				() => api.recover({ name: "passkey" }),
+				(error) => error instanceof AuthDanceError && error.code === "COMPONENT_NOT_RECOVERABLE",
+			);
 		});
 	});
 

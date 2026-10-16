@@ -88,6 +88,11 @@ The client keeps the tokens of the session and exchanges the refresh token on it
 `client.signUp()`, `client.enroll("totp")`, `client.rotate("password")`, `client.recover("password")`, `client.subscribe("sms")`,
 `client.delete()`, and `client.signOut()`.
 
+A recovery follows the same choreography. To recover one component, the owner performs a sign-in without it: with
+`sequence("email", "password", "totp")`, a new password needs the address, its one-time code and the TOTP code. A component that no
+path can do without is not recoverable; the owner signs in another way and enrolls it again. `AuthDanceApiOptions.recovery` overrides
+the rule for one component, with `false` or with a choreography of its own.
+
 A step with `prompt.kind === "choice"` is a fork in the choreography. Read the branches off `dance.choices`, then call `dance.choose(name)`.
 An unenroll, an unsubscribe and a delete each end on a confirmation: answer it with `dance.confirm()`. Pass a `store` to keep the dance
 across a page reload.
