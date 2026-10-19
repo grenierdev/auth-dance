@@ -71,6 +71,10 @@
 			"types": "./dist/src/components/password.d.ts",
 			"import": "./dist/src/components/password.js"
 		},
+		"./components/policy": {
+			"types": "./dist/src/components/policy.d.ts",
+			"import": "./dist/src/components/policy.js"
+		},
 		"./components/totp": {
 			"types": "./dist/src/components/totp.d.ts",
 			"import": "./dist/src/components/totp.js"

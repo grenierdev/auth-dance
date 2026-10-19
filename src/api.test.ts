@@ -1497,6 +1497,180 @@ describe("Api", () => {
 		});
 	});
 
+	describe("skip", () => {
+		// A challenge that proves nothing. `skipPrompt` gives the answer of `skip` and keeps the context of each call.
+		function skippableComponent(
+			skip: () => unknown,
+			options: { skippable?: boolean; skipPrompt?: boolean } = {},
+		): { component: AuthDanceComponent; calls: AuthDanceComponentContext[] } {
+			const calls: AuthDanceComponentContext[] = [];
+			const component: AuthDanceComponent = {
+				kind: "challenge",
+				verifiable: false,
+				proves: false,
+				skippable: options.skippable ?? true,
+				getPrompt: async (ctx) => ({ kind: "input", name: ctx.name, type: "notice", sendable: false }),
+				getIdentityComponent: async (component, _value, confirmed) => [{ kind: "challenge", component, confirmed, data: {} }],
+				verifyPrompt: async () => true,
+			};
+			if (options.skipPrompt ?? true) {
+				component.skipPrompt = async (ctx) => {
+					calls.push(ctx);
+					return skip() as boolean;
+				};
+			}
+			return { component, calls };
+		}
+
+		// The prompt that follows the email step and the password step of John Doe.
+		async function afterPassword(api: AuthDanceApi): Promise<Awaited<ReturnType<AuthDanceApi["submitPrompt"]>>> {
+			const result1 = await api.signIn();
+			const result2 = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state });
+			ok("state" in result2);
+			return api.submitPrompt({ name: "password", value: "foo", state: result2.state });
+		}
+
+		it("should go past a step that the identity needs nothing more from", async () => {
+			await johnDoe();
+			const notice = skippableComponent(() => true);
+			const api = new AuthDanceApi({
+				...apiOptions,
+				choreography: sequence("email", "password", "notice"),
+				components: { ...apiOptions.components, notice: notice.component },
+			});
+			const result = await afterPassword(api);
+			ok("tokens" in result);
+			deepEqual(notice.calls.length, 1);
+			deepEqual(notice.calls[0].name, "notice");
+			deepEqual(notice.calls[0].flow, "sign-in");
+			deepEqual(notice.calls[0].identity?.id, result.identity.id);
+		});
+
+		it("should go past each step in a row, up to the first one that keeps its prompt", async () => {
+			await johnDoe();
+			const first = skippableComponent(() => true);
+			const second = skippableComponent(() => true);
+			const third = skippableComponent(() => false);
+			const api = new AuthDanceApi({
+				...apiOptions,
+				choreography: sequence("email", "password", "first", "second", "third"),
+				components: { ...apiOptions.components, first: first.component, second: second.component, third: third.component },
+			});
+			const result3 = await afterPassword(api);
+			ok("state" in result3);
+			ok(result3.prompt.kind === "input" && result3.prompt.name === "third");
+			const result4 = await api.submitPrompt({ name: "third", value: "ok", state: result3.state });
+			ok("tokens" in result4);
+		});
+
+		for (const answer of [false, undefined, 1, "true"]) {
+			it(`should keep the prompt when the component answers ${JSON.stringify(answer) ?? "undefined"}`, async () => {
+				await johnDoe();
+				const notice = skippableComponent(() => answer);
+				const api = new AuthDanceApi({
+					...apiOptions,
+					choreography: sequence("email", "password", "notice"),
+					components: { ...apiOptions.components, notice: notice.component },
+				});
+				const result3 = await afterPassword(api);
+				ok("state" in result3);
+				ok(result3.prompt.kind === "input" && result3.prompt.name === "notice");
+				deepEqual(notice.calls.length, 1);
+			});
+		}
+
+		it("should only skip a component that sets skippable and declares skipPrompt", async () => {
+			await johnDoe();
+			const unflagged = skippableComponent(() => true, { skippable: false });
+			const undeclared = skippableComponent(() => true, { skipPrompt: false });
+			for (const notice of [unflagged, undeclared]) {
+				const api = new AuthDanceApi({
+					...apiOptions,
+					choreography: sequence("email", "password", "notice"),
+					components: { ...apiOptions.components, notice: notice.component },
+				});
+				const result3 = await afterPassword(api);
+				ok("state" in result3);
+				ok(result3.prompt.kind === "input" && result3.prompt.name === "notice");
+			}
+			deepEqual(unflagged.calls, []);
+		});
+
+		it("should not skip before a step of the path proves control", async () => {
+			await johnDoe();
+			const notice = skippableComponent(() => true);
+			const api = new AuthDanceApi({
+				...apiOptions,
+				choreography: sequence("email", "notice", "password"),
+				components: { ...apiOptions.components, notice: notice.component },
+			});
+			const result1 = await api.signIn();
+			const result2 = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state });
+			ok("state" in result2);
+			ok(result2.prompt.kind === "input" && result2.prompt.name === "notice");
+			const result3 = await api.submitPrompt({ name: "notice", value: "ok", state: result2.state });
+			ok("state" in result3);
+			ok(result3.prompt.kind === "input" && result3.prompt.name === "password");
+			deepEqual(notice.calls, []);
+		});
+
+		it("should not skip a branch of a choice", async () => {
+			await johnDoe();
+			const notice = skippableComponent(() => true);
+			const api = new AuthDanceApi({
+				...apiOptions,
+				choreography: sequence("email", "password", choice("notice", "pin")),
+				components: { ...apiOptions.components, notice: notice.component, pin: stubComponent("challenge", () => true) },
+			});
+			const result3 = await afterPassword(api);
+			ok("state" in result3);
+			ok(result3.prompt.kind === "choice");
+			deepEqual(notice.calls, []);
+		});
+
+		it("should never skip in a sign-up", async () => {
+			const notice = skippableComponent(() => true);
+			const api = new AuthDanceApi({
+				...apiOptions,
+				choreography: sequence("password", "notice"),
+				components: { ...apiOptions.components, notice: notice.component },
+			});
+			const result1 = await api.signUp();
+			const result2 = await api.submitPrompt({ name: "password", value: "foo", state: result1.state });
+			ok("state" in result2);
+			ok(result2.prompt.kind === "input" && result2.prompt.name === "notice");
+			deepEqual(notice.calls, []);
+		});
+
+		it("should go past a step in a recovery dance once the address is proven", async () => {
+			await johnDoe();
+			const notice = skippableComponent(() => true);
+			const api = new AuthDanceApi({
+				...apiOptions,
+				choreography: sequence("email", "password", "notice"),
+				components: { ...apiOptions.components, notice: notice.component },
+			});
+			const result1 = await api.recover({ name: "password" });
+			const result2 = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state });
+			ok("state" in result2);
+			ok(result2.prompt.kind === "input" && result2.prompt.type === "otp");
+			deepEqual(notice.calls, []);
+			await api.sendPrompt({ name: "email", locale: "en", state: result2.state });
+			const result3 = await api.submitPrompt({
+				name: "email",
+				value: channelEmail.messages.at(-1)!.content["text/x-code"],
+				state: result2.state,
+			});
+			ok("state" in result3);
+			// The recovery dance is complete, so the prompt collects the new password.
+			ok(result3.prompt.kind === "input" && result3.prompt.name === "password" && result3.prompt.type === "password");
+			deepEqual(notice.calls.length, 1);
+			deepEqual(notice.calls[0].flow, "recover");
+			const result4 = await api.submitPrompt({ name: "password", value: "bar", state: result3.state });
+			deepEqual(result4, { success: true });
+		});
+	});
+
 	describe("choreography check", () => {
 		const webauthn = () => new WebAuthnAuthDanceComponent({ rp: { id: "example.com", name: "Example" } });
 

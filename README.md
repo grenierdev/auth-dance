@@ -134,7 +134,7 @@ const client = new AuthDanceClient({ baseUrl: "http://local", fetch: auth.fetch 
 | `auth-dance`                     | `createAuthDance`, the choreography DSL, `AuthDanceStorage`, the errors and every type |
 | `auth-dance/client`              | `AuthDanceClient` and the dance it hands out                                           |
 | `auth-dance/react`               | The React bindings                                                                     |
-| `auth-dance/components/*`        | `email`, `oauth2`, `otp`, `password`, `totp`, `webauthn`                               |
+| `auth-dance/components/*`        | `email`, `oauth2`, `otp`, `password`, `policy`, `totp`, `webauthn`                     |
 | `auth-dance/components/oauth2/*` | `apple`, `facebook`, `github`, `gitlab`, `google`, `microsoft`, `x`                    |
 | `auth-dance/providers/*`         | `memory` for tests, `cloudflare` for Workers                                           |
 

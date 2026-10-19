@@ -61,8 +61,29 @@ export interface AuthDanceComponent {
 	 * secret, a signature for example, sets this to `true`.
 	 */
 	proves?: boolean;
+	/**
+	 * Whether the library can go past this step for an identity that needs nothing more from it. A component that
+	 * sets this to `true` also declares `skipPrompt`. Without that method the library never skips the step. The
+	 * library calls `skipPrompt` on no other component.
+	 *
+	 * @defaultValue `false`
+	 */
+	skippable?: boolean;
 	/** Builds the prompt the client renders for this step. */
 	getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput>;
+	/**
+	 * Tells whether the identity needs nothing more from this step. The library then goes past the step without a
+	 * prompt. The skipped step counts as done on the path, and the library calls neither `verifyPrompt` nor
+	 * `upgradeIdentityComponent` for it.
+	 *
+	 * The library calls this method in a sign-in and in a recovery dance, never in a sign-up. It calls it only when the
+	 * next step is one component, and never when the next step is a choice. It calls it only after a step of the path
+	 * proved control, so the prompts tell nothing about the identity to a person who only knows an identification.
+	 *
+	 * @param context The context of the step. `context.identity` is the identity that the earlier steps resolved.
+	 * @returns `true` to skip the step. Any other answer, `undefined` included, keeps the prompt.
+	 */
+	skipPrompt?(context: AuthDanceComponentContext): Promise<boolean>;
 	/**
 	 * Delivers the prompt over a channel. Return the message, and the library delivers it over the channel the
 	 * recipient names.

@@ -969,6 +969,28 @@ export class AuthDanceApi {
 		return { choreographyComponent, authComponent };
 	}
 
+	// Pushes onto `path` each next step whose component says the identity needs nothing more from it. A choice stays
+	// for the owner to answer. Nothing skips before a step of the path proves control, so a person who only knows an
+	// identification cannot tell from the next prompt what the identity holds.
+	async #skipSteps(
+		choreography: AuthDanceChoreography,
+		path: string[],
+		proves: (name: string) => boolean,
+		context: (name: string) => AuthDanceComponentContext,
+	): Promise<void> {
+		while (path.some(proves)) {
+			const nextMove = peek(choreography, path);
+			if (nextMove?.kind !== "component") {
+				return;
+			}
+			const authComponent = this.#options.components[nextMove.component];
+			if (!authComponent?.skippable || (await authComponent.skipPrompt?.(context(nextMove.component))) !== true) {
+				return;
+			}
+			path.push(nextMove.component);
+		}
+	}
+
 	// A sign-in step that accepted a value lets its component rewrite an old record, a password hash for example. The
 	// identity holds the same factors after the rewrite, so no identity hook fires.
 	async #upgradeIdentity(
@@ -1242,7 +1264,15 @@ export class AuthDanceApi {
 	// After a proven recovery step: the next step of the recovery dance, or, once it completes, the prompt that
 	// collects the replacement.
 	async #continueRecovery(state: AuthDanceStateRecover, identity: AuthDanceIdentity, expireAt: Date): Promise<AuthDanceResponseState> {
-		const nextMove = peek(this.#requireRecoveryChoreography(state.component), state.path);
+		const recovery = this.#requireRecoveryChoreography(state.component);
+		// An address on the path counts toward the proof, because the path holds it only once its one-time code landed.
+		await this.#skipSteps(
+			recovery,
+			state.path,
+			(name) => this.#provesInRecovery(name),
+			(name) => this.#recoverContext(state, name, identity),
+		);
+		const nextMove = peek(recovery, state.path);
 		if (nextMove !== null) {
 			return this.#promptResponse(state, nextMove, expireAt, "recover");
 		}
@@ -1931,6 +1961,12 @@ export class AuthDanceApi {
 			state.identityId = identity.id;
 			await this.#upgradeIdentity(authComponent, options.value, ctx, identity);
 			state.path.push(choreographyComponent.component);
+			await this.#skipSteps(
+				this.#options.choreography,
+				state.path,
+				(name) => this.#proves(name),
+				(name) => this.#signInContext(state, name, identity),
+			);
 			advanceOptions = {
 				...advanceOptions,
 				identity,
