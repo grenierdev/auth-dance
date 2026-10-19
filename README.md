@@ -129,13 +129,14 @@ const client = new AuthDanceClient({ baseUrl: "http://local", fetch: auth.fetch 
 
 ## What ships with it
 
-| Import                    | Holds                                                                                  |
-| ------------------------- | -------------------------------------------------------------------------------------- |
-| `auth-dance`              | `createAuthDance`, the choreography DSL, `AuthDanceStorage`, the errors and every type |
-| `auth-dance/client`       | `AuthDanceClient` and the dance it hands out                                           |
-| `auth-dance/react`        | The React bindings                                                                     |
-| `auth-dance/components/*` | `email`, `otp`, `password`, `totp`, `webauthn`                                         |
-| `auth-dance/providers/*`  | `memory` for tests, `cloudflare` for Workers                                         |
+| Import                           | Holds                                                                                  |
+| -------------------------------- | -------------------------------------------------------------------------------------- |
+| `auth-dance`                     | `createAuthDance`, the choreography DSL, `AuthDanceStorage`, the errors and every type |
+| `auth-dance/client`              | `AuthDanceClient` and the dance it hands out                                           |
+| `auth-dance/react`               | The React bindings                                                                     |
+| `auth-dance/components/*`        | `email`, `oauth2`, `otp`, `password`, `totp`, `webauthn`                               |
+| `auth-dance/components/oauth2/*` | `apple`, `facebook`, `github`, `gitlab`, `google`, `microsoft`, `x`                    |
+| `auth-dance/providers/*`         | `memory` for tests, `cloudflare` for Workers                                           |
 
 A step is a small interface. Implement `AuthDanceComponent` and your own factor works in every flow, including the flows you have not
 considered yet. Two rules apply. `verifyPrompt` accepts a value only with `true` or an identity id: any other answer, `undefined`

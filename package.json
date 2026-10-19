@@ -31,6 +31,38 @@
 			"types": "./dist/src/components/email.d.ts",
 			"import": "./dist/src/components/email.js"
 		},
+		"./components/oauth2": {
+			"types": "./dist/src/components/oauth2.d.ts",
+			"import": "./dist/src/components/oauth2.js"
+		},
+		"./components/oauth2/apple": {
+			"types": "./dist/src/components/oauth2/apple.d.ts",
+			"import": "./dist/src/components/oauth2/apple.js"
+		},
+		"./components/oauth2/facebook": {
+			"types": "./dist/src/components/oauth2/facebook.d.ts",
+			"import": "./dist/src/components/oauth2/facebook.js"
+		},
+		"./components/oauth2/github": {
+			"types": "./dist/src/components/oauth2/github.d.ts",
+			"import": "./dist/src/components/oauth2/github.js"
+		},
+		"./components/oauth2/gitlab": {
+			"types": "./dist/src/components/oauth2/gitlab.d.ts",
+			"import": "./dist/src/components/oauth2/gitlab.js"
+		},
+		"./components/oauth2/google": {
+			"types": "./dist/src/components/oauth2/google.d.ts",
+			"import": "./dist/src/components/oauth2/google.js"
+		},
+		"./components/oauth2/microsoft": {
+			"types": "./dist/src/components/oauth2/microsoft.d.ts",
+			"import": "./dist/src/components/oauth2/microsoft.js"
+		},
+		"./components/oauth2/x": {
+			"types": "./dist/src/components/oauth2/x.d.ts",
+			"import": "./dist/src/components/oauth2/x.js"
+		},
 		"./components/otp": {
 			"types": "./dist/src/components/otp.d.ts",
 			"import": "./dist/src/components/otp.js"
