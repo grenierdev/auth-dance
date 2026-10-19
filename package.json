@@ -11,7 +11,7 @@
 	"engines": {
 		"node": ">=24.4.0"
 	},
-	"version": "0.1.0-rc.4",
+	"version": "0.1.0-rc.5",
 	"type": "module",
 	"workspaces": [
 		"demo"
