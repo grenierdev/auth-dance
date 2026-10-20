@@ -112,7 +112,8 @@ const client = new AuthDanceClient({ baseUrl: "http://local", fetch: auth.fetch 
 
 ## React
 
-`auth-dance/react` wraps the client in one provider, one hook and one renderer.
+`auth-dance/react` wraps the client in a provider, starts a flow with `useAuthDanceFlow` or `AuthDanceFlowProvider`, and renders its
+prompts with `AuthDancePromptSwitch`.
 
 ```tsx
 <AuthDanceProvider client={client}>
@@ -148,19 +149,17 @@ Full documentation lives at [auth.dance](https://auth.dance/). The tests beside 
 
 ## Contributing
 
-Contributors use Node.js 24.4 or newer and npm. The root package contains the library in `src/`; `demo/` is an npm workspace.
+Contributors use Node.js 24.4 or newer and npm. The root package contains the library in `src/`.
 
 ```sh
 npm install
 npm run lint                         # Biome
-npm run check                        # TypeScript: library, tests, and demo
+npm run check                        # TypeScript: library and tests
 npm test                             # Vitest, runs once
 npm test -- src/api.test.ts
 npm test -- -t "should sign-in"
 npm run fmt                          # Biome: tabs, line width 140
 npm run build                        # TypeScript: JavaScript, declarations, and source maps
-npm run dev --workspace demo
-npm run build --workspace demo
 ```
 
 Layout: `src/mod.ts` is the entry point, `src/api.ts` holds the state machine, `src/app.ts` holds the Hono routes, `src/choreography.ts`
@@ -176,7 +175,7 @@ external; the browser-facing client and React entry points remain separate from 
 
 The root `package.json` owns the package version and exports. `npm pack` builds and produces a package containing the compiled
 library and the README. To publish, run `npm publish --access public --tag next`; omit the tag for `latest`.
-Publishing builds automatically through `prepack`, and the demo and tests are excluded from the published package.
+Publishing builds automatically through `prepack`, and tests are excluded from the published package.
 
 ## License
 
