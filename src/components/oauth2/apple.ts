@@ -1,13 +1,7 @@
 import { SignJWT } from "jose/jwt/sign";
 import { importPKCS8 } from "jose/key/import";
-import type { AuthDanceComponentContext } from "../../component.ts";
-import {
-	OAuth2AuthDanceComponent,
-	type OAuth2AuthDanceComponentOptions,
-	type OAuth2Identification,
-	type OAuth2ProviderOptions,
-	type OAuth2TokenResponse,
-} from "../oauth2.ts";
+import type { OAuth2ProviderOptions } from "../oauth2.ts";
+import { OidcAuthDanceComponent, type OidcAuthDanceComponentOptions } from "../oidc.ts";
 
 /** Options for {@link AppleAuthDanceComponent}. Apple takes a signed JWT as the client secret, so no `clientSecret` here. */
 export interface AppleAuthDanceComponentOptions extends Omit<OAuth2ProviderOptions, "clientSecret"> {
@@ -46,14 +40,19 @@ function clientSecret(options: AppleAuthDanceComponentOptions): () => Promise<st
 }
 
 // The options of the parent. The key stays in the closure of `clientSecret`, and out of the options.
-function parentOptions(options: AppleAuthDanceComponentOptions): OAuth2AuthDanceComponentOptions {
+function parentOptions(options: AppleAuthDanceComponentOptions): OidcAuthDanceComponentOptions {
 	const { teamId: _teamId, keyId: _keyId, privateKey: _privateKey, ...rest } = options;
 	return {
 		...rest,
+		// Apple takes no `openid` scope, and an empty scope keeps `scope` out of the URL.
+		scope: options.scope ?? "",
 		clientSecret: clientSecret(options),
-		authorizationUrl: "https://appleid.apple.com/auth/authorize",
-		tokenUrl: "https://appleid.apple.com/auth/token",
-		clientAuthentication: "client_secret_post",
+		issuer: "https://appleid.apple.com",
+		endpoints: {
+			authorizationUrl: "https://appleid.apple.com/auth/authorize",
+			tokenUrl: "https://appleid.apple.com/auth/token",
+			clientAuthentication: "client_secret_post",
+		},
 		// Apple refuses `query` for an authorization with a scope.
 		parameters: { response_mode: options.scope ? "form_post" : "query", ...options.parameters },
 	};
@@ -72,8 +71,9 @@ function parentOptions(options: AppleAuthDanceComponentOptions): OAuth2AuthDance
  * Apple does not document PKCE. The component sends the PKCE parameters all the same, and RFC 6749 tells a server to
  * ignore a parameter it does not know.
  *
- * To keep more about the account, override {@link retrieveIdentification} and read {@link retrieveProfile}. The ID
- * token carries `email` when the owner granted the `email` scope one time:
+ * To keep more about the account, override {@link retrieveIdentification} and read {@link retrieveProfile}. Apple has
+ * no endpoint for the account, so the ID token is all it tells. The ID token carries `email` when the owner granted the
+ * `email` scope one time:
  *
  * @example
  * ```ts
@@ -85,35 +85,12 @@ function parentOptions(options: AppleAuthDanceComponentOptions): OAuth2AuthDance
  * }
  * ```
  */
-export class AppleAuthDanceComponent extends OAuth2AuthDanceComponent {
+export class AppleAuthDanceComponent extends OidcAuthDanceComponent {
 	/**
 	 * Points the component at Apple.
 	 * @param options The Services ID, the key that signs the client secret, and the redirect URL.
 	 */
 	constructor(options: AppleAuthDanceComponentOptions) {
 		super(parentOptions(options));
-	}
-
-	/**
-	 * Reads the claims of the ID token in the answer of the token endpoint. Apple has no endpoint for the account, so
-	 * the ID token is all it tells.
-	 * @returns The claims. `sub` holds the id of the account.
-	 * @throws {@link Error} When the answer holds no ID token, or the ID token fails a check of `readIdToken`.
-	 */
-	protected async retrieveProfile(token: OAuth2TokenResponse): Promise<Record<string, unknown>> {
-		return this.readIdToken(token, "https://appleid.apple.com");
-	}
-
-	/**
-	 * Reads the id of the account.
-	 * @returns `sub`, and no data.
-	 * @throws {@link Error} When the answer holds no ID token, the ID token fails a check, or it has no `sub`.
-	 */
-	async retrieveIdentification(token: OAuth2TokenResponse, _context: AuthDanceComponentContext): Promise<OAuth2Identification> {
-		const claims = await this.retrieveProfile(token);
-		if (typeof claims.sub !== "string") {
-			throw new Error("the Apple id_token has no sub");
-		}
-		return { identification: claims.sub };
 	}
 }

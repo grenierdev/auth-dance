@@ -1,5 +1,5 @@
-import type { AuthDanceComponentContext } from "../../component.ts";
-import { OAuth2AuthDanceComponent, type OAuth2Identification, type OAuth2ProviderOptions, type OAuth2TokenResponse } from "../oauth2.ts";
+import type { OAuth2ProviderOptions } from "../oauth2.ts";
+import { OidcAuthDanceComponent } from "../oidc.ts";
 
 /** The tenant id of every personal Microsoft account. */
 const CONSUMERS_TENANT = "9188040d-6c67-4c5b-b112-36a304b66dad";
@@ -26,8 +26,9 @@ export interface MicrosoftAuthDanceComponentOptions extends OAuth2ProviderOption
  * Register an application in Microsoft Entra ID, add `redirectUrl` under the "Web" platform, and make a client
  * secret. The "Single-page application" platform does not work: the server redeems the code.
  *
- * To keep more about the account, override {@link retrieveIdentification} and read {@link retrieveProfile}. Add
- * `email` or `profile` to `scope` for the claims of those scopes:
+ * To keep more about the account, override {@link retrieveIdentification} and read {@link retrieveProfile}. Its claims
+ * also hold `oid` and `tid`, the id of the account in its tenant. Add `email` or `profile` to `scope` for the claims of
+ * those scopes:
  *
  * @example
  * ```ts
@@ -39,7 +40,7 @@ export interface MicrosoftAuthDanceComponentOptions extends OAuth2ProviderOption
  * }
  * ```
  */
-export class MicrosoftAuthDanceComponent extends OAuth2AuthDanceComponent {
+export class MicrosoftAuthDanceComponent extends OidcAuthDanceComponent {
 	#tenant: string;
 
 	/**
@@ -49,53 +50,39 @@ export class MicrosoftAuthDanceComponent extends OAuth2AuthDanceComponent {
 	 */
 	constructor(options: MicrosoftAuthDanceComponentOptions) {
 		const tenant = options.tenant ?? "common";
-		const base = `https://login.microsoftonline.com/${encodeURIComponent(tenant)}/oauth2/v2.0`;
+		const base = `https://login.microsoftonline.com/${encodeURIComponent(tenant)}`;
 		super({
 			...options,
-			scope: options.scope ?? "openid",
-			authorizationUrl: `${base}/authorize`,
-			tokenUrl: `${base}/token`,
-			clientAuthentication: "client_secret_post",
+			issuer: `${base}/v2.0`,
+			endpoints: {
+				authorizationUrl: `${base}/oauth2/v2.0/authorize`,
+				tokenUrl: `${base}/oauth2/v2.0/token`,
+				clientAuthentication: "client_secret_post",
+			},
 		});
 		this.#tenant = tenant.toLowerCase();
 	}
 
 	/**
-	 * Reads the claims of the ID token in the answer of the token endpoint.
+	 * Tells whether the ID token comes from the tenant of the options.
 	 *
 	 * Each tenant writes its own `iss`, so the method checks `iss` against `tid`, and `tid` against the tenant of the
 	 * options.
-	 * @returns The claims. `sub` holds the id of the account for this application, `oid` and `tid` the id of the
-	 * account in its tenant.
-	 * @throws {@link Error} When the answer holds no ID token, or the ID token fails a check of `readIdToken`.
+	 * @param claims The claims of the ID token.
+	 * @returns `true` when `iss` names the tenant in `tid`, and that tenant can sign in.
 	 */
-	protected async retrieveProfile(token: OAuth2TokenResponse): Promise<Record<string, unknown>> {
-		return this.readIdToken(token, (claims) => {
-			const tid = claims.tid;
-			if (typeof tid !== "string" || claims.iss !== `https://login.microsoftonline.com/${tid}/v2.0`) {
-				return false;
-			}
-			if (this.#tenant === "consumers") {
-				return tid === CONSUMERS_TENANT;
-			}
-			if (this.#tenant === "organizations") {
-				return tid !== CONSUMERS_TENANT;
-			}
-			// A domain name is not in the ID token. The token endpoint of that tenant issued it, and that is enough.
-			return !TENANT_ID.test(this.#tenant) || tid.toLowerCase() === this.#tenant;
-		});
-	}
-
-	/**
-	 * Reads the id of the account.
-	 * @returns `sub`, and no data.
-	 * @throws {@link Error} When the answer holds no ID token, the ID token fails a check, or it has no `sub`.
-	 */
-	async retrieveIdentification(token: OAuth2TokenResponse, _context: AuthDanceComponentContext): Promise<OAuth2Identification> {
-		const claims = await this.retrieveProfile(token);
-		if (typeof claims.sub !== "string") {
-			throw new Error("the Microsoft id_token has no sub");
+	protected override checkIssuer(claims: Record<string, unknown>): boolean {
+		const tid = claims.tid;
+		if (typeof tid !== "string" || claims.iss !== `https://login.microsoftonline.com/${tid}/v2.0`) {
+			return false;
 		}
-		return { identification: claims.sub };
+		if (this.#tenant === "consumers") {
+			return tid === CONSUMERS_TENANT;
+		}
+		if (this.#tenant === "organizations") {
+			return tid !== CONSUMERS_TENANT;
+		}
+		// A domain name is not in the ID token. The token endpoint of that tenant issued it, and that is enough.
+		return !TENANT_ID.test(this.#tenant) || tid.toLowerCase() === this.#tenant;
 	}
 }

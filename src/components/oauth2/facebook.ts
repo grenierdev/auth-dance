@@ -46,9 +46,11 @@ export class FacebookAuthDanceComponent extends OAuth2AuthDanceComponent {
 		const version = options.version ?? "v26.0";
 		super({
 			...options,
-			authorizationUrl: `https://www.facebook.com/${version}/dialog/oauth`,
-			tokenUrl: `https://graph.facebook.com/${version}/oauth/access_token`,
-			clientAuthentication: "client_secret_post",
+			endpoints: {
+				authorizationUrl: `https://www.facebook.com/${version}/dialog/oauth`,
+				tokenUrl: `https://graph.facebook.com/${version}/oauth/access_token`,
+				clientAuthentication: "client_secret_post",
+			},
 		});
 		this.#version = version;
 		this.#clientSecret = options.clientSecret;

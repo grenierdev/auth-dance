@@ -16,9 +16,13 @@ import {
 	type OAuth2TokenResponse,
 } from "./oauth2.ts";
 
-const OPTIONS: OAuth2AuthDanceComponentOptions = {
+const ENDPOINTS = {
 	authorizationUrl: "https://provider.example/authorize",
 	tokenUrl: "https://provider.example/token",
+};
+
+const OPTIONS: OAuth2AuthDanceComponentOptions = {
+	endpoints: ENDPOINTS,
 	redirectUrl: "https://app.example/callback",
 	clientId: "client id",
 	clientSecret: "s3cret:&=",
@@ -47,7 +51,7 @@ function fakeProvider() {
 	let refuse = false;
 
 	async function token(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-		ok(String(input) === OPTIONS.tokenUrl, `unexpected fetch to ${String(input)}`);
+		ok(String(input) === ENDPOINTS.tokenUrl, `unexpected fetch to ${String(input)}`);
 		const headers = new Headers(init?.headers);
 		const body = new URLSearchParams(init?.body as URLSearchParams);
 		requests.push({ headers, body });
@@ -133,7 +137,7 @@ describe("OAuth2AuthDanceComponent", () => {
 		deepEqual(prompt.sendable, false);
 		deepEqual(prompt.options?.redirectUrl, OPTIONS.redirectUrl);
 		const url = new URL(prompt.options?.authorizationUrl as string);
-		deepEqual(url.origin + url.pathname, OPTIONS.authorizationUrl);
+		deepEqual(url.origin + url.pathname, ENDPOINTS.authorizationUrl);
 		deepEqual(url.searchParams.get("response_type"), "code");
 		deepEqual(url.searchParams.get("client_id"), OPTIONS.clientId);
 		deepEqual(url.searchParams.get("redirect_uri"), OPTIONS.redirectUrl);
@@ -177,7 +181,7 @@ describe("OAuth2AuthDanceComponent", () => {
 	});
 
 	it("should authenticate with client_secret_post", async () => {
-		const component = new TestOAuth2Component({ clientAuthentication: "client_secret_post" });
+		const component = new TestOAuth2Component({ endpoints: { ...ENDPOINTS, clientAuthentication: "client_secret_post" } });
 		const ctx = context(storage(), { flow: "sign-up", components: [] });
 		await component.getIdentityComponent("github", provider.authorize(await component.getPrompt(ctx), "42"), false, ctx);
 		const [request] = provider.requests;
@@ -281,6 +285,48 @@ describe("OAuth2AuthDanceComponent", () => {
 		const ctx = context(storage());
 		const query = provider.authorize(await component.getPrompt(ctx), "42");
 		await rejects(() => component.verifyPrompt(query, ctx), InvalidPromptValueError);
+	});
+
+	it("should read the endpoints through the function of the options", async () => {
+		const endpoints = vi.fn(async () => ENDPOINTS);
+		const component = new TestOAuth2Component({ endpoints });
+		const ctx = context(storage(), { flow: "sign-up", components: [] });
+		const prompt = await component.getPrompt(ctx);
+		const url = new URL(prompt.options?.authorizationUrl as string);
+		deepEqual(url.origin + url.pathname, ENDPOINTS.authorizationUrl);
+		await component.getIdentityComponent("github", provider.authorize(prompt, "42"), false, ctx);
+		// One call for the authorization URL, one for the exchange.
+		deepEqual(endpoints.mock.calls.length, 2);
+	});
+
+	it("should carry the parameters of getAuthorizationParameters to verifyToken, and refuse what it refuses", async () => {
+		const seen: Array<Record<string, string>> = [];
+		class BoundOAuth2Component extends TestOAuth2Component {
+			#count = 0;
+			protected override async getAuthorizationParameters(): Promise<Record<string, string>> {
+				this.#count++;
+				return { binding: `b${this.#count}`, state: "forced" };
+			}
+			protected override async verifyToken(_token: OAuth2TokenResponse, parameters: Record<string, string>): Promise<boolean> {
+				seen.push(parameters);
+				return parameters.binding === "b1";
+			}
+		}
+		const store = storage();
+		const id = await seed(store, "42");
+		const component = new BoundOAuth2Component();
+		const ctx = context(store);
+		const prompt = await component.getPrompt(ctx);
+		const url = new URL(prompt.options?.authorizationUrl as string);
+		deepEqual(url.searchParams.get("binding"), "b1");
+		// A parameter of the subclass never replaces the state the component checks.
+		ok(url.searchParams.get("state") !== "forced");
+		deepEqual(await component.verifyPrompt(provider.authorize(prompt, "42"), ctx), id);
+		deepEqual(await component.verifyPrompt(provider.authorize(await component.getPrompt(ctx), "42"), ctx), false);
+		deepEqual(seen, [
+			{ binding: "b1", state: "forced" },
+			{ binding: "b2", state: "forced" },
+		]);
 	});
 
 	it("should sign up and sign in through the api", async () => {

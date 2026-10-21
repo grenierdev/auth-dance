@@ -1,5 +1,4 @@
 import { encode as encodeBase64Url } from "jose/base64url";
-import { decodeJwt } from "jose/jwt/decode";
 import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
 import { IdentificationTakenError, InvalidPromptValueError } from "../error.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent, AuthDanceIdentityIdentification } from "../identity.ts";
@@ -26,6 +25,8 @@ interface OAuth2Authorization {
 	state: string;
 	/** The PKCE code verifier, RFC 7636. The authorization URL carried its SHA-256 hash. */
 	verifier: string;
+	/** What `getAuthorizationParameters` returned. The authorization URL carried them, and `verifyToken` reads them. */
+	parameters: Record<string, string>;
 }
 
 /**
@@ -63,12 +64,28 @@ export interface OAuth2Identification {
 	data?: Record<string, unknown>;
 }
 
-/** Options for {@link OAuth2AuthDanceComponent}. Only `scope`, `parameters`, `clientAuthentication` and `ttl` have a default. */
-export interface OAuth2AuthDanceComponentOptions {
+/** The endpoints of a provider, and how the component authenticates to the token endpoint. */
+export interface OAuth2Endpoints {
 	/** The authorization endpoint of the provider, `https://github.com/login/oauth/authorize` for one. */
 	authorizationUrl: string;
 	/** The token endpoint of the provider, `https://github.com/login/oauth/access_token` for one. */
 	tokenUrl: string;
+	/**
+	 * How the component authenticates to the token endpoint, RFC 6749 section 2.3.1. `client_secret_basic` sends the
+	 * HTTP Basic header. `client_secret_post` sends the client id and the secret in the body.
+	 * @defaultValue `"client_secret_basic"`
+	 */
+	clientAuthentication?: "client_secret_basic" | "client_secret_post";
+}
+
+/** Options for {@link OAuth2AuthDanceComponent}. Only `scope`, `parameters` and `ttl` have a default. */
+export interface OAuth2AuthDanceComponentOptions {
+	/**
+	 * The endpoints of the provider. Give a function for endpoints that the component reads from the provider, the
+	 * discovery document of OpenID Connect for one. The component calls it before it builds each authorization URL and
+	 * before each exchange, so the function keeps what it reads.
+	 */
+	endpoints: OAuth2Endpoints | (() => Promise<OAuth2Endpoints>);
 	/**
 	 * The page of the client that the provider sends the owner back to. Register the same URL at the provider. The
 	 * client reads the query of this page and submits it.
@@ -89,12 +106,6 @@ export interface OAuth2AuthDanceComponentOptions {
 	 */
 	parameters?: Record<string, string>;
 	/**
-	 * How the component authenticates to the token endpoint, RFC 6749 section 2.3.1. `client_secret_basic` sends the
-	 * HTTP Basic header. `client_secret_post` sends the client id and the secret in the body.
-	 * @defaultValue `"client_secret_basic"`
-	 */
-	clientAuthentication?: "client_secret_basic" | "client_secret_post";
-	/**
 	 * How long an authorization stays valid, in seconds. The state of the dance also expires, so the shorter of the two
 	 * applies.
 	 * @defaultValue `300`
@@ -106,7 +117,7 @@ export interface OAuth2AuthDanceComponentOptions {
  * The options every provider of `auth-dance/components/oauth2/*` takes. The provider sets the endpoints and the client
  * authentication itself.
  */
-export type OAuth2ProviderOptions = Omit<OAuth2AuthDanceComponentOptions, "authorizationUrl" | "tokenUrl" | "clientAuthentication">;
+export type OAuth2ProviderOptions = Omit<OAuth2AuthDanceComponentOptions, "endpoints">;
 
 /**
  * An account at an OAuth 2.0 provider as the step that resolves the identity, RFC 6749 with the authorization code
@@ -133,14 +144,16 @@ export type OAuth2ProviderOptions = Omit<OAuth2AuthDanceComponentOptions, "autho
  * An exchange that succeeds proves that the owner controls the account, so the component sets `proves` to `true`. It
  * confirms the account when it links it, and it is not `verifiable`.
  *
- * The component keeps one record in the key value store. `oauth2/<stateId>/<name>` holds the `state` and the PKCE code
- * verifier of the authorization in progress, for the time to live. `getPrompt` writes it, and a second call to
- * `getPrompt` replaces it, so only the last authorization URL the client read answers. A redirect that gives back the
- * correct `state` removes it, so one authorization answers one time.
+ * The component keeps one record in the key value store. `oauth2/<stateId>/<name>` holds the `state`, the PKCE code
+ * verifier and the parameters of {@link getAuthorizationParameters} for the authorization in progress, for the time to
+ * live. `getPrompt` writes it, and a second call to `getPrompt` replaces it, so only the last authorization URL the
+ * client read answers. A redirect that gives back the correct `state` removes it, so one authorization answers one
+ * time.
  *
  * OAuth 2.0 says nothing standard about who the owner is, so a subclass implements {@link retrieveIdentification} for
- * one provider. `auth-dance/components/oauth2/*` ships `apple`, `facebook`, `github`, `gitlab`, `google`, `microsoft`
- * and `x`. A provider that speaks OpenID Connect reads `sub` with {@link readIdToken}.
+ * one provider. `auth-dance/components/oauth2/*` ships `facebook`, `github` and `x` on this class. A provider that
+ * speaks OpenID Connect extends `OidcAuthDanceComponent` from `auth-dance/components/oidc`, and `apple`, `gitlab`,
+ * `google` and `microsoft` do.
  *
  * @example
  * ```ts
@@ -148,8 +161,10 @@ export type OAuth2ProviderOptions = Omit<OAuth2AuthDanceComponentOptions, "autho
  *     constructor(options: { clientId: string; clientSecret: string; redirectUrl: string }) {
  *         super({
  *             ...options,
- *             authorizationUrl: "https://github.com/login/oauth/authorize",
- *             tokenUrl: "https://github.com/login/oauth/access_token",
+ *             endpoints: {
+ *                 authorizationUrl: "https://github.com/login/oauth/authorize",
+ *                 tokenUrl: "https://github.com/login/oauth/access_token",
+ *             },
  *         });
  *     }
  *
@@ -211,39 +226,46 @@ export abstract class OAuth2AuthDanceComponent implements AuthDanceComponent {
 	abstract retrieveIdentification(token: OAuth2TokenResponse, context: AuthDanceComponentContext): Promise<OAuth2Identification>;
 
 	/**
-	 * Reads the claims of the OpenID Connect ID token in the answer of the token endpoint, and checks `iss`, `aud` and
-	 * `exp`. A provider that speaks OpenID Connect calls this method from {@link retrieveIdentification}, and reads
-	 * `sub`.
+	 * Gives more parameters for the authorization URL of one authorization. The component calls this method each time it
+	 * builds an authorization URL, keeps the parameters with the authorization, and gives them to {@link verifyToken}
+	 * after the exchange.
 	 *
-	 * The method does not check the signature. The component reads the answer straight from the token endpoint over
-	 * TLS, and OpenID Connect Core 1.0 section 3.1.3.7 accepts that in place of the signature.
-	 * @param token The answer of the token endpoint. Without the `openid` scope it holds no ID token.
-	 * @param issuer The `iss` the provider writes, or a function that returns `true` for claims with a correct `iss`.
-	 * @returns The claims of the ID token.
-	 * @throws {@link Error} When the answer holds no ID token, when the ID token does not read, and when `iss`, `aud`
-	 * or `exp` fails its check.
+	 * The method gives none. A subclass that binds the answer of the token endpoint to the authorization overrides it.
+	 * `OidcAuthDanceComponent` gives a new `nonce`, for one. A parameter the component sets itself replaces the one of
+	 * the same name here.
+	 * @param _context The context of the step.
+	 * @returns The parameters, by name.
 	 */
-	protected readIdToken(
-		token: OAuth2TokenResponse,
-		issuer: string | ((claims: Record<string, unknown>) => boolean),
-	): Record<string, unknown> {
-		if (typeof token.id_token !== "string") {
-			throw new Error("the token response holds no id_token, ask for the openid scope");
-		}
-		const claims: Record<string, unknown> = decodeJwt(token.id_token);
-		if (typeof issuer === "string" ? claims.iss !== issuer : !issuer(claims)) {
-			throw new Error(`the id_token comes from the issuer ${String(claims.iss)}`);
-		}
-		const audience = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-		// OpenID Connect Core 1.0 section 3.1.3.7: an ID token with more than one audience names the client in `azp`.
-		if (!audience.includes(this.#options.clientId) || (audience.length > 1 && claims.azp !== this.#options.clientId)) {
-			throw new Error("the id_token is not for this client");
-		}
-		// One minute of leeway for the clock of the provider.
-		if (typeof claims.exp !== "number" || claims.exp * 1000 < Date.now() - 60_000) {
-			throw new Error("the id_token has expired");
-		}
-		return claims;
+	protected async getAuthorizationParameters(_context: AuthDanceComponentContext): Promise<Record<string, string>> {
+		return {};
+	}
+
+	/**
+	 * Checks the answer of the token endpoint before {@link retrieveIdentification}. The component calls this method
+	 * after each exchange that succeeds, in every flow.
+	 *
+	 * The method accepts every answer. A subclass that binds the answer to the authorization overrides it.
+	 * `OidcAuthDanceComponent` checks the ID token and its `nonce`, for one.
+	 *
+	 * Return `false` to refuse the answer, the same way the component refuses a code that the provider does not accept.
+	 * Any error fails the request.
+	 * @param _token The answer of the token endpoint.
+	 * @param _parameters What {@link getAuthorizationParameters} gave for this authorization.
+	 * @param _context The context of the step.
+	 * @returns `true` to accept the answer.
+	 */
+	protected async verifyToken(
+		_token: OAuth2TokenResponse,
+		_parameters: Record<string, string>,
+		_context: AuthDanceComponentContext,
+	): Promise<boolean> {
+		return true;
+	}
+
+	// The endpoints of the options, through the function when the options give one.
+	async #endpoints(): Promise<OAuth2Endpoints> {
+		const { endpoints } = this.#options;
+		return typeof endpoints === "function" ? endpoints() : endpoints;
 	}
 
 	// The key that holds the authorization in progress. One dance, one step, one authorization.
@@ -261,7 +283,11 @@ export abstract class OAuth2AuthDanceComponent implements AuthDanceComponent {
 			const parsed = asObject(JSON.parse(raw));
 			const state = asText(parsed?.state);
 			const verifier = asText(parsed?.verifier);
-			return state && verifier ? { state, verifier } : null;
+			const parameters = asObject(parsed?.parameters);
+			if (!state || !verifier || !parameters || !Object.values(parameters).every((value) => typeof value === "string")) {
+				return null;
+			}
+			return { state, verifier, parameters: parameters as Record<string, string> };
 		} catch {
 			return null;
 		}
@@ -271,24 +297,28 @@ export abstract class OAuth2AuthDanceComponent implements AuthDanceComponent {
 	 * Describes the entry the client renders, under the component name, with the type `oauth2`.
 	 *
 	 * `options.authorizationUrl` carries `response_type=code`, the client id, the redirect URL, the scope, a new `state`
-	 * and a new PKCE code challenge. The method keeps the `state` and the code verifier under `oauth2/<stateId>/<name>`,
-	 * so a second call replaces the authorization of the first. `options.redirectUrl` is the page the provider sends the
-	 * owner back to.
+	 * and a new PKCE code challenge, with the parameters of {@link getAuthorizationParameters}. The method keeps the
+	 * `state`, the code verifier and those parameters under `oauth2/<stateId>/<name>`, so a second call replaces the
+	 * authorization of the first. `options.redirectUrl` is the page the provider sends the owner back to.
 	 *
 	 * The input is not sendable, because no channel delivers an authorization.
 	 * @returns One input for the client to render.
+	 * @throws {@link Error} When the function of `options.endpoints` fails.
 	 */
 	async getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput> {
+		// Before the record: a provider that does not answer leaves no authorization behind.
+		const endpoints = await this.#endpoints();
 		const authorization: OAuth2Authorization = {
 			state: encodeBase64Url(crypto.getRandomValues(new Uint8Array(32))),
 			verifier: encodeBase64Url(crypto.getRandomValues(new Uint8Array(32))),
+			parameters: await this.getAuthorizationParameters(context),
 		};
 		await context.storage.setKv(this.#authorizationKey(context), JSON.stringify(authorization), this.#options.ttl ?? 300);
 		const challenge = encodeBase64Url(
 			new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(authorization.verifier))),
 		);
-		const url = new URL(this.#options.authorizationUrl);
-		for (const [key, value] of Object.entries(this.#options.parameters ?? {})) {
+		const url = new URL(endpoints.authorizationUrl);
+		for (const [key, value] of Object.entries({ ...this.#options.parameters, ...authorization.parameters })) {
 			url.searchParams.set(key, value);
 		}
 		url.searchParams.set("response_type", "code");
@@ -313,7 +343,7 @@ export abstract class OAuth2AuthDanceComponent implements AuthDanceComponent {
 	}
 
 	// Exchanges the code at the token endpoint. Returns `null` when the provider refuses the code.
-	async #requestToken(code: string, verifier: string): Promise<OAuth2TokenResponse | null> {
+	async #requestToken(code: string, verifier: string, endpoints: OAuth2Endpoints): Promise<OAuth2TokenResponse | null> {
 		const body = new URLSearchParams({
 			grant_type: "authorization_code",
 			code,
@@ -323,13 +353,13 @@ export abstract class OAuth2AuthDanceComponent implements AuthDanceComponent {
 		// GitHub answers in a form encoding unless the request asks for JSON.
 		const headers = new Headers({ "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" });
 		const secret = typeof this.#options.clientSecret === "function" ? await this.#options.clientSecret() : this.#options.clientSecret;
-		if ((this.#options.clientAuthentication ?? "client_secret_basic") === "client_secret_basic") {
+		if ((endpoints.clientAuthentication ?? "client_secret_basic") === "client_secret_basic") {
 			headers.set("Authorization", `Basic ${btoa(`${formEncode(this.#options.clientId)}:${formEncode(secret)}`)}`);
 		} else {
 			body.set("client_id", this.#options.clientId);
 			body.set("client_secret", secret);
 		}
-		const response = await fetch(this.#options.tokenUrl, { method: "POST", headers, body });
+		const response = await fetch(endpoints.tokenUrl, { method: "POST", headers, body });
 		if (!response.ok) {
 			return null;
 		}
@@ -340,7 +370,7 @@ export abstract class OAuth2AuthDanceComponent implements AuthDanceComponent {
 
 	// Checks the query of the redirect against the authorization in progress, exchanges the code, and reads the
 	// account. Returns `null` for a value that does not read, an error answer of the provider, a `state` that does not
-	// match, an expired authorization and a code the provider refuses.
+	// match, an expired authorization, a code the provider refuses and an answer `verifyToken` refuses.
 	async #exchange(value: unknown, context: AuthDanceComponentContext): Promise<OAuth2Identification | null> {
 		const query = asObject(value);
 		const code = asText(query?.code);
@@ -352,10 +382,12 @@ export abstract class OAuth2AuthDanceComponent implements AuthDanceComponent {
 		if (!authorization || authorization.state !== state) {
 			return null;
 		}
+		// Before the removal: a provider that does not answer leaves the authorization for a retry.
+		const endpoints = await this.#endpoints();
 		// The authorization answers one time, whatever the provider says about the code.
 		await context.storage.unsetKv(this.#authorizationKey(context));
-		const token = await this.#requestToken(code, authorization.verifier);
-		if (!token) {
+		const token = await this.#requestToken(code, authorization.verifier, endpoints);
+		if (!token || !(await this.verifyToken(token, authorization.parameters, context))) {
 			return null;
 		}
 		const account = await this.retrieveIdentification(token, context);
@@ -376,7 +408,8 @@ export abstract class OAuth2AuthDanceComponent implements AuthDanceComponent {
 	 * @param confirmed Whether the record starts as confirmed.
 	 * @returns One identification record.
 	 * @throws {@link InvalidPromptValueError} When the value does not read, when the provider answered with an error,
-	 * when `state` does not match the authorization in progress or it expired, and when the provider refuses the code.
+	 * when `state` does not match the authorization in progress or it expired, when the provider refuses the code, and
+	 * when {@link verifyToken} refuses the answer.
 	 * @throws {@link IdentificationTakenError} When the account already belongs to another identity.
 	 */
 	async getIdentityComponent(
@@ -412,7 +445,8 @@ export abstract class OAuth2AuthDanceComponent implements AuthDanceComponent {
 	 * @param response The query of the redirect as an object, `{ code, state }` at least.
 	 * @param context The context of the step.
 	 * @returns The id of the identity that holds the account, or `false`. A value that does not read, an error answer of
-	 * the provider, a `state` that does not match, a code the provider refuses and an account nobody holds give `false`.
+	 * the provider, a `state` that does not match, a code the provider refuses, an answer {@link verifyToken} refuses
+	 * and an account nobody holds give `false`.
 	 */
 	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]> {
 		const account = await this.#exchange(response, context);

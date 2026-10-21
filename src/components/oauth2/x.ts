@@ -30,9 +30,11 @@ export class XAuthDanceComponent extends OAuth2AuthDanceComponent {
 		super({
 			...options,
 			scope: options.scope ?? "users.read tweet.read",
-			authorizationUrl: "https://x.com/i/oauth2/authorize",
-			tokenUrl: "https://api.x.com/2/oauth2/token",
-			clientAuthentication: "client_secret_basic",
+			endpoints: {
+				authorizationUrl: "https://x.com/i/oauth2/authorize",
+				tokenUrl: "https://api.x.com/2/oauth2/token",
+				clientAuthentication: "client_secret_basic",
+			},
 		});
 	}
 

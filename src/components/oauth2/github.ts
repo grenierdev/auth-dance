@@ -27,9 +27,11 @@ export class GitHubAuthDanceComponent extends OAuth2AuthDanceComponent {
 	constructor(options: OAuth2ProviderOptions) {
 		super({
 			...options,
-			authorizationUrl: "https://github.com/login/oauth/authorize",
-			tokenUrl: "https://github.com/login/oauth/access_token",
-			clientAuthentication: "client_secret_post",
+			endpoints: {
+				authorizationUrl: "https://github.com/login/oauth/authorize",
+				tokenUrl: "https://github.com/login/oauth/access_token",
+				clientAuthentication: "client_secret_post",
+			},
 		});
 	}
 

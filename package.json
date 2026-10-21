@@ -60,6 +60,10 @@
 			"types": "./dist/src/components/oauth2/x.d.ts",
 			"import": "./dist/src/components/oauth2/x.js"
 		},
+		"./components/oidc": {
+			"types": "./dist/src/components/oidc.d.ts",
+			"import": "./dist/src/components/oidc.js"
+		},
 		"./components/otp": {
 			"types": "./dist/src/components/otp.d.ts",
 			"import": "./dist/src/components/otp.js"

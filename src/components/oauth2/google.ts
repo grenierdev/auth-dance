@@ -1,5 +1,5 @@
-import type { AuthDanceComponentContext } from "../../component.ts";
-import { OAuth2AuthDanceComponent, type OAuth2Identification, type OAuth2ProviderOptions, type OAuth2TokenResponse } from "../oauth2.ts";
+import type { OAuth2ProviderOptions } from "../oauth2.ts";
+import { OidcAuthDanceComponent } from "../oidc.ts";
 
 /** The two forms of `iss` that Google writes in an ID token. */
 const ISSUERS = ["https://accounts.google.com", "accounts.google.com"];
@@ -24,7 +24,7 @@ const ISSUERS = ["https://accounts.google.com", "accounts.google.com"];
  * }
  * ```
  */
-export class GoogleAuthDanceComponent extends OAuth2AuthDanceComponent {
+export class GoogleAuthDanceComponent extends OidcAuthDanceComponent {
 	/**
 	 * Points the component at Google.
 	 * @param options The client credentials and the redirect URL. `scope` defaults to `openid`. A scope you give must
@@ -33,32 +33,21 @@ export class GoogleAuthDanceComponent extends OAuth2AuthDanceComponent {
 	constructor(options: OAuth2ProviderOptions) {
 		super({
 			...options,
-			scope: options.scope ?? "openid",
-			authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-			tokenUrl: "https://oauth2.googleapis.com/token",
-			clientAuthentication: "client_secret_basic",
+			issuer: "https://accounts.google.com",
+			endpoints: {
+				authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+				tokenUrl: "https://oauth2.googleapis.com/token",
+				clientAuthentication: "client_secret_basic",
+			},
 		});
 	}
 
 	/**
-	 * Reads the claims of the ID token in the answer of the token endpoint.
-	 * @returns The claims. `sub` holds the id of the account.
-	 * @throws {@link Error} When the answer holds no ID token, or the ID token fails a check of `readIdToken`.
+	 * Tells whether the ID token comes from Google. Google writes `iss` with `https://` and without it.
+	 * @param claims The claims of the ID token.
+	 * @returns `true` for the two forms.
 	 */
-	protected async retrieveProfile(token: OAuth2TokenResponse): Promise<Record<string, unknown>> {
-		return this.readIdToken(token, (claims) => ISSUERS.includes(claims.iss as string));
-	}
-
-	/**
-	 * Reads the id of the account.
-	 * @returns `sub`, and no data.
-	 * @throws {@link Error} When the answer holds no ID token, the ID token fails a check, or it has no `sub`.
-	 */
-	async retrieveIdentification(token: OAuth2TokenResponse, _context: AuthDanceComponentContext): Promise<OAuth2Identification> {
-		const claims = await this.retrieveProfile(token);
-		if (typeof claims.sub !== "string") {
-			throw new Error("the Google id_token has no sub");
-		}
-		return { identification: claims.sub };
+	protected override checkIssuer(claims: Record<string, unknown>): boolean {
+		return ISSUERS.includes(claims.iss as string);
 	}
 }
