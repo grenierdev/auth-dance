@@ -1,6 +1,8 @@
 import { deepEqual, ok } from "node:assert";
 import { beforeEach, it } from "vitest";
+import { testOauth2Client } from "./fixtures.test.ts";
 import type { AuthDanceIdentity } from "./identity.ts";
+import type { AuthDanceOauth2ClientProvider } from "./oauth2/storage.ts";
 import type { AuthDanceIdentityProvider, AuthDanceKvProvider } from "./provider.ts";
 
 export function testIdentityProvider(factory: () => AuthDanceIdentityProvider | Promise<AuthDanceIdentityProvider>): void {
@@ -130,5 +132,58 @@ export function testKvProvider(factory: () => AuthDanceKvProvider | Promise<Auth
 		deepEqual(await provider.list("page_", 0, 2), ["page_1", "page_2"]);
 		deepEqual(await provider.list("page_", 1, 1), ["page_2"]);
 		deepEqual(await provider.list("page_", 1), ["page_2", "page_3"]);
+	});
+}
+
+export function testOauth2ClientProvider(factory: () => AuthDanceOauth2ClientProvider | Promise<AuthDanceOauth2ClientProvider>): void {
+	let provider: AuthDanceOauth2ClientProvider;
+	beforeEach(async () => {
+		provider = await factory();
+	});
+
+	it("should set and get a client", async () => {
+		const client = testOauth2Client({ client_name: "App", localized: { "client_name#fr-CA": "Appli" }, skip_consent: true });
+		await provider.set(client);
+		deepEqual(await provider.get(client.client_id), client);
+	});
+
+	it("should return undefined for a non-existent client", async () => {
+		deepEqual(await provider.get("cli_missing"), undefined);
+	});
+
+	it("should replace a client with the same id", async () => {
+		await provider.set(testOauth2Client({ scope: "profile" }));
+		await provider.set(testOauth2Client({ scope: "email" }));
+		deepEqual((await provider.get("cli_test"))?.scope, "email");
+	});
+
+	it("should delete a client", async () => {
+		await provider.set(testOauth2Client());
+		await provider.delete("cli_test");
+		deepEqual(await provider.get("cli_test"), undefined);
+		// An unknown id is not a failure.
+		await provider.delete("cli_test");
+	});
+
+	it("should hand out a copy, not the stored record", async () => {
+		await provider.set(testOauth2Client());
+		const read = await provider.get("cli_test");
+		ok(read);
+		read.redirect_uris.push("https://evil.example.com/callback");
+		deepEqual((await provider.get("cli_test"))?.redirect_uris, ["https://app.example.com/callback"]);
+	});
+
+	// The cursor names the first client of the page, and the order is the order of the ids.
+	it("should list the clients in the order of their ids, from the cursor", async () => {
+		for (const client_id of ["cli_c", "cli_a", "cli_b"]) {
+			await provider.set(testOauth2Client({ client_id }));
+		}
+		const ids = async (cursor?: string, limit?: number) => (await provider.list(cursor, limit)).map((client) => client.client_id);
+		deepEqual(await ids(), ["cli_a", "cli_b", "cli_c"]);
+		deepEqual(await ids("cli_b"), ["cli_b", "cli_c"]);
+		deepEqual(await ids("cli_b", 1), ["cli_b"]);
+		deepEqual(await ids(undefined, 2), ["cli_a", "cli_b"]);
+		deepEqual(await ids("cli_bb"), ["cli_c"]);
+		deepEqual(await ids("cli_d"), []);
 	});
 }

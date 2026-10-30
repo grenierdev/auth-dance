@@ -7,6 +7,8 @@ import { normalizeEmailAddress } from "../email-address.ts";
 import { InvalidPromptValueError } from "../error.ts";
 import { AuthDanceIdentity, type AuthDanceIdentityChannel } from "../identity.ts";
 import type { AuthDanceMessage } from "../message.ts";
+import { AuthDanceOauth2Client } from "../oauth2/client.ts";
+import { type AuthDanceOauth2ClientProvider, AuthDanceOauth2ClientStorage } from "../oauth2/storage.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
 import type {
 	AuthDanceIdentityProvider,
@@ -273,4 +275,60 @@ export function createAuthDanceCloudflareStorage(
 		kv: new CloudflareKvKvProvider(kv),
 		rate_limiter: new CloudflareRateLimiterProvider(don),
 	});
+}
+
+/**
+ * An `AuthDanceOauth2ClientProvider` on Cloudflare D1. It keeps each client as JSON in the `oauth2_client` table of
+ * `sqlite.sql`, and checks each record against the `AuthDanceOauth2Client` schema when it reads it.
+ */
+export class CloudflareD1Oauth2ClientProvider implements AuthDanceOauth2ClientProvider {
+	#db: D1Database;
+
+	/** Creates a provider on one D1 database that holds the `oauth2_client` table. */
+	constructor(db: D1Database) {
+		this.#db = db;
+	}
+
+	/** Reads one client by id. Returns `undefined` when the table holds no such id. */
+	async get(clientId: string): Promise<AuthDanceOauth2Client | undefined> {
+		const row = await this.#db.prepare(`SELECT "metadata" FROM oauth2_client WHERE id = ?`).bind(clientId).first<{ metadata: string }>();
+		return row ? parse(AuthDanceOauth2Client, JSON.parse(row.metadata)) : undefined;
+	}
+
+	/** Lists the clients in the order of `client_id`, from the first id equal to `cursor` or after it. */
+	async list(cursor?: string, limit?: number): Promise<AuthDanceOauth2Client[]> {
+		// biome-ignore format: Keep the existing table or query layout.
+		const query = `SELECT "metadata" FROM oauth2_client ${cursor === undefined ? "" : `WHERE id >= ?`} ORDER BY id ASC ${limit === undefined ? "" : `LIMIT ?`}`;
+		const params: (string | number)[] = [];
+		if (cursor !== undefined) {
+			params.push(cursor);
+		}
+		if (limit !== undefined) {
+			params.push(limit);
+		}
+		const result = await this.#db
+			.prepare(query)
+			.bind(...params)
+			.all<{ metadata: string }>();
+		return result.results.map((row) => parse(AuthDanceOauth2Client, JSON.parse(row.metadata)));
+	}
+
+	/** Writes the client under its `client_id`, and replaces an earlier client with the same id. */
+	async set(client: AuthDanceOauth2Client): Promise<void> {
+		// biome-ignore format: Keep the existing table or query layout.
+		await this.#db
+			.prepare(`INSERT INTO oauth2_client (id, metadata) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET metadata = excluded.metadata, updated_at = CURRENT_TIMESTAMP`)
+			.bind(client.client_id, JSON.stringify(client))
+			.run();
+	}
+
+	/** Deletes the client with this id. An unknown id is not an error. */
+	async delete(clientId: string): Promise<void> {
+		await this.#db.prepare(`DELETE FROM oauth2_client WHERE id = ?`).bind(clientId).run();
+	}
+}
+
+/** Builds a client storage on a `CloudflareD1Oauth2ClientProvider`. */
+export function createAuthDanceCloudflareOauth2ClientStorage(d1: D1Database): AuthDanceOauth2ClientStorage {
+	return new AuthDanceOauth2ClientStorage({ clients: new CloudflareD1Oauth2ClientProvider(d1) });
 }

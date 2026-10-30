@@ -162,6 +162,124 @@ prompts with `AuthDancePromptSwitch`.
 </AuthDanceProvider>;
 ```
 
+## Auth Dance as an identity provider
+
+`auth-dance/oauth2` makes the server an OAuth 2.0 authorization server for third-party apps. The owner signs in with the same
+dance, on login and consent pages you host.
+
+```ts
+import { createAuthDanceOauth2 } from "auth-dance/oauth2";
+import { createAuthDanceMemoryOauth2ClientStorage } from "auth-dance/providers/memory";
+
+const idp = createAuthDanceOauth2({
+	oauth2: {
+		// The core instance. It mints every token, with the scopes of its `tokens.scopes`. `issuer` must equal its
+		// `tokens.issuer`.
+		api: auth.api,
+		clients: createAuthDanceMemoryOauth2ClientStorage(),
+		issuer: "https://auth.example.com",
+		ui: { login: "https://auth.example.com/login", consent: "https://auth.example.com/consent" },
+	},
+	app: { basePath: "/oauth2" },
+});
+
+// The secret is readable one time. The store keeps only its hash.
+const { client, client_secret } = await idp.oauth2.clients.createClient({
+	redirect_uris: ["https://app.example.com/callback"],
+	scope: "profile",
+});
+```
+
+`GET /.well-known/oauth-authorization-server` serves the RFC 8414 metadata. It sits where RFC 8414 puts it, at the root of the host
+followed by the path of the issuer, whatever the `basePath`. Every other route sits under the `basePath`: `/oauth2/authorize`,
+`/oauth2/token` and `/oauth2/jwks.json`. Send them all to `idp.fetch`. The client storage ships for memory and for Cloudflare D1, on the
+`oauth2_client` table of `sqlite.sql`.
+
+`/oauth2/authorize` shows no page of its own. It sends the browser to `ui.login` with a `login_challenge`. The login page lets the
+owner dance against the core app, then hands the access token of the dance to the authorization server:
+
+```ts
+// The server side of ui.login.
+const challenge = new URL(request.url).searchParams.get("login_challenge")!;
+const login = await idp.oauth2.getLoginRequest(challenge);
+// … the owner dances with AuthDanceClient against auth.fetch …
+const { redirect_to } = await idp.oauth2.acceptLoginRequest(challenge, { access_token: client.tokens!.access_token });
+return Response.redirect(redirect_to, 303);
+```
+
+The consent page does the same with `getConsentRequest` and `acceptConsentRequest(challenge, { grant_scope })`. `rejectLoginRequest`
+and `rejectConsentRequest` send an error to the client. A first-party client with `skip_consent` never sees the consent page. A page
+that runs in another process calls the same methods over HTTP: pass `app: { admin: { authorize } }` to mount them under
+`/oauth2/admin`.
+
+The authorization server sets no cookie. Each redirect carries a single-use verifier, and that is all it needs to continue a
+request. The pages own the browser: a login page that keeps the owner signed in hands over the access token of that session and
+skips the dance, and a page that wants the browser that comes back to be the one that left binds the request to it with its own
+session.
+
+At `/oauth2/token`, a client uses the authorization code grant with PKCE S256, `refresh_token`, or `client_credentials`. The core
+mints the tokens, so they are the tokens of a dance with the client and the scopes of the grant, and they work wherever the tokens of
+a dance work: an access token that holds `account` manages the account. Its `aud` is the issuer, or the `audience` of the client
+record of a resource server. A resource server checks it against `/oauth2/jwks.json`. To see a revocation at once, it asks
+`/oauth2/introspect` (RFC 7662) as a confidential client, or calls `auth.api.verifyAccessToken(token, { session: true })` in process.
+A client sees only its own tokens at `/oauth2/introspect`; set `introspect: true` on the client record of a resource server to let it
+see every token, the tokens of a dance included.
+
+A consent creates a session for the client: its grant. A grant stands alone. A sign-out in the core, of one session or of all,
+leaves it, and `/list-sessions` does not list it. It lasts `durations.refresh` from its consent, and a revocation, a delete or a reset
+in the core ends it sooner. Each endpoint refreshes the tokens of its own clients: `/refresh-token` takes the refresh token of a dance,
+and `/oauth2/token` takes the refresh token of a client, once the client authenticates.
+
+A client revokes a token at `/oauth2/revoke` (RFC 7009). Any token of a grant, access or refresh, ends the session of the grant. A
+token of client credentials has no session, so it stays valid until `exp`. A resource server that only checks the signature still
+accepts an access token until `exp`, 300 seconds by default; it sees the revocation through `/oauth2/introspect` or
+`verifyAccessToken(token, { session: true })`. For an account page, `GET /oauth2/grants` lists the clients that have access, each with
+its public record, and `DELETE /oauth2/grants/{id}` revokes one and forgets the consent the owner kept for its client. Both take the
+access token of the owner as `Authorization: Bearer`, and the token must hold `account`. In process, `listOwnGrants` and
+`revokeOwnGrant` do the same, and `listGrants(identityId)`, `revokeGrant` and `revokeClientGrants` serve an administrator. Delete a client with `idp.oauth2.deleteClient`, which revokes its
+grants first; the client storage alone leaves them active.
+
+`/oauth2/register` lets a client register itself (RFC 7591). It is closed until you pass `registration`:
+
+```ts
+registration: {
+	// Without it, anyone can register a client. The owner still sees the client name on the consent page,
+	// but a name can mislead.
+	authorize: (initialAccessToken) => initialAccessToken === process.env.REGISTRATION_TOKEN,
+	// The most a registered client may ask for.
+	scope: ["profile"],
+},
+```
+
+A registered client never gets `skip_consent`, `introspect` or `audience`, and it may not ask for `account` unless `registration.scope`
+lists it. A setup script calls `idp.oauth2.registerClient(metadata, { registered_by: "admin" })` to run the same checks and set those
+fields.
+
+A device with no browser, a TV or a CLI, uses the device authorization grant (RFC 8628) once `ui.device` names the page where the owner
+types the user code:
+
+```ts
+ui: { login: "https://auth.example.com/login", consent: "https://auth.example.com/consent", device: "https://auth.example.com/device" },
+```
+
+The device posts its `client_id` to `/oauth2/device_authorization` and shows the `user_code` and the `verification_uri`,
+`/oauth2/device`, which sends the browser to `ui.device` with a `device_challenge`. The page takes the code the owner types:
+
+```ts
+// The server side of ui.device.
+const { user_code } = await idp.oauth2.getDeviceRequest(challenge); // filled in from verification_uri_complete
+const { redirect_to } = await idp.oauth2.acceptDeviceRequest(challenge, { user_code: typed });
+return Response.redirect(redirect_to, 303);
+```
+
+The owner then goes through the same login and consent pages, and comes back to `ui.device` with `?device_status=approved`, or with
+`?device_status=denied` and an `error`. Meanwhile the device polls `/oauth2/token` with
+`grant_type=urn:ietf:params:oauth:grant-type:device_code`, and gets `authorization_pending` until then. A user code can come from
+someone else, so the consent page always shows for a device, even for a client with `skip_consent`; `getConsentRequest` gives the
+`user_code` for the page to show. A wrong code raises `InvalidUserCodeError`, and five of them end the challenge. Register the client
+with the grant type `urn:ietf:params:oauth:grant-type:device_code`, and `token_endpoint_auth_method: "none"` for a device that cannot
+keep a secret.
+
 ## What ships with it
 
 | Import                           | Holds                                                                                                 |

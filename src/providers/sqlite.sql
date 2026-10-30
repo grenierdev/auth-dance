@@ -31,3 +31,10 @@ BEGIN
     	FROM	json_each(NEW.components) AS C
 		WHERE	C.value->>'$.kind' = 'identification';
 END;
+
+CREATE TABLE IF NOT EXISTS "oauth2_client" (
+	"id" TEXT PRIMARY KEY,
+	"metadata" TEXT NOT NULL,
+	"created_at" TEXT DEFAULT CURRENT_TIMESTAMP,
+	"updated_at" TEXT DEFAULT CURRENT_TIMESTAMP
+) STRICT;

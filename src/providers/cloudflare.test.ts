@@ -1,4 +1,6 @@
 import { deepEqual, ok, rejects } from "node:assert";
+import { readFileSync } from "node:fs";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { beforeEach, describe, it, vi } from "vitest";
 import { AuthDanceApi } from "../api.ts";
 import { sequence } from "../choreography.ts";
@@ -9,12 +11,34 @@ import { AuthDanceError, InvalidPromptValueError } from "../error.ts";
 import { TEST_ISSUER, TEST_SIGNING_KEYS } from "../fixtures.test.ts";
 import { ksuid } from "../id.ts";
 import type { AuthDanceIdentity } from "../identity.ts";
+import { testOauth2ClientProvider } from "../provider.test.ts";
 import { AuthDanceStorage } from "../storage.ts";
-import { CloudflareSendMailAuthDanceChannel } from "./cloudflare.ts";
+import { CloudflareD1Oauth2ClientProvider, CloudflareSendMailAuthDanceChannel } from "./cloudflare.ts";
 import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "./memory.ts";
 
 // The module extends `DurableObject`, which only the Workers runtime provides.
 vi.mock("cloudflare:workers", () => ({ DurableObject: class {} }));
+
+// A D1 binding on an in-memory SQLite database that runs `sqlite.sql`. It covers the statement methods the
+// providers call: `bind`, `first`, `all` and `run`.
+function sqliteD1(): D1Database {
+	const db = new DatabaseSync(":memory:");
+	db.exec(readFileSync(new URL("./sqlite.sql", import.meta.url), "utf8"));
+	const statement = (sql: string, params: SQLInputValue[]) => ({
+		bind: (...values: SQLInputValue[]) => statement(sql, values),
+		first: async () => db.prepare(sql).get(...params) ?? null,
+		all: async () => ({ results: db.prepare(sql).all(...params) }),
+		run: async () => {
+			db.prepare(sql).run(...params);
+			return { success: true };
+		},
+	});
+	return { prepare: (sql: string) => statement(sql, []) } as unknown as D1Database;
+}
+
+describe("CloudflareD1Oauth2ClientProvider", () => {
+	testOauth2ClientProvider(() => new CloudflareD1Oauth2ClientProvider(sqliteD1()));
+});
 
 // What the `SendEmail` binding received.
 function sendEmailStub(): { sent: Array<{ to: string }>; binding: SendEmail } {

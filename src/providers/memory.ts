@@ -2,6 +2,8 @@ import type { AuthDanceChannel, AuthDanceChannelContext } from "../channel.ts";
 import { ComponentAlreadyEnrolledError, IdentificationTakenError, InvalidPromptValueError } from "../error.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityChannel, AuthDanceIdentityIdentification } from "../identity.ts";
 import type { AuthDanceMessage } from "../message.ts";
+import type { AuthDanceOauth2Client } from "../oauth2/client.ts";
+import { type AuthDanceOauth2ClientProvider, AuthDanceOauth2ClientStorage } from "../oauth2/storage.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
 import type {
 	AuthDanceIdentityProvider,
@@ -287,4 +289,65 @@ export function createAuthDanceMemoryStorage(): AuthDanceStorage {
 		kv: new MemoryKvProvider(),
 		rate_limiter: new MemoryRateLimiterProvider(),
 	});
+}
+
+/**
+ * An `AuthDanceOauth2ClientProvider` that holds every client in a `Map`. A process restart erases every client that
+ * was not seeded. Use this provider for tests, or for a fixed list of first-party clients. `set` stores a clone, and
+ * every read returns a clone.
+ *
+ * @example
+ * ```ts
+ * const clients = new MemoryOauth2ClientProvider([
+ * 	{ client_id: "cli_web", client_secret_hash: await hashClientSecret(process.env.WEB_SECRET!), … },
+ * ]);
+ * ```
+ */
+export class MemoryOauth2ClientProvider implements AuthDanceOauth2ClientProvider, Disposable {
+	#storage: Map<string, AuthDanceOauth2Client>;
+
+	/** Creates a provider with the clients of `clients`. The provider stores a clone of each one, and checks none. */
+	constructor(clients?: Iterable<AuthDanceOauth2Client>) {
+		this.#storage = new Map(Array.from(clients ?? [], (client) => [client.client_id, structuredClone(client)]));
+	}
+
+	/** Empties the map. */
+	[Symbol.dispose](): void {
+		this.#storage.clear();
+	}
+
+	/** Reads one client by id. Returns a clone, or `undefined` when the map holds no such id. */
+	get(clientId: string): Promise<AuthDanceOauth2Client | undefined> {
+		const client = this.#storage.get(clientId);
+		return Promise.resolve(client ? structuredClone(client) : undefined);
+	}
+
+	/**
+	 * Lists the stored clients in the order of `client_id`.
+	 * @param cursor The page starts at the first id equal to it or after it.
+	 * @returns A clone of each client in the range.
+	 */
+	list(cursor?: string, limit?: number): Promise<AuthDanceOauth2Client[]> {
+		const clients = Array.from(this.#storage.values())
+			.filter((client) => cursor === undefined || client.client_id >= cursor)
+			.sort((a, b) => (a.client_id < b.client_id ? -1 : a.client_id > b.client_id ? 1 : 0));
+		return Promise.resolve(clients.slice(0, limit).map((client) => structuredClone(client)));
+	}
+
+	/** Stores a clone of the client under its own `client_id`, and replaces an earlier client with the same id. */
+	set(client: AuthDanceOauth2Client): Promise<void> {
+		this.#storage.set(client.client_id, structuredClone(client));
+		return Promise.resolve();
+	}
+
+	/** Removes the client with this id. An unknown id is not an error. */
+	delete(clientId: string): Promise<void> {
+		this.#storage.delete(clientId);
+		return Promise.resolve();
+	}
+}
+
+/** Builds a client storage on a `MemoryOauth2ClientProvider` seeded with `clients`. */
+export function createAuthDanceMemoryOauth2ClientStorage(clients?: Iterable<AuthDanceOauth2Client>): AuthDanceOauth2ClientStorage {
+	return new AuthDanceOauth2ClientStorage({ clients: new MemoryOauth2ClientProvider(clients) });
 }
