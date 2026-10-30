@@ -105,11 +105,10 @@ export class CloudflareD1IdentityProvider implements AuthDanceIdentityProvider {
 /**
  * A key-value adapter on Workers KV.
  *
- * Workers KV is eventually consistent across locations, for up to about 60 seconds. Two exchanges of one refresh
- * token in two locations inside that window can both read the old refresh record, so the library detects a reused
- * refresh token inside one location only. Rotation still caps the life of a stolen refresh token at one exchange
- * plus that window. A deleted session, after a sign-out or a reset, reaches the other locations with the same
- * delay. Strict detection needs a strongly consistent store, a Durable Object for example.
+ * Workers KV is eventually consistent across locations, for up to about 60 seconds. A deleted session, after a
+ * sign-out, a reset or a revocation, reaches the other locations with that delay, so a refresh token of the session
+ * can still work there for that long. An access token needs no read and stays valid until `exp` anyway. A strongly
+ * consistent store, a Durable Object for example, closes the window.
  */
 export class CloudflareKvKvProvider implements AuthDanceKvProvider {
 	#kv: KVNamespace;

@@ -1,4 +1,6 @@
 import { deepEqual, ok, throws } from "node:assert";
+import { createLocalJWKSet } from "jose/jwks/local";
+import { jwtVerify } from "jose/jwt/verify";
 import { beforeEach, describe, it } from "vitest";
 import type { AuthDanceApiOptions } from "./api.ts";
 import { choice, sequence } from "./choreography.ts";
@@ -6,6 +8,7 @@ import type { AuthDanceComponentContext } from "./component.ts";
 import { EmailAuthDanceComponent } from "./components/email.ts";
 import { OtpAuthDanceComponent } from "./components/otp.ts";
 import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "./components/password.ts";
+import { TEST_ISSUER, TEST_SIGNING_KEYS } from "./fixtures.test.ts";
 import { ksuid } from "./id.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
 import { type AuthDance, createAuthDance, forwardedAddress } from "./mod.ts";
@@ -71,6 +74,8 @@ describe("App", () => {
 			choreography: sequence("email", "password"),
 			components: { email, password, email2, otp, otp2 },
 			secret: "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs", // openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+			keys: TEST_SIGNING_KEYS,
+			tokens: { issuer: TEST_ISSUER },
 			storage,
 		};
 		post = client(createAuthDance({ api: apiOptions }));
@@ -179,6 +184,13 @@ describe("App", () => {
 		]);
 		const first = await signIn();
 		const second = await signIn();
+		// A grant of the oauth2 module is not a session of a dance, so the route does not list it.
+		await storage.createSession({
+			identityId: first.identity.id,
+			client_id: "cli_tv",
+			scopes: [],
+			expireAt: new Date(first.session.expireAt),
+		});
 		const [status, listed] = await post("/list-sessions", undefined, bearer(second.tokens.access_token));
 		deepEqual(status, 200);
 		deepEqual(listed.sessions.map((s: Json) => s.id).sort(), [first.session.id, second.session.id].sort());
@@ -779,6 +791,35 @@ describe("App", () => {
 			const [, result] = await post("/sign-in");
 			deepEqual(typeof result.expireAt, "string");
 			ok(!Number.isNaN(Date.parse(result.expireAt)));
+		});
+
+		// A relying party checks a token with the JWK Set alone.
+		it("should serve the public signing keys", async () => {
+			await seedIdentity({ name: "John Doe" }, async (seed) => [
+				...(await email.getIdentityComponent("email", "john.doe@example.com", true)),
+				...(await password.getIdentityComponent("password", "foo", true, seed("password"))),
+			]);
+			const { tokens } = await signIn();
+			for (const [app, path] of [
+				[undefined, "/.well-known/jwks.json"],
+				[{ basePath: "/auth" }, "/auth/.well-known/jwks.json"],
+			] as const) {
+				const response = await createAuthDance({ api: apiOptions, app }).fetch(new Request(`http://local${path}`));
+				deepEqual(response.status, 200);
+				const jwks: Json = await response.json();
+				deepEqual(
+					jwks.keys.map((jwk: Json) => jwk.kid),
+					[TEST_SIGNING_KEYS[0].kid],
+				);
+				ok(!("d" in jwks.keys[0]));
+				await jwtVerify(tokens.access_token, createLocalJWKSet(jwks), { issuer: TEST_ISSUER, audience: TEST_ISSUER });
+			}
+		});
+
+		it("should document the key set route", async () => {
+			const { paths } = await createAuthDance({ api: apiOptions }).generateOpenAPISchema();
+			ok(paths?.["/.well-known/jwks.json"]?.get);
+			deepEqual(Object.keys(paths ?? {}).length, 16);
 		});
 
 		// The library reads address and userAgent from the connection, never from the body.

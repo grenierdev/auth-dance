@@ -511,7 +511,7 @@ export class AuthDanceClient {
 	/**
 	 * Exchanges the refresh token for a fresh set of tokens on the same session.
 	 *
-	 * The new tokens keep the `aat` of the sign-in, so an exchange never re-opens the elevated window. Two calls at once
+	 * The new tokens keep the `auth_time` of the sign-in, so an exchange never re-opens the elevated window. Two calls at once
 	 * share one exchange, and a refused exchange is not kept, so the next call tries again.
 	 *
 	 * @param signal Drops the call.

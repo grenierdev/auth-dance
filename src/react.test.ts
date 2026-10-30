@@ -11,6 +11,7 @@ import type { AuthDanceComponentContext } from "./component.ts";
 import { EmailAuthDanceComponent } from "./components/email.ts";
 import { OtpAuthDanceComponent } from "./components/otp.ts";
 import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "./components/password.ts";
+import { TEST_ISSUER, TEST_SIGNING_KEYS } from "./fixtures.test.ts";
 import { ksuid } from "./id.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
 import { type AuthDance, createAuthDance } from "./mod.ts";
@@ -123,6 +124,8 @@ describe("React", () => {
 				otp2: new OtpAuthDanceComponent({ channel: "email2" }),
 			},
 			secret: "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs", // openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+			keys: TEST_SIGNING_KEYS,
+			tokens: { issuer: TEST_ISSUER },
 			storage,
 		};
 		build();

@@ -23,6 +23,7 @@ import {
 	InvalidValidationValueError,
 	WouldLockOutError,
 } from "./error.ts";
+import { TEST_ISSUER, TEST_SIGNING_KEYS } from "./fixtures.test.ts";
 import { ksuid } from "./id.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
 import { type AuthDance, createAuthDance } from "./mod.ts";
@@ -110,6 +111,9 @@ describe("Client", () => {
 				otp2: new OtpAuthDanceComponent({ channel: "email2" }),
 			},
 			secret: "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs", // openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+			keys: TEST_SIGNING_KEYS,
+			// The identity data reaches the client through the claims of a scope.
+			tokens: { issuer: TEST_ISSUER, scopes: { profile: { description: "Your name", claims: ["name"] } } },
 			storage,
 		};
 		build();

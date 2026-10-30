@@ -1,9 +1,8 @@
 import { hex } from "@scure/base";
+import type { JWTPayload } from "jose";
 import { decode } from "jose/base64url";
 import { jwtDecrypt } from "jose/jwt/decrypt";
 import { EncryptJWT } from "jose/jwt/encrypt";
-import { SignJWT } from "jose/jwt/sign";
-import { jwtVerify } from "jose/jwt/verify";
 import { parse } from "valibot";
 import type { AuthDanceChannel } from "./channel.ts";
 import {
@@ -16,6 +15,16 @@ import {
 	simplify,
 	walk,
 } from "./choreography.ts";
+import {
+	ACCOUNT_SCOPE,
+	AccountScope,
+	type AuthDanceClaims,
+	type AuthDanceClaimsMapper,
+	type AuthDanceGrantType,
+	type AuthDanceScope,
+	isScopeToken,
+	resolveClaims,
+} from "./claims.ts";
 import type { AuthDanceComponent, AuthDanceComponentContext } from "./component.ts";
 import { OtpAuthDanceComponent } from "./components/otp.ts";
 import {
@@ -37,6 +46,7 @@ import {
 	IdentityMismatchError,
 	IdentityNotFoundError,
 	IdentityNotResolvedError,
+	InsufficientScopeError,
 	InvalidAccessTokenError,
 	InvalidChoreographyError,
 	InvalidPromptValueError,
@@ -59,9 +69,16 @@ import type {
 	AuthDanceIdentityComponent,
 	AuthDanceIdentityIdentification,
 } from "./identity.ts";
+import { AuthDanceKeys, type AuthDanceSigningKey } from "./keys.ts";
 import type { AuthDanceMessage } from "./message.ts";
 import type { AuthDancePrompt } from "./prompt.ts";
-import type { AuthDanceResponse, AuthDanceResponseResult, AuthDanceResponseState, AuthDanceResponseTokens } from "./response.ts";
+import type {
+	AuthDanceResponse,
+	AuthDanceResponseResult,
+	AuthDanceResponseState,
+	AuthDanceResponseTokens,
+	AuthDanceTokenResponse,
+} from "./response.ts";
 import type { AuthDanceSession } from "./session.ts";
 import {
 	AuthDanceState,
@@ -76,12 +93,6 @@ import {
 	type AuthDanceStateUnsubscribe,
 } from "./state.ts";
 import type { AuthDanceStorage } from "./storage.ts";
-
-export type AuthDanceClaimJson = string | number | boolean | null;
-// | { [key: string]: AuthDanceClaimJson }
-// | AuthDanceClaimJson[];
-
-export type AuthDanceClaims = Record<string, AuthDanceClaimJson>;
 
 /** One fixed-window rate limit bucket. It allows `limit` hits in each `window`. */
 export interface AuthDanceRateLimit {
@@ -150,10 +161,9 @@ export interface AuthDanceIdentityEvent<TFlow extends AuthDanceIdentityEventFlow
 
 /**
  * The flows that create, renew or delete a session. Each one reports the change to one of the three session hooks.
- * `reuse` is a refresh token exchanged a second time. `rotate` and `recover` delete the other sessions of an identity
- * after a reset.
+ * `rotate` and `recover` delete the other sessions of an identity after a reset.
  */
-export type AuthDanceSessionEventFlow = "sign-in" | "sign-up" | "refresh" | "sign-out" | "delete" | "reuse" | "rotate" | "recover";
+export type AuthDanceSessionEventFlow = "sign-in" | "sign-up" | "refresh" | "sign-out" | "delete" | "rotate" | "recover";
 
 /**
  * What the library hands a session hook. The event carries no token.
@@ -190,14 +200,17 @@ export interface AuthDanceApiHooks {
 	onIdentityDeleted?(event: AuthDanceIdentityEvent<"delete">): void | Promise<void>;
 	/** A sign-in or a sign-up minted a session, together with the first pair of tokens on it. */
 	onSessionCreated?(event: AuthDanceSessionEvent<"sign-in" | "sign-up">): void | Promise<void>;
-	/** A refresh minted a new pair of tokens on a session that already existed. It keeps `aat` unchanged. */
+	/**
+	 * A refresh minted a new pair of tokens on a session that already existed, for a dance or for a client of the
+	 * oauth2 module. It keeps `auth_time` unchanged.
+	 */
 	onSessionRefreshed?(event: AuthDanceSessionEvent<"refresh">): void | Promise<void>;
 	/**
 	 * The library deleted a session. A sign-out, a delete, a completed rotate and a completed recover fire this hook
-	 * one time for each session they take. A refresh token exchanged a second time fires it with the flow `reuse`.
-	 * A rotate and a recover fire it after `onIdentityUpdated`.
+	 * one time for each session they take. A delete, a rotate and a recover take the grants of the oauth2 module too. A
+	 * rotate and a recover fire it after `onIdentityUpdated`.
 	 */
-	onSessionDeleted?(event: AuthDanceSessionEvent<"sign-out" | "delete" | "reuse" | "rotate" | "recover">): void | Promise<void>;
+	onSessionDeleted?(event: AuthDanceSessionEvent<"sign-out" | "delete" | "rotate" | "recover">): void | Promise<void>;
 	/** Another hook rejected. The library drops a rejection from this hook. */
 	onError?(event: AuthDanceHookErrorEvent): void | Promise<void>;
 }
@@ -232,8 +245,18 @@ export interface AuthDanceApiOptions {
 	 * @defaultValue Every component recovers through the derived rule.
 	 */
 	recovery?: Record<string, AuthDanceChoreography | false>;
-	/** The base64url key. It signs every minted token and it encrypts the state. Keep it in a secret store. */
+	/** The base64url key that encrypts the state. It signs nothing. Keep it in a secret store. */
 	secret: string;
+	/**
+	 * The private JWKs that sign every minted token, ES256, EdDSA, RS256 or PS256. Generate one with
+	 * `generateSigningKey`, and keep it in a secret store.
+	 *
+	 * The first key signs. Every key verifies, so a token stays valid after a rotation for as long as its key stays in
+	 * the list. A key after the first can hold its public part only. `jwks()` publishes the public part of each key.
+	 *
+	 * The constructor raises `TypeError` for a list `AuthDanceKeys` refuses.
+	 */
+	keys: AuthDanceSigningKey["jwk"][];
 	/** Where identities, sessions, one-time codes and rate limit counters live. */
 	storage: AuthDanceStorage;
 	/** How long a flow, a token and the elevated window last, in seconds. */
@@ -256,21 +279,17 @@ export interface AuthDanceApiOptions {
 		unsubscribe?: number;
 		/** How long a delete confirmation stays valid. @defaultValue 300 */
 		delete?: number;
-		/** How long an access token stays valid. @defaultValue 300 */
+		/** How long an access token stays valid, for a dance and for every client of the oauth2 module. @defaultValue 300 */
 		access?: number;
-		/** How long a refresh token stays valid. @defaultValue 86400 */
-		refresh?: number;
 		/**
-		 * How long the refresh token that a rotation replaced still fails without harm. An exchange of it inside this
-		 * window raises `InvalidRefreshTokenError` and keeps the session, for another tab or a retry that lost a race.
-		 * Past this window, the exchange deletes the session.
-		 * @defaultValue 10
+		 * How long a session lasts: the session of a sign-in from the sign-in, and a grant of the oauth2 module from its
+		 * consent. Its refresh tokens stay valid until it ends, and a refresh never extends it. @defaultValue 86400
 		 */
-		refresh_leeway?: number;
+		refresh?: number;
 		/**
 		 * The window after a sign-in in which a session may still run a sensitive flow. Past this window `enroll`,
 		 * `unenroll`, `rotate`, `subscribe`, `unsubscribe` and `delete` raise `FreshSignInRequiredError`. A sign-out
-		 * needs no fresh sign-in. A refresh keeps `aat` unchanged and never re-opens the window.
+		 * needs no fresh sign-in. A refresh keeps `auth_time` unchanged and never re-opens the window.
 		 * @defaultValue 300
 		 */
 		elevated?: number;
@@ -282,14 +301,30 @@ export interface AuthDanceApiOptions {
 		/** The per-address buckets the HTTP layer consumes. `AuthDanceApi` never reads them. */
 		address?: AuthDanceAddressRateLimits;
 	};
-	/** How the minted tokens present themselves. */
-	tokens?: {
+	/** How the minted tokens present themselves, for a dance and for every client of the oauth2 module. */
+	tokens: {
 		/**
-		 * The `iss` claim of every minted token. The encrypted state carries the same claim, and the library checks
-		 * that claim every time it reads a state back. If you omit this option, the state carries no issuer.
-		 * @defaultValue "acme"
+		 * The `iss` claim of every minted token. It is also the `aud` of a token for a client with no `audience`, and the
+		 * `client_id` of the tokens of a dance. The encrypted state carries the same `iss` claim, and the library checks
+		 * that claim every time it reads a state back.
+		 *
+		 * An `https:` URL with no query and no fragment, RFC 8414 §2, for example `https://auth.example.com`. `http:`
+		 * passes only for `localhost`, `127.0.0.1` and `[::1]`. The constructor raises `TypeError` for any other value.
 		 */
-		issuer?: string;
+		issuer: string;
+		/**
+		 * The scopes the server knows, keyed by name. A dance grants every one of them. A client of the oauth2 module
+		 * gets the ones it asks for and the owner consents to. Each name is a scope token of RFC 6749 §3.3: printable
+		 * ASCII with no space, no `"` and no `\`. The constructor raises `TypeError` for any other name.
+		 *
+		 * `account` is always known: it opens the management routes. Declare it here to change its description or its
+		 * claims.
+		 *
+		 * @defaultValue `account` only.
+		 */
+		scopes?: Record<string, AuthDanceScope>;
+		/** Maps the scopes of a token to its claims, from any source. @defaultValue The `claims` of each scope. */
+		claims?: AuthDanceClaimsMapper;
 	};
 	/**
 	 * The listeners the library calls after it changes an identity or a session. Any hook you omit reports nothing.
@@ -297,11 +332,77 @@ export interface AuthDanceApiOptions {
 	 */
 	hooks?: AuthDanceApiHooks;
 	/**
-	 * Whether a completed `rotate` or `recover` deletes the other sessions of the identity. A rotate keeps the session
-	 * that ran it. A recover runs with no session, so it deletes every session.
+	 * Whether a completed `rotate` or `recover` deletes the other sessions of the identity, the grants of the oauth2
+	 * module included. A rotate keeps the session that ran it. A recover runs with no session, so it deletes every
+	 * session.
 	 * @defaultValue `true`
 	 */
 	revokeSessionsOnReset?: boolean;
+}
+
+// RFC 8414 §2: the issuer is an `https:` URL with no query and no fragment. `http:` passes for a loopback host, so a
+// test or a local server runs without TLS. The value goes out as it is, because `iss` must match it exactly.
+function checkIssuer(issuer: unknown): string {
+	const url = typeof issuer === "string" ? URL.parse(issuer) : null;
+	if (typeof issuer !== "string" || !url) {
+		throw new TypeError(`tokens.issuer ${issuer} is not a URL, for example https://auth.example.com`);
+	}
+	const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+	if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+		throw new TypeError(`tokens.issuer ${issuer} is not an https: URL`);
+	}
+	if (issuer.includes("?") || issuer.includes("#")) {
+		throw new TypeError(`tokens.issuer ${issuer} has a query or a fragment`);
+	}
+	return issuer;
+}
+
+/** The `typ` header of an access token, RFC 9068 §2.1. */
+export const ACCESS_TOKEN_TYPE = "at+jwt";
+/** The `typ` header of a refresh token. A refresh token never passes as an access token, RFC 8725 §3.11. */
+export const REFRESH_TOKEN_TYPE = "rt+jwt";
+
+/** What a valid access token or refresh token of this issuer carries. */
+export interface AuthDanceToken {
+	/** The `sub`: the identity id, or the client id for client credentials. */
+	subject: string;
+	/** The client the token was issued to, its `client_id`. A dance gives the issuer. */
+	client_id: string;
+	/** The scopes of the token. */
+	scope: string[];
+	/** The session the token belongs to, its `sid`. Absent for client credentials. */
+	session_id?: string;
+	/** The moment of the sign-in behind the session, in seconds since the epoch. Absent for client credentials. */
+	auth_time?: number;
+	/** Every claim of the token, the claims of its scopes included. */
+	claims: JWTPayload;
+}
+
+/**
+ * Reads the claims every token of this library carries. It checks no signature, no `typ`, no `iss`, no `aud` and no
+ * `exp`: verify the token first.
+ *
+ * @returns `undefined` when `sub`, `client_id` or `scope` is not a string, or `sid` or `auth_time` has the wrong type.
+ */
+export function readToken(payload: JWTPayload): AuthDanceToken | undefined {
+	const { sub, client_id, scope, sid, auth_time } = payload;
+	if (
+		typeof sub !== "string" ||
+		typeof client_id !== "string" ||
+		typeof scope !== "string" ||
+		(sid !== undefined && typeof sid !== "string") ||
+		(auth_time !== undefined && typeof auth_time !== "number")
+	) {
+		return undefined;
+	}
+	return {
+		subject: sub,
+		client_id,
+		scope: scope.split(" ").filter((name) => name !== ""),
+		...(typeof sid === "string" ? { session_id: sid } : {}),
+		...(typeof auth_time === "number" ? { auth_time } : {}),
+		claims: payload,
+	};
 }
 
 /** The buckets `AuthDanceApi` uses when `limits.identity` omits one. */
@@ -336,8 +437,8 @@ interface AuthDanceAdvance {
  * success result.
  *
  * Each method raises an `AuthDanceError` for a failure the caller can act on. Any other failure escapes as
- * `AuthDanceUnknownError` and carries the original failure in `cause`. `accessTokenIdentity` lets an unexpected
- * failure escape as it stands.
+ * `AuthDanceUnknownError` and carries the original failure in `cause`. `verifyAccessToken` and `mintTokens` let
+ * an unexpected failure escape as it stands.
  *
  * @example
  * ```ts
@@ -348,12 +449,17 @@ interface AuthDanceAdvance {
 export class AuthDanceApi {
 	#options: AuthDanceApiOptions;
 	#decodedSecret: Uint8Array;
+	#keys: AuthDanceKeys;
+	#issuer: string;
 	// The derived recovery choreographies, for the choreography object they derive from.
 	#recoveryCache: { choreography: AuthDanceChoreography; derived: Map<string, AuthDanceChoreography | null> } | undefined;
 
 	/**
-	 * Builds the state machine from a policy. It decodes `options.secret` one time and keeps the raw key.
+	 * Builds the state machine from a policy. It decodes `options.secret` one time and keeps the raw key. It checks
+	 * `options.keys` and `options.tokens.issuer`, and imports no key: the first token imports the key that signs it.
 	 *
+	 * @throws {TypeError} When `options.keys` holds a key `AuthDanceKeys` refuses, when `options.tokens.issuer` is not an
+	 * `https:` URL, or when a name of `options.tokens.scopes` is not a scope token.
 	 * @throws UnknownComponentError when a step of the choreography names a component `options.components` does not
 	 * declare.
 	 * @throws InvalidChoreographyError when a complete path of the choreography has no step that proves control.
@@ -361,6 +467,13 @@ export class AuthDanceApi {
 	constructor(options: AuthDanceApiOptions) {
 		this.#options = options;
 		this.#decodedSecret = decode(this.#options.secret);
+		this.#keys = new AuthDanceKeys(options.keys);
+		this.#issuer = checkIssuer(options.tokens?.issuer);
+		for (const scope of Object.keys(options.tokens.scopes ?? {})) {
+			if (!isScopeToken(scope)) {
+				throw new TypeError(`scope ${JSON.stringify(scope)} is not a scope token of RFC 6749 §3.3`);
+			}
+		}
 		for (const { component, path } of walk(options.choreography)) {
 			if (component && !options.components[component.component]) {
 				throw new UnknownComponentError(component.component);
@@ -507,6 +620,41 @@ export class AuthDanceApi {
 		return this.#options.storage;
 	}
 
+	/** The keys that sign and verify every token of this instance, built from `options.keys`. */
+	get keys(): AuthDanceKeys {
+		return this.#keys;
+	}
+
+	/** The `iss` of every token of this instance, `options.tokens.issuer` as it was given. */
+	get issuer(): string {
+		return this.#issuer;
+	}
+
+	/** The `client_id` of the tokens a dance mints: the issuer. */
+	get clientId(): string {
+		return this.#issuer;
+	}
+
+	/** How long a new session lasts, in seconds: `durations.refresh`. */
+	get sessionDuration(): number {
+		return this.#options.durations?.refresh ?? 24 * 60 * 60;
+	}
+
+	/** Every scope the server knows: `options.tokens.scopes`, with `account` when it does not declare it. */
+	get scopes(): Record<string, AuthDanceScope> {
+		return { [ACCOUNT_SCOPE]: AccountScope, ...this.#options.tokens.scopes };
+	}
+
+	/**
+	 * The public JWK Set of `options.keys`, RFC 7517 §5. A relying party checks a token with it, and needs no secret.
+	 * `GET /.well-known/jwks.json` serves it.
+	 *
+	 * @returns Each key with `kid`, `alg`, `use: "sig"` and its public members. No private member.
+	 */
+	jwks(): { keys: JsonWebKey[] } {
+		return this.#keys.jwks();
+	}
+
 	// An AuthDanceError passes through. Any other failure becomes an AuthDanceUnknownError.
 	async #guard<T>(method: string, fn: () => Promise<T>): Promise<T> {
 		try {
@@ -588,84 +736,79 @@ export class AuthDanceApi {
 		});
 	}
 
-	// `aat` comes from the first pair and stays unchanged through every refresh. See #requireFreshSignIn.
-	// The refresh record names the one refresh token the session accepts, and the one it replaced.
-	async #generateTokens(options: {
-		identity: AuthDanceIdentity;
+	/**
+	 * Mints the tokens of one session, or of a client that acts for itself. A dance, a refresh and every grant type of
+	 * the oauth2 module mint through this method, so their tokens are the same tokens.
+	 *
+	 * The access token is an RFC 9068 JWT with `typ: at+jwt`. The refresh token is a JWT with `typ: rt+jwt`, with no claim
+	 * of a scope, and it stays valid until the session ends. Checking either one reads no storage.
+	 *
+	 * @param options `scopes` are the scopes of the access token. `granted` are the scopes of the refresh token, the
+	 * scopes the owner granted, `scopes` by default: a refresh that narrows the access token keeps the refresh token
+	 * whole, RFC 6749 §6. Without `session`, the token is for a client that acts for itself, client credentials:
+	 * `identity` is then absent too, `sub` is `client_id`, and no refresh token comes out. `audience` is the `aud` of
+	 * the access token, the issuer by default. `refresh: false` mints no refresh token.
+	 * @returns The tokens, and the claims of the scopes the access token carries.
+	 * @throws ClaimsMapperError when the `claims` mapper fails.
+	 */
+	async mintTokens(options: {
+		client_id: string;
 		scopes: string[];
-		session: AuthDanceSession;
+		granted?: string[];
+		grant_type: AuthDanceGrantType;
+		session?: AuthDanceSession;
+		identity?: AuthDanceIdentity;
 		authTime?: number;
-		previous?: string;
-	}): Promise<AuthDanceResponseTokens> {
-		const authTime = options.authTime ?? Math.floor(Date.now() / 1000);
-
-		const claims = Object.entries(options.identity.data ?? {}).reduce((acc, [key, value]) => {
-			if (options.scopes.includes(key)) {
-				acc[key] = value as AuthDanceClaimJson;
-			}
-			return acc;
-		}, {} as AuthDanceClaims);
-
-		const access_token = await new SignJWT({ id: options.identity.id, claims, aat: authTime })
-			.setProtectedHeader({ alg: "HS256" })
-			.setIssuer(this.#options.tokens?.issuer ?? "acme")
-			.setIssuedAt()
-			.setExpirationTime(new Date(Date.now() + (this.#options.durations?.access ?? 5 * 60) * 1000))
-			.setSubject(options.session.id)
-			.setJti(ksuid())
-			.sign(this.#decodedSecret);
-
-		const refreshId = ksuid();
-		const refresh_token = await new SignJWT({ aat: authTime, scopes: options.scopes })
-			.setProtectedHeader({ alg: "HS256" })
-			.setIssuer(this.#options.tokens?.issuer ?? "acme")
-			.setIssuedAt()
-			.setExpirationTime(new Date(Date.now() + (this.#options.durations?.refresh ?? 24 * 60 * 60) * 1000))
-			.setSubject(options.session.id)
-			.setJti(refreshId)
-			.sign(this.#decodedSecret);
-		await this.#options.storage.setRefreshRecord(
-			options.session.id,
-			{ current: refreshId, previous: options.previous, rotatedAt: Math.floor(Date.now() / 1000) },
-			new Date(options.session.expireAt),
+		audience?: string;
+		refresh?: boolean;
+	}): Promise<{ tokens: AuthDanceTokenResponse; claims: AuthDanceClaims }> {
+		const subject = options.identity?.id ?? options.client_id;
+		const claims = await resolveClaims(
+			{
+				client_id: options.client_id,
+				identity: options.identity,
+				subject,
+				scopes: options.scopes,
+				session_id: options.session?.id,
+				grant_type: options.grant_type,
+				target: "access_token",
+			},
+			this.scopes,
+			this.#options.tokens.claims,
 		);
-
-		const id_token = await new SignJWT({ claims })
-			.setProtectedHeader({ alg: "HS256" })
-			.setIssuer(this.#options.tokens?.issuer ?? "acme")
-			.setIssuedAt()
-			.setSubject(options.identity.id)
-			.sign(this.#decodedSecret);
-
-		return {
-			tokens: { access_token, id_token, refresh_token },
-			session: options.session,
-			identity: { id: options.identity.id, data: claims },
+		const iat = Math.floor(Date.now() / 1000);
+		const expiresIn = this.#options.durations?.access ?? 5 * 60;
+		const common = {
+			iss: this.#issuer,
+			sub: subject,
+			client_id: options.client_id,
+			scope: options.scopes.join(" "),
+			...(options.session === undefined ? {} : { sid: options.session.id }),
+			...(options.authTime === undefined ? {} : { auth_time: options.authTime }),
+			iat,
 		};
-	}
-
-	// Every failure reads the same to the caller. Every token this class mints carries `sub` and `aat`,
-	// so a token that misses either one is invalid. The access token and the refresh token share the key, the
-	// issuer and `sub`. Only `claims` (access) and `scopes` (refresh) tell them apart, so each verification asks
-	// for the claim of its own kind.
-	async #verifiedClaims(
-		token: string,
-		kind: "claims" | "scopes",
-		invalid: () => AuthDanceError,
-	): Promise<{ sub: string; authTime: number; jti: string | undefined }> {
-		const payload = await jwtVerify(token, this.#decodedSecret, {
-			issuer: this.#options.tokens?.issuer ?? "acme",
-		}).then(
-			({ payload }) => payload,
-			() => undefined,
+		const access_token = await this.#keys.sign(
+			{ ...claims, ...common, aud: options.audience ?? this.#issuer, jti: ksuid(), exp: iat + expiresIn },
+			{ typ: ACCESS_TOKEN_TYPE },
 		);
-		if (!payload?.sub || typeof payload.aat !== "number" || payload[kind] === undefined) {
-			throw invalid();
+		const tokens: AuthDanceTokenResponse = { access_token, token_type: "Bearer", expires_in: expiresIn, scope: common.scope };
+		if (options.session !== undefined && options.refresh !== false) {
+			const exp = Math.floor(new Date(options.session.expireAt).getTime() / 1000);
+			const scope = (options.granted ?? options.scopes).join(" ");
+			tokens.refresh_token = await this.#keys.sign({ ...common, scope, aud: this.#issuer, jti: ksuid(), exp }, { typ: REFRESH_TOKEN_TYPE });
 		}
-		return { sub: payload.sub, authTime: payload.aat, jti: payload.jti };
+		return { tokens, claims };
 	}
 
-	// A valid session is not enough for a management action. A refresh carries `aat` forward unchanged,
+	// Every failure reads the same to the caller: `undefined`.
+	async #verifyToken(token: string, typ: string, audience: string): Promise<AuthDanceToken | undefined> {
+		const payload = await this.#keys
+			.verify(token, { issuer: this.#issuer, typ, audience, requiredClaims: ["sub", "client_id", "scope", "jti", "iat", "exp"] })
+			.catch(() => undefined);
+		return payload && readToken(payload);
+	}
+
+	// A valid session is not enough for a management action. A refresh carries `auth_time` forward unchanged,
 	// so it cannot extend this window.
 	#requireFreshSignIn(authTime: number): void {
 		const elevated = (this.#options.durations?.elevated ?? 5 * 60) * 1000;
@@ -763,58 +906,71 @@ export class AuthDanceApi {
 	}
 
 	/**
-	 * Exchanges a refresh token for a new set of tokens on the same session.
+	 * Exchanges a refresh token for a new pair of tokens on the same session, RFC 6749 §6. The `/refresh-token` route
+	 * takes the tokens of a dance. The token endpoint of the oauth2 module takes the tokens of its clients, once it has
+	 * authenticated the client, and passes `options.client_id`.
 	 *
-	 * The new tokens keep the `aat` of the sign-in. A refresh needs no fresh sign-in and re-opens no window.
-	 * A completed exchange fires `onSessionRefreshed`.
+	 * Checking the refresh token reads no storage. The exchange then reads the session the token names, so a sign-out,
+	 * a delete, a reset or a revocation stops it, and the identity, to fill the claims. A refresh token stays valid
+	 * until its session ends: the exchange gives a new one, and the old one still works. The new tokens keep the
+	 * `auth_time` of the sign-in, so a refresh never re-opens the elevated window. A completed exchange fires
+	 * `onSessionRefreshed`.
 	 *
-	 * A refresh token works one time. The exchange replaces it, and the session then accepts only the new one. An
-	 * exchange of the token it replaced, inside `durations.refresh_leeway`, raises `InvalidRefreshTokenError` and
-	 * keeps the session. Any other exchange of an old token shows that two parties hold the session. The library
-	 * deletes the session, fires `onSessionDeleted` with the flow `reuse`, and raises `InvalidRefreshTokenError`.
-	 *
-	 * @returns A new access token, id token and refresh token, plus the session and the scoped identity data.
-	 * @throws InvalidRefreshTokenError when the token is tampered with, expired, missing a claim, or already
-	 * exchanged.
+	 * @param options `client_id` is the client the token must belong to, the issuer by default. `scope` narrows the new
+	 * access token to some of the scopes of the refresh token. `audience` is the `aud` of the new access token, the
+	 * issuer by default.
+	 * @returns A new access token and refresh token, plus the session and the claims of the scopes.
+	 * @throws InvalidRefreshTokenError when the token is tampered with, expired, missing a claim, or of another client.
+	 * @throws InsufficientScopeError when `options.scope` is empty or holds a scope the refresh token does not hold.
 	 * @throws RateLimitedError when the `refresh` bucket of the session is empty.
-	 * @throws SessionNotFoundError when the session the token names has expired or was signed out.
+	 * @throws SessionNotFoundError when the session the token names has expired, was signed out, or was revoked.
 	 * @throws IdentityNotFoundError when storage holds no identity for that session.
+	 * @throws ClaimsMapperError when the `claims` mapper fails.
 	 */
-	refreshToken(refresh_token: string): Promise<AuthDanceResponseTokens> {
+	refreshToken(
+		refresh_token: string,
+		options: { client_id?: string; scope?: string[]; audience?: string } = {},
+	): Promise<AuthDanceResponseTokens> {
 		return this.#guard("refreshToken", async () => {
-			const { sub, authTime, jti } = await this.#verifiedClaims(refresh_token, "scopes", () => new InvalidRefreshTokenError());
-			if (!jti) {
+			const token = await this.#verifyToken(refresh_token, REFRESH_TOKEN_TYPE, this.#issuer);
+			if (!token?.session_id || token.client_id !== (options.client_id ?? this.clientId)) {
 				throw new InvalidRefreshTokenError();
 			}
-			await this.#consumeRateLimit("refresh", `session:${sub}`);
-			const { session, identity } = await this.#getSessionAndIdentity(sub);
-			// A session that predates the refresh record accepts one exchange, and the mint writes the record.
-			const record = await this.#options.storage.getRefreshRecord(session.id);
-			if (record && jti !== record.current) {
-				const leeway = this.#options.durations?.refresh_leeway ?? 10;
-				if (jti === record.previous && Date.now() / 1000 - record.rotatedAt <= leeway) {
-					// Another tab or a retry lost a race. Its store already holds the newer pair.
-					throw new InvalidRefreshTokenError("refresh token already exchanged");
-				}
-				await this.#options.storage.deleteSession(session.id);
-				await this.#emit("onSessionDeleted", { flow: "reuse", session, identity });
-				throw new InvalidRefreshTokenError("refresh token reused");
+			const scopes = options.scope ?? token.scope;
+			if (scopes.length === 0 || scopes.some((scope) => !token.scope.includes(scope))) {
+				throw new InsufficientScopeError("the scope must be some of the scopes of the refresh token");
 			}
-			const tokens = await this.#generateTokens({ identity, scopes: session.scopes, session, authTime, previous: record?.current });
+			await this.#consumeRateLimit("refresh", `session:${token.session_id}`);
+			const { session, identity } = await this.#getSessionAndIdentity(token.session_id);
+			if (session.identityId !== token.subject || session.client_id !== token.client_id) {
+				throw new SessionNotFoundError(token.session_id);
+			}
+			const { tokens, claims } = await this.mintTokens({
+				client_id: token.client_id,
+				scopes,
+				granted: token.scope,
+				grant_type: "refresh_token",
+				session,
+				identity,
+				authTime: token.auth_time,
+				audience: options.audience,
+			});
 			await this.#emit("onSessionRefreshed", { flow: "refresh", session, identity });
-			return tokens;
+			return { tokens: tokens as AuthDanceResponseTokens["tokens"], session, identity: { id: identity.id, data: claims } };
 		});
 	}
 
 	/**
-	 * Destroys the session the access token names, or every session of its identity.
+	 * Destroys the session the access token names, or every session of a dance of its identity. A sign-out leaves the
+	 * grants of the oauth2 module: each one ends with a revocation, or at the end of its own lifetime.
 	 *
-	 * A sign-out needs no fresh sign-in. It fires `onSessionDeleted` one time for each session it destroys.
+	 * A sign-out needs the `account` scope and no fresh sign-in. It fires `onSessionDeleted` one time for each session
+	 * it destroys.
 	 *
-	 * @param access_token The access token of the session to destroy.
-	 * @param others Pass `true` to destroy every session of the identity, this one included.
+	 * @param access_token The access token of the session to destroy. The token of a grant destroys that grant.
+	 * @param others Pass `true` to destroy every session of a dance of the identity, and the session of the token.
 	 * @defaultValue `others` is `false`
-	 * @throws InvalidAccessTokenError when the token is tampered with, expired, or missing a claim.
+	 * @throws InsufficientScopeError when the token does not hold `account`.
 	 * @throws RateLimitedError when the `manage` bucket of the session is empty.
 	 * @throws SessionNotFoundError when the session has already expired or was signed out.
 	 * @throws IdentityNotFoundError when storage holds no identity for that session.
@@ -824,7 +980,8 @@ export class AuthDanceApi {
 			try {
 				const { session, identity } = await this.#unrollAccessToken(access_token);
 				await this.#consumeRateLimit("manage", `session:${session.id}`);
-				const deleted = others ? await this.#options.storage.listSession(session.identityId) : [session];
+				const sessions = await this.#options.storage.listSession(session.identityId);
+				const deleted = others ? sessions.filter((s) => s.client_id === this.clientId || s.id === session.id) : [session];
 				await Promise.all(deleted.map((s) => this.#options.storage.deleteSession(s.id)));
 				for (const s of deleted) {
 					await this.#emit("onSessionDeleted", { flow: "sign-out", session: s, identity });
@@ -883,19 +1040,29 @@ export class AuthDanceApi {
 		return { state: await this.#encryptState(state, expireAt), prompt, expireAt };
 	}
 
+	// A dance grants every scope the server knows, to the client of the issuer.
 	async #issueTokens(
 		identity: AuthDanceIdentity,
-		options: { expireAt: Date; address?: string; userAgent?: string },
+		options: { flow: "sign-in" | "sign-up"; expireAt: Date; address?: string; userAgent?: string },
 	): Promise<AuthDanceResponseTokens> {
-		const scopes = Object.keys(identity.data ?? {});
+		const scopes = Object.keys(this.scopes);
 		const session = await this.#options.storage.createSession({
 			identityId: identity.id,
+			client_id: this.clientId,
 			scopes,
 			expireAt: options.expireAt,
 			address: options.address,
 			userAgent: options.userAgent,
 		});
-		return this.#generateTokens({ identity, scopes, session });
+		const { tokens, claims } = await this.mintTokens({
+			client_id: this.clientId,
+			scopes,
+			grant_type: options.flow,
+			session,
+			identity,
+			authTime: Math.floor(Date.now() / 1000),
+		});
+		return { tokens: tokens as AuthDanceResponseTokens["tokens"], session, identity: { id: identity.id, data: claims } };
 	}
 
 	async #advance(options: AuthDanceAdvance): Promise<AuthDanceResponse> {
@@ -927,6 +1094,7 @@ export class AuthDanceApi {
 			if (authFlow) {
 				const issued = await this.#issueTokens(options.identity, {
 					...options,
+					flow: options.flow === "sign-up" ? "sign-up" : "sign-in",
 					expireAt: new Date(Date.now() + (this.#options.durations?.refresh ?? 24 * 60 * 60) * 1000),
 				});
 				await this.#emit("onSessionCreated", {
@@ -942,7 +1110,8 @@ export class AuthDanceApi {
 	}
 
 	// A completed rotate or recover deletes the other sessions of the identity. A thief who holds a session loses it
-	// when the owner resets the credential.
+	// when the owner resets the credential, and so does a client the thief gave a grant to. A rotate keeps the session
+	// that ran it.
 	async #revokeSessions(options: AuthDanceAdvance): Promise<AuthDanceSession[]> {
 		if ((options.flow !== "rotate" && options.flow !== "recover") || this.#options.revokeSessionsOnReset === false) {
 			return [];
@@ -1038,47 +1207,57 @@ export class AuthDanceApi {
 	}
 
 	/**
-	 * Verify an access token and return the identity id, the session id, the claims and the `aat` it carries.
+	 * Verifies an access token of this issuer, RFC 9068: the signature, `typ: at+jwt`, `iss`, `exp` and `aud`. The token
+	 * of a dance and the token of a client of the oauth2 module pass the same way.
 	 *
 	 * Without `options.session`, the check reads no storage. A token then stays valid for up to `durations.access`
-	 * after its session ends, by a sign-out, a delete or a reset. Lower `durations.access`, or pass `session: true`
-	 * where that window matters.
+	 * after its session ends, by a sign-out, a delete, a reset or a revocation. Lower `durations.access`, or pass
+	 * `session: true` where that window matters.
 	 *
 	 * @param access_token The access token to verify.
-	 * @param options `session: true` also reads the session the token names, and refuses a token whose session ended.
-	 * @returns The identity id, the session id, the claims and the `aat` the token carries.
-	 * @throws InvalidAccessTokenError when the token is tampered with, expired, or missing a claim.
+	 * @param options `audience` is the `aud` the token must hold, the issuer by default. `scope` is a scope the token
+	 * must hold. `session: true` also reads the session the token names, and refuses a token whose session ended, and a
+	 * token of client credentials, which has no session.
+	 * @returns What the token carries.
+	 * @throws InvalidAccessTokenError when the token is tampered with, expired, for another audience, or missing a
+	 * claim, and with `session: true` when it has no session.
+	 * @throws InsufficientScopeError when the token does not hold `options.scope`.
 	 * @throws SessionNotFoundError with `session: true`, when the session of the token ended.
 	 */
 	async verifyAccessToken(
 		access_token: string,
-		options?: { session?: boolean },
-	): Promise<{ identityId: string; sessionId: string; claims: AuthDanceClaims; authTime: number }> {
-		const payload = await jwtVerify(access_token, this.#decodedSecret, {
-			issuer: this.#options.tokens?.issuer ?? "acme",
-		}).then(
-			({ payload }) => payload,
-			() => undefined,
-		);
-		const identityId = payload?.id;
-		const sessionId = payload?.sub;
-		const authTime = payload?.aat;
-		const claims = (payload?.claims as AuthDanceClaims | undefined) ?? {};
-		if (!sessionId || typeof identityId !== "string" || typeof authTime !== "number") {
+		options: { audience?: string; scope?: string; session?: boolean } = {},
+	): Promise<AuthDanceToken> {
+		const token = await this.#verifyToken(access_token, ACCESS_TOKEN_TYPE, options.audience ?? this.#issuer);
+		if (!token) {
 			throw new InvalidAccessTokenError();
 		}
-		if (options?.session) {
-			const session = await this.#options.storage.getSession(sessionId);
-			if (!session || session.identityId !== identityId) {
-				throw new SessionNotFoundError(sessionId);
+		if (options.scope !== undefined && !token.scope.includes(options.scope)) {
+			throw new InsufficientScopeError(`the access token does not hold ${options.scope}`);
+		}
+		if (options.session) {
+			if (token.session_id === undefined) {
+				throw new InvalidAccessTokenError("the access token has no session");
+			}
+			const session = await this.#options.storage.getSession(token.session_id);
+			if (!session || session.identityId !== token.subject || session.client_id !== token.client_id) {
+				throw new SessionNotFoundError(token.session_id);
 			}
 		}
-		return { identityId, sessionId, claims, authTime };
+		return token;
 	}
 
+	// A management action needs `account`, a session that still exists, and the moment of its sign-in.
 	async #unrollAccessToken(access_token: string): Promise<{ session: AuthDanceSession; identity: AuthDanceIdentity; authTime: number }> {
-		const { sub, authTime } = await this.#verifiedClaims(access_token, "claims", () => new InvalidAccessTokenError());
-		return { ...(await this.#getSessionAndIdentity(sub)), authTime };
+		const token = await this.verifyAccessToken(access_token, { scope: ACCOUNT_SCOPE });
+		if (token.session_id === undefined || token.auth_time === undefined) {
+			throw new InvalidAccessTokenError("the access token has no session");
+		}
+		const { session, identity } = await this.#getSessionAndIdentity(token.session_id);
+		if (session.identityId !== token.subject || session.client_id !== token.client_id) {
+			throw new SessionNotFoundError(token.session_id);
+		}
+		return { session, identity, authTime: token.auth_time };
 	}
 
 	async #getSessionAndIdentity(sessionId: string): Promise<{ session: AuthDanceSession; identity: AuthDanceIdentity }> {
@@ -1393,13 +1572,16 @@ export class AuthDanceApi {
 
 	// The issuer must travel as the `iss` claim. #decryptState checks that claim.
 	#encryptState(state: AuthDanceState, expireAt: Date): Promise<string> {
-		const issuer = this.#options.tokens?.issuer;
-		const jwt = new EncryptJWT({ state }).setProtectedHeader({ alg: "dir", enc: "A256GCM" }).setIssuedAt().setExpirationTime(expireAt);
-		return (issuer === undefined ? jwt : jwt.setIssuer(issuer)).encrypt(this.#decodedSecret);
+		return new EncryptJWT({ state })
+			.setProtectedHeader({ alg: "dir", enc: "A256GCM" })
+			.setIssuer(this.#issuer)
+			.setIssuedAt()
+			.setExpirationTime(expireAt)
+			.encrypt(this.#decodedSecret);
 	}
 
 	async #decryptState(value: string): Promise<{ state: AuthDanceState; expireAt: Date }> {
-		const payload = await jwtDecrypt(value, this.#decodedSecret, { issuer: this.#options.tokens?.issuer }).then(
+		const payload = await jwtDecrypt(value, this.#decodedSecret, { issuer: this.#issuer }).then(
 			({ payload }) => payload,
 			() => undefined,
 		);

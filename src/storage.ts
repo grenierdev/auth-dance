@@ -23,29 +23,8 @@ export interface AuthDanceStorageOptions {
 }
 
 /**
- * Which refresh token a session accepts. The library keeps one record per session at `session/<id>/refresh`, and the
- * record never reaches a client.
- */
-export interface AuthDanceRefreshRecord {
-	/** The `jti` of the one refresh token the session accepts. */
-	current: string;
-	/** The `jti` of the refresh token that `current` replaced. */
-	previous?: string;
-	/** The moment the library minted `current`, in seconds since the epoch. */
-	rotatedAt: number;
-}
-
-// Parses a refresh record at runtime. Only this module reads the record.
-const RefreshRecordSchema: v.GenericSchema<AuthDanceRefreshRecord> = v.object({
-	current: v.string(),
-	previous: v.optional(v.string()),
-	rotatedAt: v.number(),
-});
-
-/**
- * The storage layer of the library. A session lives twice, at `session/<id>` and at
- * `sessions/<identityId>/<id>`, and its refresh record lives at `session/<id>/refresh`. A pending one-time code lives
- * at `otp/<stateId>/<name>`.
+ * The storage layer of the library. A session lives twice, at `session/<id>` and at `sessions/<identityId>/<id>`. A
+ * pending one-time code lives at `otp/<stateId>/<name>`.
  */
 export class AuthDanceStorage {
 	#options: AuthDanceStorageOptions;
@@ -132,6 +111,7 @@ export class AuthDanceStorage {
 	 */
 	async createSession(options: {
 		identityId: string;
+		client_id: string;
 		scopes: string[];
 		expireAt: Date;
 		address?: string;
@@ -141,6 +121,7 @@ export class AuthDanceStorage {
 		const session: AuthDanceSession = {
 			id,
 			identityId: options.identityId,
+			client_id: options.client_id,
 			scopes: options.scopes,
 			expireAt: options.expireAt.toISOString(),
 			address: options.address,
@@ -167,40 +148,15 @@ export class AuthDanceStorage {
 	}
 
 	/**
-	 * Delete one session from both the `session/<id>` and the `sessions/<identityId>/<id>` key spaces, together with
-	 * its refresh record. An id that resolves to nothing does nothing.
+	 * Delete one session from both the `session/<id>` and the `sessions/<identityId>/<id>` key spaces. An id that
+	 * resolves to nothing does nothing.
 	 */
 	async deleteSession(id: string): Promise<void> {
 		const session = await this.getSession(id);
 		if (!session) {
 			return;
 		}
-		await Promise.all([
-			this.unsetKv(`session/${session.id}`),
-			this.unsetKv(`sessions/${session.identityId}/${session.id}`),
-			this.unsetKv(`session/${session.id}/refresh`),
-		]);
-	}
-
-	/**
-	 * Read the refresh record of one session from `session/<id>/refresh`. A record that does not match the
-	 * `AuthDanceRefreshRecord` schema makes the call fail. Returns `undefined` when the key holds nothing.
-	 */
-	async getRefreshRecord(sessionId: string): Promise<AuthDanceRefreshRecord | undefined> {
-		const value = await this.getKv(`session/${sessionId}/refresh`);
-		if (!value) {
-			return undefined;
-		}
-		return v.parse(RefreshRecordSchema, JSON.parse(value));
-	}
-
-	/**
-	 * Write the refresh record of one session to `session/<id>/refresh`. `expireAt` is the end of the session, and it
-	 * sets the time to live of the record, in seconds.
-	 */
-	setRefreshRecord(sessionId: string, record: AuthDanceRefreshRecord, expireAt: Date): Promise<void> {
-		const ttl = Math.max(1, Math.floor((expireAt.getTime() - Date.now()) / 1000));
-		return this.setKv(`session/${sessionId}/refresh`, JSON.stringify(record), ttl);
+		await Promise.all([this.unsetKv(`session/${session.id}`), this.unsetKv(`sessions/${session.identityId}/${session.id}`)]);
 	}
 
 	/**

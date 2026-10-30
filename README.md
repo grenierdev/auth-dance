@@ -23,6 +23,12 @@ npm install auth-dance
 `createAuthDance(options)` is the single entry point. Declare the choreography, say what each step does, and serve the handler it returns.
 For the Node.js example below, install the HTTP adapter with `npm install @hono/node-server`.
 
+The server signs its tokens with an asymmetric key. Generate one before the first start, and keep it in a secret store:
+
+```sh
+node --input-type=module -e "import { generateSigningKey } from 'auth-dance'; console.log(JSON.stringify(await generateSigningKey()))"
+```
+
 ```ts
 import { serve } from "@hono/node-server";
 import { AuthDanceStorage, createAuthDance, sequence } from "auth-dance";
@@ -44,8 +50,13 @@ const auth = createAuthDance({
 		},
 		// Where the messages go.
 		channels: { email: new MemoryAuthDanceChannel("email") },
-		// openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+		// Encrypts the state of a flow: openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
 		secret: process.env.AUTH_SECRET!,
+		// Signs the tokens. The first key signs; every key verifies.
+		keys: [JSON.parse(process.env.AUTH_SIGNING_KEY!)],
+		// The `iss` of every token. An https: URL; http: passes only for localhost. Each scope names the identity data
+		// its access tokens carry as claims. A dance grants every scope, and `account` always exists.
+		tokens: { issuer: "https://auth.example.com", scopes: { profile: { description: "Your name", claims: ["name"] } } },
 		storage: new AuthDanceStorage({
 			identity: new MemoryIdentityProvider(),
 			kv: new MemoryKvProvider(),
@@ -60,6 +71,29 @@ serve({ fetch: auth.fetch, port: 3000 });
 
 `auth.fetch` is the HTTP surface, `auth.app` is the Hono instance behind it, `auth.api` is the same state machine without HTTP, and
 `auth.generateOpenAPISchema()` documents the routes.
+
+`GET /.well-known/jwks.json` serves the public part of each key, so another service checks a token with no secret. To rotate, add the
+new key at the end of `keys`, and move it to the front when the services that check tokens have read the new key set. Keep the old key
+until the last token it signed expires, `durations.refresh` after it stops signing. A key after the first can hold its public part only.
+
+## The tokens
+
+A dance and every OAuth 2.0 grant mint the same two tokens:
+
+- The access token is an RFC 9068 JWT with `typ: at+jwt`. It carries the identity id as `sub`, the session as `sid`, the client as
+  `client_id`, the scopes as `scope`, the moment of the sign-in as `auth_time`, and the claims of its scopes. A dance mints it for the
+  issuer: `client_id` and `aud` are the issuer, and `scope` holds every scope the server knows.
+- The refresh token is a JWT with `typ: rt+jwt`. It stays valid until its session ends, `durations.refresh` after the sign-in. A
+  refresh gives a new pair, and the old refresh token still works.
+
+The response follows RFC 6749 §5.1: `access_token`, `token_type`, `expires_in`, `refresh_token` and `scope`.
+
+To check an access token, verify it against the JWK Set, or call `auth.api.verifyAccessToken(token)`. Neither one reads storage, so
+the token stays valid until `exp` after a sign-out. Pass `{ session: true }` where that window matters. A refresh reads the session,
+so a sign-out, a delete, a reset or a revocation stops the refresh token at once.
+
+The management routes, from `/sign-out` to `/delete`, need the `account` scope. A dance always holds it. A client of the
+authorization server holds it only when it asks for it and the owner consents.
 
 The per-address rate limits key on the address of the caller, so tell the app where that address lives. By default it reads
 `cf-connecting-ip`, then the last entry of `x-forwarded-for`. Behind Cloudflare, pass `app: { address: cloudflareAddress }`. Behind a
@@ -130,14 +164,15 @@ prompts with `AuthDancePromptSwitch`.
 
 ## What ships with it
 
-| Import                           | Holds                                                                                  |
-| -------------------------------- | -------------------------------------------------------------------------------------- |
-| `auth-dance`                     | `createAuthDance`, the choreography DSL, `AuthDanceStorage`, the errors and every type |
-| `auth-dance/client`              | `AuthDanceClient` and the dance it hands out                                           |
-| `auth-dance/react`               | The React bindings                                                                     |
-| `auth-dance/components/*`        | `email`, `oauth2`, `oidc`, `otp`, `password`, `policy`, `totp`, `webauthn`             |
-| `auth-dance/components/oauth2/*` | `apple`, `facebook`, `github`, `gitlab`, `google`, `microsoft`, `x`                    |
-| `auth-dance/providers/*`         | `memory` for tests, `cloudflare` for Workers                                           |
+| Import                           | Holds                                                                                                 |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `auth-dance`                     | `createAuthDance`, the choreography DSL, `AuthDanceStorage`, the errors and every type                |
+| `auth-dance/client`              | `AuthDanceClient` and the dance it hands out                                                          |
+| `auth-dance/oauth2`              | The OAuth 2.0 authorization server, with introspection, revocation, registration and the device grant |
+| `auth-dance/react`               | The React bindings                                                                                    |
+| `auth-dance/components/*`        | `email`, `oauth2`, `oidc`, `otp`, `password`, `policy`, `totp`, `webauthn`                            |
+| `auth-dance/components/oauth2/*` | `apple`, `facebook`, `github`, `gitlab`, `google`, `microsoft`, `x`                                   |
+| `auth-dance/providers/*`         | `memory` for tests, `cloudflare` for Workers                                                          |
 
 A step is a small interface. Implement `AuthDanceComponent` and your own factor works in every flow, including the flows you have not
 considered yet. Two rules apply. `verifyPrompt` accepts a value only with `true` or an identity id: any other answer, `undefined`

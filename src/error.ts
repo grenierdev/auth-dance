@@ -21,17 +21,33 @@ export abstract class AuthDanceError extends Error {
 
 // Token & session
 /**
- * The access token does not verify, or it carries no `sub` or no numeric `aat`. The HTTP layer also raises it
- * when the `Authorization` header is missing or malformed.
+ * The access token does not verify, is not an RFC 9068 access token of this issuer, or is for another audience. The
+ * HTTP layer also raises it when the `Authorization` header is missing or malformed.
  */
 export class InvalidAccessTokenError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"INVALID_ACCESS_TOKEN"}`. */
 	readonly code: "INVALID_ACCESS_TOKEN" = "INVALID_ACCESS_TOKEN";
 }
-/** The refresh token given to `refreshToken` does not verify, or it carries no `sub` or no numeric `aat`. */
+/**
+ * The refresh token given to `refreshToken` does not verify, is not a refresh token of this issuer, belongs to another
+ * client, or asks for a scope it does not hold.
+ */
 export class InvalidRefreshTokenError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"INVALID_REFRESH_TOKEN"}`. */
 	readonly code: "INVALID_REFRESH_TOKEN" = "INVALID_REFRESH_TOKEN";
+}
+/** The access token is valid, but it does not hold the scope the action needs, `account` for a management route. */
+export class InsufficientScopeError extends AuthDanceError {
+	/** The app layer answers HTTP 500 with `{"error":"INSUFFICIENT_SCOPE"}`. */
+	readonly code: "INSUFFICIENT_SCOPE" = "INSUFFICIENT_SCOPE";
+}
+/**
+ * The `claims` mapper threw, or its result broke a rule of `AuthDanceClaimsMapper`. `cause` holds what the mapper
+ * threw, or a `TypeError` that names the rule.
+ */
+export class ClaimsMapperError extends AuthDanceError {
+	/** The app layer answers HTTP 500 with `{"error":"CLAIMS_MAPPER_FAILED"}`. */
+	readonly code: "CLAIMS_MAPPER_FAILED" = "CLAIMS_MAPPER_FAILED";
 }
 /** Storage holds no session under the id a token or a flow state names. */
 export class SessionNotFoundError extends AuthDanceError {
@@ -60,7 +76,7 @@ export class InvalidStateForFlowError extends AuthDanceError {
 }
 /**
  * The sign-in of the session is older than the elevated window a sensitive action requires. A refresh carries
- * `aat` forward unchanged, so a refresh cannot re-open the window.
+ * `auth_time` forward unchanged, so a refresh cannot re-open the window.
  */
 export class FreshSignInRequiredError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"FRESH_SIGN_IN_REQUIRED"}`. */
@@ -256,6 +272,7 @@ export const Errors = {
 	CHANNEL_ALREADY_SUBSCRIBED: ChannelAlreadySubscribedError,
 	CHANNEL_NOT_SUBSCRIBED: ChannelNotSubscribedError,
 	CHOREOGRAPHY_EMPTY: ChoreographyEmptyError,
+	CLAIMS_MAPPER_FAILED: ClaimsMapperError,
 	COMPONENT_ALREADY_COLLECTED: ComponentAlreadyCollectedError,
 	COMPONENT_ALREADY_ENROLLED: ComponentAlreadyEnrolledError,
 	COMPONENT_IN_USE: ComponentInUseError,
@@ -270,6 +287,7 @@ export const Errors = {
 	IDENTITY_MISMATCH: IdentityMismatchError,
 	IDENTITY_NOT_FOUND: IdentityNotFoundError,
 	IDENTITY_NOT_RESOLVED: IdentityNotResolvedError,
+	INSUFFICIENT_SCOPE: InsufficientScopeError,
 	INVALID_ACCESS_TOKEN: InvalidAccessTokenError,
 	INVALID_CHOREOGRAPHY: InvalidChoreographyError,
 	INVALID_PROMPT_VALUE: InvalidPromptValueError,

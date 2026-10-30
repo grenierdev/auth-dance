@@ -15,9 +15,11 @@ export * from "./api.ts";
 export * from "./app.ts";
 export * from "./channel.ts";
 export * from "./choreography.ts";
+export * from "./claims.ts";
 export * from "./component.ts";
 export * from "./error.ts";
 export * from "./identity.ts";
+export * from "./keys.ts";
 export * from "./message.ts";
 export * from "./otp.ts";
 export * from "./prompt.ts";
@@ -29,7 +31,10 @@ export * from "./storage.ts";
 
 /** The options of `createAuthDance`: `api` for the state machine, `app` for the HTTP layer, `info` for the OpenAPI document. */
 export interface AuthDanceOptions {
-	/** The state machine configuration. The required keys are `channels`, `choreography`, `components`, `secret` and `storage`. */
+	/**
+	 * The state machine configuration. The required keys are `channels`, `choreography`, `components`, `keys`, `secret`,
+	 * `storage` and `tokens`.
+	 */
 	api: AuthDanceApiOptions;
 	/** The HTTP layer configuration. Pass `basePath` to prefix every route. @defaultValue Every route sits at the root. */
 	app?: AuthDanceAppOptions;
@@ -62,11 +67,21 @@ export interface AuthDance {
  *
  * @throws The error `jose` raises when `options.api.secret` is not valid base64url. This call decodes the secret one
  * time, so a bad key fails here and not on the first request.
+ * @throws {TypeError} When `options.api.keys` holds a key `AuthDanceKeys` refuses, or when
+ * `options.api.tokens.issuer` is not an `https:` URL.
  *
  * @example
  * ```ts
  * const auth = createAuthDance({
- * 	api: { channels, choreography: sequence("email", "password"), components, secret, storage },
+ * 	api: {
+ * 		channels,
+ * 		choreography: sequence("email", "password"),
+ * 		components,
+ * 		keys: [JSON.parse(process.env.AUTH_SIGNING_KEY!)],
+ * 		secret,
+ * 		storage,
+ * 		tokens: { issuer: "https://auth.example.com" },
+ * 	},
  * 	info: { title: "Auth API", version: "1.0.0" },
  * });
  *
@@ -82,6 +97,7 @@ export function createAuthDance(options: AuthDanceOptions): AuthDance {
 		api,
 		app,
 		fetch: (request) => app.fetch(request, { api, rate_limit: options.api.limits?.address }),
-		generateOpenAPISchema: () => generateSpecs(app, { documentation: { info: options.info } }),
+		// `hono-openapi` leaves out a path with a dot in its last segment as a static file. `/.well-known/jwks.json` is a route.
+		generateOpenAPISchema: () => generateSpecs(app, { documentation: { info: options.info }, excludeStaticFile: false }),
 	} satisfies AuthDance;
 }

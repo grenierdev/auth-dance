@@ -5,6 +5,7 @@ import { AuthDanceApi } from "../api.ts";
 import { sequence } from "../choreography.ts";
 import type { AuthDanceComponentContext } from "../component.ts";
 import { IdentificationTakenError, InvalidPromptValueError } from "../error.ts";
+import { TEST_ISSUER, TEST_SIGNING_KEYS } from "../fixtures.test.ts";
 import type { AuthDanceIdentityComponent } from "../identity.ts";
 import type { AuthDancePromptInput } from "../prompt.ts";
 import { MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "../providers/memory.ts";
@@ -336,6 +337,8 @@ describe("OAuth2AuthDanceComponent", () => {
 			choreography: sequence("github"),
 			components: { github: new TestOAuth2Component() },
 			secret: "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs",
+			keys: TEST_SIGNING_KEYS,
+			tokens: { issuer: TEST_ISSUER },
 			storage: store,
 		});
 		const signUp = await api.signUp();

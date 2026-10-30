@@ -4,6 +4,7 @@ import { AuthDanceApi } from "../api.ts";
 import { type AuthDanceChoreography, sequence } from "../choreography.ts";
 import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
 import { IdentityNotResolvedError, InvalidPromptValueError } from "../error.ts";
+import { TEST_ISSUER, TEST_SIGNING_KEYS } from "../fixtures.test.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "../identity.ts";
 import { MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "../providers/memory.ts";
 import type { AuthDanceResponse, AuthDanceResponseTokens } from "../response.ts";
@@ -63,6 +64,8 @@ function api(
 			policy: new PolicyAuthDanceComponent({ policies: policies(tos) }),
 		},
 		secret: SECRET,
+		keys: TEST_SIGNING_KEYS,
+		tokens: { issuer: TEST_ISSUER },
 		storage: store,
 	});
 }

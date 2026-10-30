@@ -119,6 +119,7 @@ describe("Storage", () => {
 		const expireAt = new Date(Date.now() + 60_000);
 		const session = await storage.createSession({
 			identityId: "id_1",
+			client_id: "https://auth.example.com",
 			scopes: ["read"],
 			expireAt,
 			address: "127.0.0.1",
@@ -126,6 +127,7 @@ describe("Storage", () => {
 		});
 		ok(session.id.startsWith("ses_"));
 		deepEqual(session.identityId, "id_1");
+		deepEqual(session.client_id, "https://auth.example.com");
 		deepEqual(session.scopes, ["read"]);
 		deepEqual(session.expireAt, expireAt.toISOString());
 		deepEqual(session.address, "127.0.0.1");
@@ -136,25 +138,26 @@ describe("Storage", () => {
 	it("should get a session by id", async () => {
 		const session = await storage.createSession({
 			identityId: "id_1",
+			client_id: "cli_1",
 			scopes: ["read"],
 			expireAt: new Date(Date.now() + 60_000),
 		});
 		const fetched = await storage.getSession(session.id);
+		deepEqual(fetched?.client_id, "cli_1");
 		deepEqual(fetched?.id, session.id);
 		deepEqual(fetched?.identityId, session.identityId);
 		deepEqual(fetched?.scopes, session.scopes);
 		deepEqual(fetched?.expireAt, session.expireAt);
 	});
 
-	it("should delete the refresh record together with its session", async () => {
+	it("should delete a session from both key spaces, and leave the other sessions", async () => {
 		const expireAt = new Date(Date.now() + 60_000);
-		const session = await storage.createSession({ identityId: "id_1", scopes: [], expireAt });
-		await storage.setRefreshRecord(session.id, { current: "a", rotatedAt: 1 }, expireAt);
-		deepEqual(await storage.getRefreshRecord(session.id), { current: "a", rotatedAt: 1 });
-		// The record sits outside the index of the identity, so a listing never reads it as a session.
-		deepEqual(await storage.listKv("sessions/id_1/"), [`sessions/id_1/${session.id}`]);
-		await storage.deleteSession(session.id);
-		deepEqual(await storage.getRefreshRecord(session.id), undefined);
+		const dance = await storage.createSession({ identityId: "id_1", client_id: "https://auth.example.com", scopes: [], expireAt });
+		const grant = await storage.createSession({ identityId: "id_1", client_id: "cli_1", scopes: [], expireAt });
+		await storage.deleteSession(dance.id);
+		deepEqual(await storage.getSession(dance.id), undefined);
+		deepEqual(await storage.listKv("session/"), [`session/${grant.id}`]);
+		deepEqual(await storage.listKv("sessions/id_1/"), [`sessions/id_1/${grant.id}`]);
 	});
 
 	it("should allow requests under the rate limit then block", async () => {

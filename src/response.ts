@@ -40,40 +40,59 @@ export const AuthDanceResponseState: v.GenericSchema<AuthDanceResponseState> = v
 );
 
 /**
+ * A successful token response, RFC 6749 §5.1. A dance, a refresh and the token endpoint of the oauth2 module all answer
+ * with this shape, and the tokens of one work wherever the tokens of the other do.
+ */
+export interface AuthDanceTokenResponse {
+	/**
+	 * The access token, an RFC 9068 JWT with `typ: at+jwt`. It carries the identity id as `sub`, the session as `sid`,
+	 * the client as `client_id`, the scopes as `scope`, the moment of the sign-in as `auth_time`, and the claims of its
+	 * scopes.
+	 */
+	access_token: string;
+	/** Always `Bearer`, RFC 6750. */
+	token_type: "Bearer";
+	/** How long the access token stays valid, in seconds. */
+	expires_in: number;
+	/**
+	 * The token a refresh exchanges for a new set: a JWT with `typ: rt+jwt`, with the same `sub`, `sid`, `client_id`,
+	 * `scope` and `auth_time`. It stays valid until its session ends. Absent for client credentials, and for a client
+	 * without the `refresh_token` grant type.
+	 */
+	refresh_token?: string;
+	/** The scopes of the access token, separated by spaces. Always present. */
+	scope: string;
+}
+
+/** Parses and validates an `AuthDanceTokenResponse` at runtime. */
+export const AuthDanceTokenResponse: v.GenericSchema<AuthDanceTokenResponse> = v.pipe(
+	v.object({
+		access_token: v.string(),
+		token_type: v.literal("Bearer"),
+		expires_in: v.number(),
+		refresh_token: v.optional(v.string()),
+		scope: v.string(),
+	}),
+	v.title("AuthDanceTokenResponse"),
+	v.description("A successful token response (RFC 6749 §5.1). The access token is a JWT (RFC 9068)."),
+);
+
+/**
  * What a completed sign-in or sign-up mints, and what a refresh returns again.
  *
  * `submitPrompt` answers with this shape on the last step of a sign-in or a sign-up. `refreshToken` answers with it as
  * well.
  */
 export interface AuthDanceResponseTokens {
-	/** The three HS256 JWTs of the session. */
-	tokens: {
-		/**
-		 * The bearer token every authenticated route reads. It carries the session id as `sub` and the moment of the
-		 * sign-in as `aat`.
-		 */
-		access_token: string;
-		/**
-		 * The identity token. It carries the identity id as `sub`, and the scope-filtered identity `data` in its
-		 * protected header.
-		 */
-		id_token: string;
-		/**
-		 * The token `refreshToken` exchanges for a new set. It carries the session id as `sub` and the session scopes
-		 * in its protected header. A refresh keeps `aat`, so a refresh never opens the elevated window again.
-		 */
-		refresh_token: string;
-	};
+	/** The tokens of the session. A dance always gives a refresh token. */
+	tokens: AuthDanceTokenResponse & { refresh_token: string };
 	/** The session record a sign-in or a sign-up minted, or the record a refresh used again. */
 	session: AuthDanceSession;
 	/** Who the tokens belong to. */
 	identity: {
 		/** The identity id, a ksuid with an `id_` prefix. */
 		id: string;
-		/**
-		 * The identity `data` entries the session scopes allow. These are the same claims the protected header of the
-		 * `id_token` carries. The server keeps every other entry.
-		 */
+		/** The claims of the scopes of the session, the same claims the access token carries. */
 		data?: Record<string, unknown>;
 	};
 }
@@ -83,8 +102,10 @@ export const AuthDanceResponseTokens: v.GenericSchema<AuthDanceResponseTokens> =
 	v.object({
 		tokens: v.object({
 			access_token: v.string(),
-			id_token: v.string(),
+			token_type: v.literal("Bearer"),
+			expires_in: v.number(),
 			refresh_token: v.string(),
+			scope: v.string(),
 		}),
 		session: AuthDanceSession,
 		identity: v.pipe(

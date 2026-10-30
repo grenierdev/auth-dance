@@ -2,6 +2,7 @@ import { type Context, Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import * as v from "valibot";
 import type { AuthDanceAddressRateLimits, AuthDanceApi, AuthDanceRateLimit } from "./api.ts";
+import { ACCOUNT_SCOPE } from "./claims.ts";
 import { AuthDanceError, Errors, InvalidAccessTokenError, RateLimitedError } from "./error.ts";
 import type { AuthDanceIdentityComponent, AuthDanceIdentityComponentPublic } from "./identity.ts";
 import { AuthDancePromptInput } from "./prompt.ts";
@@ -39,6 +40,19 @@ const TokensResponse = AuthDanceResponseTokens;
 const ResultResponse = AuthDanceResponseResult;
 const SessionsResponse = AuthDanceResponseSessions;
 const ComponentsResponse = AuthDanceResponseComponents;
+
+const JwksResponse = v.pipe(
+	v.object({
+		keys: v.array(
+			v.pipe(
+				v.looseObject({ kty: v.string(), kid: v.string(), alg: v.string(), use: v.literal("sig") }),
+				v.description("A public JWK. It holds the public members of its key type, and no private member."),
+			),
+		),
+	}),
+	v.title("AuthDanceJwks"),
+	v.description("The public keys that verify the tokens, a JWK Set (RFC 7517 §5)"),
+);
 
 const AnyResponse = v.pipe(
 	v.union([StateResponse, TokensResponse, ResultResponse]),
@@ -172,9 +186,10 @@ export interface AuthDanceAppOptions {
 /**
  * Builds the Hono app that serves AuthDance over HTTP.
  *
- * Every route is a POST, and `options.basePath` prefixes all 15 of them. Each handler calls the matching
- * `AuthDanceApi` method on `c.env.api`. The nine routes that act on an already authenticated identity take the access
- * token from the `Authorization: Bearer` header.
+ * `options.basePath` prefixes all 16 routes. `GET /.well-known/jwks.json` serves `api.jwks()`, the public keys that
+ * verify the tokens. Every other route is a POST. Each handler calls the matching `AuthDanceApi` method on
+ * `c.env.api`. The nine routes that act on an already authenticated identity take the access token from the
+ * `Authorization: Bearer` header.
  *
  * A body that does not match the route schema answers 400 with `{ error: "BAD_REQUEST" }`. A `RateLimitedError`
  * answers 429, and adds `Retry-After` in seconds when the rate limiter adapter reports the delay. Every other
@@ -237,6 +252,25 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		}
 	}
 
+	app.get(
+		"/.well-known/jwks.json",
+		describeRoute({
+			summary: "Read the signing keys",
+			description:
+				"Returns the public JWK Set of the signing keys. A relying party verifies a token with the key its `kid` header names, with no secret. The first key signs; the others stay until the last token they signed expires.",
+			tags: ["Auth"],
+			responses: {
+				200: {
+					description: "The public JWK Set",
+					content: { "application/json": { schema: resolver(JwksResponse) } },
+				},
+				429: withErrorResponses()[429],
+				500: withErrorResponses()[500],
+			},
+		}),
+		(c) => c.json(c.env.api.jwks()),
+	);
+
 	app.post(
 		"/sign-in",
 		describeRoute({
@@ -297,7 +331,7 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		describeRoute({
 			summary: "List sessions",
 			description:
-				"Lists every session currently open on the authenticated identity — exactly what signing out with `others` would destroy — oldest first, with the address and user agent each was opened from. `current` names the session the call was made with.",
+				"Lists every session of a dance currently open on the authenticated identity — exactly what signing out with `others` would destroy — oldest first, with the address and user agent each was opened from. `current` names the session the call was made with. The grants of the oauth2 module are not sessions of a dance: the oauth2 module lists them.",
 			tags: ["Auth"],
 			security: [{ bearerAuth: [] }],
 			responses: {
@@ -311,9 +345,9 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		// The sort by id keeps the order independent of the enumeration order of a KV provider. `localeCompare` orders
 		// by collation, not by the base62 value of the id, so two ids from different seconds can come out unsorted.
 		async (c) => {
-			const { identityId, sessionId } = await c.env.api.verifyAccessToken(bearer(c), { session: true });
-			const sessions = await c.env.api.storage.listSession(identityId);
-			return c.json({ sessions: sessions.sort((a, b) => a.id.localeCompare(b.id)), current: sessionId });
+			const { subject, session_id } = await c.env.api.verifyAccessToken(bearer(c), { scope: ACCOUNT_SCOPE, session: true });
+			const sessions = (await c.env.api.storage.listSession(subject)).filter((s) => s.client_id === c.env.api.clientId);
+			return c.json({ sessions: sessions.sort((a, b) => a.id.localeCompare(b.id)), current: session_id });
 		},
 	);
 
@@ -334,8 +368,8 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 			},
 		}),
 		async (c) => {
-			const { identityId } = await c.env.api.verifyAccessToken(bearer(c), { session: true });
-			const identity = await c.env.api.storage.getIdentity(identityId);
+			const { subject } = await c.env.api.verifyAccessToken(bearer(c), { scope: ACCOUNT_SCOPE, session: true });
+			const identity = await c.env.api.storage.getIdentity(subject);
 			if (!identity) {
 				throw new InvalidAccessTokenError();
 			}
@@ -348,7 +382,7 @@ export function createAuthDanceApp(options?: AuthDanceAppOptions): AuthDanceApp 
 		describeRoute({
 			summary: "Refresh the tokens",
 			description:
-				"Exchanges a refresh token for a freshly minted set of access, id and refresh tokens on the same session. A refresh token works one time. A second exchange of an old token ends the session, because two parties hold it.",
+				"Exchanges a refresh token of a dance for a new access token and refresh token on the same session (RFC 6749 §6). The refresh token stays valid until its session ends, and a sign-out, a delete or a reset ends it at once. A refresh token of a client of the oauth2 module goes to the oauth2 token endpoint, which authenticates the client.",
 			tags: ["Auth"],
 			responses: {
 				200: {

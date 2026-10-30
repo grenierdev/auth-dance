@@ -1,6 +1,11 @@
 import { deepEqual, ok, rejects, throws } from "node:assert";
 import { hex } from "@scure/base";
+import { decode as decodeBase64Url } from "jose/base64url";
+import { decodeProtectedHeader } from "jose/decode/protected_header";
+import { createLocalJWKSet } from "jose/jwks/local";
 import { decodeJwt } from "jose/jwt/decode";
+import { SignJWT } from "jose/jwt/sign";
+import { jwtVerify } from "jose/jwt/verify";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
 	AuthDanceApi,
@@ -19,8 +24,10 @@ import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "./components/p
 import { TotpAuthDanceComponent } from "./components/totp.ts";
 import { WebAuthnAuthDanceComponent } from "./components/webauthn.ts";
 import { AuthDanceError, SessionNotFoundError } from "./error.ts";
+import { TEST_ISSUER, TEST_SIGNING_KEYS } from "./fixtures.test.ts";
 import { ksuid } from "./id.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "./identity.ts";
+import { AuthDanceKeys, generateSigningKey } from "./keys.ts";
 import { generateKey, totp as totpCode } from "./otp.ts";
 import type { AuthDanceKvProvider } from "./provider.ts";
 import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "./providers/memory.ts";
@@ -105,6 +112,8 @@ describe("Api", () => {
 			choreography: sequence("email", "password"),
 			components: { email, password, email2, otp, otp2 },
 			secret: "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs", // openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+			keys: TEST_SIGNING_KEYS,
+			tokens: { issuer: TEST_ISSUER },
 			storage,
 		};
 		api = new AuthDanceApi(apiOptions);
@@ -1255,11 +1264,11 @@ describe("Api", () => {
 		});
 		ok("tokens" in result3);
 		const refreshed = await api.refreshToken(result3.tokens.refresh_token);
-		const signedInAt = decodeJwt(result3.tokens.access_token).aat;
+		const signedInAt = decodeJwt(result3.tokens.access_token).auth_time;
 		deepEqual(typeof signedInAt, "number");
 		// A refresh extends how long the session may be used, never how recently the owner proved who they are.
-		deepEqual(decodeJwt(refreshed.tokens.access_token).aat, signedInAt);
-		deepEqual(decodeJwt(refreshed.tokens.refresh_token).aat, signedInAt);
+		deepEqual(decodeJwt(refreshed.tokens.access_token).auth_time, signedInAt);
+		deepEqual(decodeJwt(refreshed.tokens.refresh_token).auth_time, signedInAt);
 	});
 	it("should not exchange an access token for new tokens", async () => {
 		await johnDoe();
@@ -1361,7 +1370,7 @@ describe("Api", () => {
 	it("should read a state back under the issuer it was minted with", async () => {
 		await johnDoe();
 		// The issuer travels as the `iss` claim of the state.
-		const issuedApi = new AuthDanceApi({ ...apiOptions, tokens: { issuer: "auth-dance-demo" } });
+		const issuedApi = new AuthDanceApi({ ...apiOptions, tokens: { issuer: "https://auth.example.com" } });
 		const result1 = await issuedApi.signIn();
 		const result2 = await issuedApi.submitPrompt({
 			name: "email",
@@ -1372,7 +1381,7 @@ describe("Api", () => {
 		ok(result2.prompt.kind === "input");
 		ok(result2.prompt.type === "password");
 		// The same state under another issuer does not decrypt.
-		const otherApi = new AuthDanceApi({ ...apiOptions, tokens: { issuer: "somebody-else" } });
+		const otherApi = new AuthDanceApi({ ...apiOptions, tokens: { issuer: "https://somebody.example.com" } });
 		await rejects(
 			() =>
 				otherApi.submitPrompt({
@@ -1382,6 +1391,131 @@ describe("Api", () => {
 				}),
 			(error) => error instanceof AuthDanceError && error.code === "INVALID_STATE",
 		);
+	});
+	it("should sign every token with the first key, for the issuer as audience", async () => {
+		await johnDoe();
+		const { tokens } = await signInAsJohnDoe(api);
+		// The JWK Set checks each token, with no secret.
+		const jwks = createLocalJWKSet(api.jwks());
+		for (const [token, typ] of [
+			[tokens.access_token, "at+jwt"],
+			[tokens.refresh_token, "rt+jwt"],
+		]) {
+			deepEqual(decodeProtectedHeader(token), { alg: "ES256", kid: TEST_SIGNING_KEYS[0].kid, typ });
+			const { payload } = await jwtVerify(token, jwks, { issuer: TEST_ISSUER, audience: TEST_ISSUER, typ });
+			deepEqual([payload.iss, payload.aud], [TEST_ISSUER, TEST_ISSUER]);
+		}
+	});
+	it("should mint an RFC 9068 access token for the issuer, with every scope the server knows", async () => {
+		const scoped = new AuthDanceApi({
+			...apiOptions,
+			tokens: { issuer: TEST_ISSUER, scopes: { profile: { description: "Your name", claims: ["name"] } } },
+		});
+		await johnDoe();
+		const identity = (await storage.listIdentities())[0];
+		await storage.setIdentity({ ...identity, data: { name: "John", secret: "kept" } });
+		const signedIn = await signInAsJohnDoe(scoped);
+		const claims = decodeJwt(signedIn.tokens.access_token);
+		deepEqual(
+			[claims.sub, claims.client_id, claims.scope, claims.sid, claims.name, claims.secret],
+			[identity.id, TEST_ISSUER, "account profile", signedIn.session.id, "John", undefined],
+		);
+		ok(typeof claims.jti === "string" && typeof claims.iat === "number" && claims.exp === (claims.iat as number) + 300);
+		deepEqual([signedIn.tokens.token_type, signedIn.tokens.expires_in, signedIn.tokens.scope], ["Bearer", 300, "account profile"]);
+		deepEqual(signedIn.identity, { id: identity.id, data: { name: "John" } });
+		deepEqual([signedIn.session.client_id, signedIn.session.scopes], [TEST_ISSUER, ["account", "profile"]]);
+		// The refresh token carries no claim of a scope, and ends with its session.
+		const refresh = decodeJwt(signedIn.tokens.refresh_token);
+		deepEqual(
+			[refresh.name, refresh.sid, refresh.exp],
+			[undefined, signedIn.session.id, Math.floor(Date.parse(signedIn.session.expireAt) / 1000)],
+		);
+	});
+	it("should refuse a scope name that is not a scope token", () => {
+		for (const name of ["two words", 'quo"te', "back\\slash", ""]) {
+			throws(
+				() => new AuthDanceApi({ ...apiOptions, tokens: { issuer: TEST_ISSUER, scopes: { [name]: { description: "x" } } } }),
+				TypeError,
+			);
+		}
+	});
+	it("should keep the tokens of an older key valid after a rotation", async () => {
+		await johnDoe();
+		const { tokens } = await signInAsJohnDoe(api);
+		const newer = await generateSigningKey();
+		const rotated = new AuthDanceApi({ ...apiOptions, keys: [newer, ...TEST_SIGNING_KEYS] });
+		deepEqual((await rotated.verifyAccessToken(tokens.access_token)).session_id, decodeJwt(tokens.access_token).sid);
+		const refreshed = await rotated.refreshToken(tokens.refresh_token);
+		deepEqual(decodeProtectedHeader(refreshed.tokens.access_token).kid, newer.kid);
+		deepEqual(
+			rotated.jwks().keys.map((jwk) => (jwk as { kid?: string }).kid),
+			[newer.kid, TEST_SIGNING_KEYS[0].kid],
+		);
+		// Once the older key leaves the list, its tokens fail.
+		const retired = new AuthDanceApi({ ...apiOptions, keys: [newer] });
+		await rejects(
+			() => retired.verifyAccessToken(tokens.access_token),
+			(error) => error instanceof AuthDanceError && error.code === "INVALID_ACCESS_TOKEN",
+		);
+		await retired.verifyAccessToken(refreshed.tokens.access_token);
+	});
+	it("should refuse a token for another audience, or with no audience", async () => {
+		await johnDoe();
+		const { tokens } = await signInAsJohnDoe(api);
+		const { aud: _aud, ...payload } = decodeJwt(tokens.access_token);
+		const keys = new AuthDanceKeys(TEST_SIGNING_KEYS);
+		for (const forged of [await keys.sign({ ...payload, aud: "cli_other" }), await keys.sign(payload)]) {
+			await rejects(
+				() => api.verifyAccessToken(forged),
+				(error) => error instanceof AuthDanceError && error.code === "INVALID_ACCESS_TOKEN",
+			);
+		}
+	});
+	it("should refuse an HS256 token signed with the secret", async () => {
+		await johnDoe();
+		const { tokens } = await signInAsJohnDoe(api);
+		const payload = decodeJwt(tokens.access_token);
+		const secret = decodeBase64Url(apiOptions.secret);
+		for (const header of [{ alg: "HS256" }, { alg: "HS256", kid: TEST_SIGNING_KEYS[0].kid }]) {
+			const forged = await new SignJWT(payload).setProtectedHeader(header).sign(secret);
+			await rejects(
+				() => api.verifyAccessToken(forged),
+				(error) => error instanceof AuthDanceError && error.code === "INVALID_ACCESS_TOKEN",
+			);
+		}
+	});
+	it("should refuse an issuer that is not an https URL", () => {
+		for (const issuer of [
+			"acme",
+			"",
+			"http://auth.example.com",
+			"ftp://auth.example.com",
+			"https://auth.example.com/?tenant=1",
+			"https://auth.example.com?",
+			"https://auth.example.com/#top",
+		]) {
+			throws(() => new AuthDanceApi({ ...apiOptions, tokens: { issuer } }), TypeError, issuer);
+		}
+		throws(() => new AuthDanceApi({ ...apiOptions, tokens: undefined as never }), TypeError);
+		for (const issuer of [
+			"https://auth.example.com",
+			"https://auth.example.com/tenant",
+			"http://localhost:8787",
+			"http://127.0.0.1",
+			"http://[::1]:3000",
+		]) {
+			new AuthDanceApi({ ...apiOptions, tokens: { issuer } });
+		}
+	});
+	it("should refuse signing keys that AuthDanceKeys refuses", () => {
+		throws(() => new AuthDanceApi({ ...apiOptions, keys: [] }), TypeError);
+		throws(() => new AuthDanceApi({ ...apiOptions, keys: [{ kty: "oct", k: apiOptions.secret, kid: "hmac", alg: "HS256" }] }), TypeError);
+	});
+	it("should publish the public part of each key", () => {
+		const { keys } = api.jwks();
+		deepEqual(keys.length, 1);
+		deepEqual([keys[0].kty, keys[0].crv, keys[0].x, keys[0].y], ["EC", "P-256", TEST_SIGNING_KEYS[0].x, TEST_SIGNING_KEYS[0].y]);
+		ok(!("d" in keys[0]));
 	});
 	it("should reject a forged state without reaching the flow", async () => {
 		await rejects(
@@ -1955,54 +2089,78 @@ describe("Api", () => {
 	describe("refresh token", () => {
 		afterEach(() => vi.useRealTimers());
 
-		it("should end the session when a refresh token is exchanged a second time", async () => {
-			// The audit PoC: one refresh token minted new tokens for its whole lifetime, next to the owner.
+		it("should keep a refresh token valid until its session ends, with no record to read", async () => {
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			const first = await api.refreshToken(signedIn.tokens.refresh_token);
+			const again = await api.refreshToken(signedIn.tokens.refresh_token);
+			ok(first.tokens.refresh_token && again.tokens.refresh_token);
+			deepEqual(await storage.listKv(`session/${signedIn.session.id}/`), []);
+			await api.signOut(signedIn.tokens.access_token);
+			for (const token of [signedIn.tokens.refresh_token, first.tokens.refresh_token]) {
+				await rejects(() => api.refreshToken(token), failsWith("SESSION_NOT_FOUND"));
+			}
+		});
+
+		it("should expire the refresh token with its session", async () => {
 			vi.useFakeTimers({ toFake: ["Date"] });
 			await johnDoe();
 			const signedIn = await signInAsJohnDoe(api);
-			const first = await api.refreshToken(signedIn.tokens.refresh_token);
-			vi.setSystemTime(Date.now() + 11_000);
-			await rejects(() => api.refreshToken(signedIn.tokens.refresh_token), failsWith("INVALID_REFRESH_TOKEN"));
-			deepEqual(await storage.getSession(signedIn.session.id), undefined);
-			// The token the first exchange returned dies with the session.
-			await rejects(() => api.refreshToken(first.tokens.refresh_token), failsWith("SESSION_NOT_FOUND"));
-		});
-
-		it("should keep the session for the token a rotation just replaced", async () => {
-			await johnDoe();
-			const signedIn = await signInAsJohnDoe(api);
-			const first = await api.refreshToken(signedIn.tokens.refresh_token);
-			// Another tab lost the race. Its store already holds the newer pair.
-			await rejects(() => api.refreshToken(signedIn.tokens.refresh_token), failsWith("INVALID_REFRESH_TOKEN"));
-			ok(await storage.getSession(signedIn.session.id));
-			const second = await api.refreshToken(first.tokens.refresh_token);
-			ok(second.tokens.refresh_token);
-		});
-
-		it("should end the session for an old token two rotations back, inside the leeway too", async () => {
-			await johnDoe();
-			const signedIn = await signInAsJohnDoe(api);
-			const first = await api.refreshToken(signedIn.tokens.refresh_token);
-			await api.refreshToken(first.tokens.refresh_token);
-			await rejects(() => api.refreshToken(signedIn.tokens.refresh_token), failsWith("INVALID_REFRESH_TOKEN"));
-			deepEqual(await storage.getSession(signedIn.session.id), undefined);
-		});
-
-		it("should accept one exchange on a session that predates the refresh record", async () => {
-			await johnDoe();
-			const signedIn = await signInAsJohnDoe(api);
-			await storage.unsetKv(`session/${signedIn.session.id}/refresh`);
+			vi.setSystemTime(Date.now() + 23 * 60 * 60 * 1000);
 			const refreshed = await api.refreshToken(signedIn.tokens.refresh_token);
-			const record = await storage.getRefreshRecord(signedIn.session.id);
-			deepEqual(record?.current, decodeJwt(refreshed.tokens.refresh_token).jti);
+			// A refresh never extends the session, so the new refresh token ends at the same moment.
+			deepEqual(decodeJwt(refreshed.tokens.refresh_token).exp, decodeJwt(signedIn.tokens.refresh_token).exp);
+			vi.setSystemTime(Date.now() + 60 * 60 * 1000 + 1000);
+			await rejects(() => api.refreshToken(refreshed.tokens.refresh_token), failsWith("INVALID_REFRESH_TOKEN"));
 		});
 
-		it("should drop the refresh record on sign-out", async () => {
+		it("should refuse a refresh token as an access token", async () => {
 			await johnDoe();
 			const signedIn = await signInAsJohnDoe(api);
-			ok(await storage.getKv(`session/${signedIn.session.id}/refresh`));
-			await api.signOut(signedIn.tokens.access_token);
-			deepEqual(await storage.getKv(`session/${signedIn.session.id}/refresh`), undefined);
+			await rejects(() => api.verifyAccessToken(signedIn.tokens.refresh_token), failsWith("INVALID_ACCESS_TOKEN"));
+			await rejects(() => api.enroll({ name: "password", access_token: signedIn.tokens.refresh_token }), failsWith("INVALID_ACCESS_TOKEN"));
+		});
+
+		it("should narrow the scope of a refresh, and refuse a wider one", async () => {
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			const narrowed = await api.refreshToken(signedIn.tokens.refresh_token, { scope: ["account"] });
+			deepEqual(narrowed.tokens.scope, "account");
+			// The refresh token keeps every scope the session holds, so a later refresh takes them back.
+			deepEqual(decodeJwt(narrowed.tokens.refresh_token).scope, signedIn.tokens.scope);
+			for (const scope of [[], ["account", "profile"]]) {
+				await rejects(() => api.refreshToken(signedIn.tokens.refresh_token, { scope }), failsWith("INSUFFICIENT_SCOPE"));
+			}
+		});
+
+		it("should refresh the token of another client only for that client", async () => {
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			const identity = (await storage.getIdentity(signedIn.identity.id))!;
+			const session = await storage.createSession({
+				identityId: identity.id,
+				client_id: "cli_tv",
+				scopes: ["account"],
+				expireAt: new Date(signedIn.session.expireAt),
+			});
+			const { tokens } = await api.mintTokens({
+				client_id: "cli_tv",
+				scopes: ["account"],
+				grant_type: "authorization_code",
+				session,
+				identity,
+				authTime: 1,
+			});
+			ok(tokens.refresh_token);
+			await rejects(() => api.refreshToken(tokens.refresh_token!), failsWith("INVALID_REFRESH_TOKEN"));
+			const refreshed = await api.refreshToken(tokens.refresh_token, { client_id: "cli_tv", audience: "https://api.example.com" });
+			deepEqual(
+				[decodeJwt(refreshed.tokens.access_token).client_id, decodeJwt(refreshed.tokens.access_token).aud],
+				["cli_tv", "https://api.example.com"],
+			);
+			// The access token of the client manages the account like the token of a dance, scope `account` held.
+			deepEqual((await api.verifyAccessToken(tokens.access_token, { scope: "account", session: true })).subject, identity.id);
+			await rejects(() => api.verifyAccessToken(refreshed.tokens.access_token), failsWith("INVALID_ACCESS_TOKEN"));
 		});
 
 		it("should check the session of an access token only on demand", async () => {
@@ -2010,8 +2168,52 @@ describe("Api", () => {
 			const signedIn = await signInAsJohnDoe(api);
 			await api.signOut(signedIn.tokens.access_token);
 			// Without a session read, the token answers until it expires. This is the documented window.
-			deepEqual((await api.verifyAccessToken(signedIn.tokens.access_token)).sessionId, signedIn.session.id);
+			deepEqual((await api.verifyAccessToken(signedIn.tokens.access_token)).session_id, signedIn.session.id);
 			await rejects(() => api.verifyAccessToken(signedIn.tokens.access_token, { session: true }), failsWith("SESSION_NOT_FOUND"));
+		});
+	});
+
+	describe("account scope", () => {
+		it("should refuse a management route to a token without account", async () => {
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			const narrowed = await api.refreshToken(signedIn.tokens.refresh_token, { scope: ["account"] });
+			const identity = (await storage.getIdentity(signedIn.identity.id))!;
+			const { tokens } = await api.mintTokens({
+				client_id: api.clientId,
+				scopes: [],
+				grant_type: "refresh_token",
+				session: signedIn.session,
+				identity,
+				authTime: Math.floor(Date.now() / 1000),
+			});
+			for (const call of [
+				() => api.enroll({ name: "password", access_token: tokens.access_token }),
+				() => api.delete({ access_token: tokens.access_token }),
+				() => api.signOut(tokens.access_token),
+			]) {
+				await rejects(call, failsWith("INSUFFICIENT_SCOPE"));
+			}
+			ok("state" in (await api.delete({ access_token: narrowed.tokens.access_token })));
+		});
+
+		it("should leave the grants of the oauth2 module through a sign-out, of one session or of all", async () => {
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			const other = await signInAsJohnDoe(api);
+			const grant = await storage.createSession({
+				identityId: signedIn.identity.id,
+				client_id: "cli_tv",
+				scopes: ["profile"],
+				expireAt: new Date(signedIn.session.expireAt),
+			});
+			await api.signOut(signedIn.tokens.access_token);
+			deepEqual((await storage.listSession(signedIn.identity.id)).map((s) => s.id).sort(), [other.session.id, grant.id].sort());
+			await api.signOut(other.tokens.access_token, true);
+			deepEqual(
+				(await storage.listSession(signedIn.identity.id)).map((s) => s.id),
+				[grant.id],
+			);
 		});
 	});
 
@@ -2048,10 +2250,17 @@ describe("Api", () => {
 			await rejects(() => api.refreshToken(owner.tokens.refresh_token), failsWith("SESSION_NOT_FOUND"));
 		});
 
-		it("should end every other session when the owner rotates the password", async () => {
+		it("should end every other session when the owner rotates the password, the grants of the oauth2 module too", async () => {
 			await johnDoe();
 			const owner = await signInAsJohnDoe(api);
 			const thief = await signInAsJohnDoe(api);
+			// A thief with a session can give a grant to a client of their own.
+			await storage.createSession({
+				identityId: owner.identity.id,
+				client_id: "cli_thief",
+				scopes: ["account"],
+				expireAt: new Date(owner.session.expireAt),
+			});
 			await rotatePassword(api, owner.tokens.access_token);
 			await rejects(() => api.refreshToken(thief.tokens.refresh_token), failsWith("SESSION_NOT_FOUND"));
 			ok(await api.refreshToken(owner.tokens.refresh_token));
@@ -2688,15 +2897,19 @@ describe("Api", () => {
 			deepEqual(records[0].name, "password");
 		});
 
-		it("should report a refresh token exchanged a second time as a deleted session", async () => {
+		it("should report only the sessions of a dance a sign-out of all takes", async () => {
 			const { records, api } = recordingApi();
 			await johnDoe();
 			const signedIn = await signInAsJohnDoe(api);
-			const first = await api.refreshToken(signedIn.tokens.refresh_token);
-			await api.refreshToken(first.tokens.refresh_token);
-			await rejects(() => api.refreshToken(signedIn.tokens.refresh_token));
-			const deleted = records.filter((r) => r.hook === "onSessionDeleted");
-			deepEqual(deleted, [{ hook: "onSessionDeleted", flow: "reuse", identityId: signedIn.identity.id, sessionId: signedIn.session.id }]);
+			await storage.createSession({
+				identityId: signedIn.identity.id,
+				client_id: "cli_tv",
+				scopes: [],
+				expireAt: new Date(signedIn.session.expireAt),
+			});
+			await api.signOut(signedIn.tokens.access_token, true);
+			const deleted = records.filter((r) => r.hook === "onSessionDeleted").map((r) => [r.flow, r.sessionId]);
+			deepEqual(deleted, [["sign-out", signedIn.session.id]]);
 		});
 
 		it("should report the sessions a reset deletes after the identity it changed", async () => {

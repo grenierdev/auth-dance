@@ -202,8 +202,8 @@ export interface AuthDanceIdentity {
 	/** The identity id, a ksuid with an `id_` prefix. `AuthDanceStorage.createIdentity` mints it. */
 	id: string;
 	/**
-	 * Free-form data about the owner, such as a display name. The library reads the keys as the scopes of a new
-	 * session, then copies each key that session holds into the protected header of the `id_token`.
+	 * Free-form data about the owner, such as a display name. A scope names the keys it discloses, and each access token
+	 * carries the keys of its scopes as claims.
 	 */
 	data?: Record<string, unknown>;
 	/**

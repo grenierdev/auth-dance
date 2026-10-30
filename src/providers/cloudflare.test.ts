@@ -6,6 +6,7 @@ import { EmailAuthDanceComponent } from "../components/email.ts";
 import { OtpAuthDanceComponent } from "../components/otp.ts";
 import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "../components/password.ts";
 import { AuthDanceError, InvalidPromptValueError } from "../error.ts";
+import { TEST_ISSUER, TEST_SIGNING_KEYS } from "../fixtures.test.ts";
 import { ksuid } from "../id.ts";
 import type { AuthDanceIdentity } from "../identity.ts";
 import { AuthDanceStorage } from "../storage.ts";
@@ -76,6 +77,8 @@ describe("CloudflareSendMailAuthDanceChannel", () => {
 			choreography: sequence("email", "password"),
 			components: { email, password, otp: new OtpAuthDanceComponent({ channel: "email" }) },
 			secret: "zdJXI1jwuXW8A19fns0E_B4HSYm7AUHLGlU9WLo8mxs",
+			keys: TEST_SIGNING_KEYS,
+			tokens: { issuer: TEST_ISSUER },
 			storage,
 		});
 		const identity: AuthDanceIdentity = { id: ksuid("id_"), data: {}, components: [] };
