@@ -11,5 +11,6 @@ export default defineConfig({
 		// `auth-dance` links to the parent folder, which holds its own copy of React.
 		dedupe: ["react", "react-dom"],
 	},
-	plugins: [tanstackStart({ spa: { enabled: true } }), viteReact(), tailwindcss()],
+	// The shell goes to `index.html`, which the `single-page-application` mode of `wrangler.jsonc` serves.
+	plugins: [tanstackStart({ spa: { enabled: true, prerender: { outputPath: "/index" } } }), viteReact(), tailwindcss()],
 });

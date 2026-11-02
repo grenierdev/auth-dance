@@ -29,7 +29,8 @@ again each time the browser restarts it. Clear the site data to start over. The 
 one browser, since the backend lives in it.
 
 `npm run build` writes a static site to `dist/client`, and `npm run preview` serves it. A static host must answer every
-page path with the SPA shell.
+page path with the SPA shell, `index.html`. `npm run deploy` builds the site and sends it to Cloudflare as static assets,
+with no Worker script, on the custom domain https://demo.auth.dance (see `wrangler.jsonc`).
 
 ## Layout
 
