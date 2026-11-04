@@ -1,0 +1,12 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "auth-dance-website",
+	"compatibility_date": "2026-11-01",
+	// A static site with no Worker script: `npm run build` prerenders every page to `dist/client`.
+	"assets": {
+		"directory": "./dist/client",
+		"html_handling": "auto-trailing-slash",
+		"not_found_handling": "404-page"
+	},
+	"routes": [{ "pattern": "auth.dance", "custom_domain": true }]
+}
