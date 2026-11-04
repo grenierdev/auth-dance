@@ -1,0 +1,95 @@
+---
+title: The device grant
+description: Sign in a device with no browser, a TV or a CLI, with the device authorization grant of RFC 8628.
+order: 3
+---
+
+A device with no browser, a TV or a CLI, uses the device authorization grant (RFC 8628). The device shows a short code. The owner types it on another device, signs in, and consents. The device polls until it gets its tokens.
+
+This guide builds on [OAuth 2.0 authorization server](/docs/guides/oauth2-server).
+
+## 1. Open the grant
+
+Name the page where the owner types the user code in `ui.device`:
+
+```ts
+ui: {
+	login: "https://auth.example.com/login",
+	consent: "https://auth.example.com/consent",
+	device: "https://auth.example.com/device",
+},
+```
+
+Without `ui.device`, the device endpoints answer 404 and the metadata does not announce them.
+
+## 2. Register the client
+
+Register the client with the grant type `urn:ietf:params:oauth:grant-type:device_code`. A device that cannot keep a secret uses `token_endpoint_auth_method: "none"`:
+
+```ts
+const { client } = await idp.oauth2.clients.createClient({
+	client_name: "Dance TV",
+	token_endpoint_auth_method: "none",
+	grant_types: ["urn:ietf:params:oauth:grant-type:device_code", "refresh_token"],
+	scope: "profile",
+});
+```
+
+## 3. The device asks for a code
+
+The device posts its `client_id` to `/oauth2/device_authorization`:
+
+```http
+POST /oauth2/device_authorization HTTP/1.1
+Host: auth.example.com
+Content-Type: application/x-www-form-urlencoded
+
+client_id=cli_…&scope=profile
+```
+
+The answer holds a `device_code` for the device, a `user_code` as `XXXX-XXXX` for the owner, the `verification_uri` (`/oauth2/device`), the `verification_uri_complete`, `expires_in` and `interval`. The device shows the user code and the verification URI, or a QR code of `verification_uri_complete`.
+
+## 4. Write the device page
+
+`/oauth2/device` sends the browser to `ui.device` with a `device_challenge`. The page takes the code the owner types:
+
+```ts
+// The server side of ui.device.
+const challenge = new URL(request.url).searchParams.get("device_challenge")!;
+const { user_code } = await idp.oauth2.getDeviceRequest(challenge); // filled in from verification_uri_complete
+// … the owner confirms or types the code …
+const { redirect_to } = await idp.oauth2.acceptDeviceRequest(challenge, { user_code: typed });
+return Response.redirect(redirect_to, 303);
+```
+
+Case does not count in a user code, and a dash or a space drops out. A wrong code raises `InvalidUserCodeError`, and the page asks again. Five wrong codes end the challenge.
+
+## 5. The owner signs in and consents
+
+The owner then goes through the same login and consent pages. The consent page always shows for a device, even for a client with `skip_consent`, because a user code can come from someone else. `getConsentRequest` gives the `user_code` for the page to show, so the owner checks it against the device.
+
+At the end, the browser comes back to `ui.device` with `?device_status=approved`, or with `?device_status=denied` and an `error`.
+
+## 6. The device polls
+
+Meanwhile the device polls `/oauth2/token`:
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: auth.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=…&client_id=cli_…
+```
+
+Until the owner approves, the answer is `authorization_pending`. A device that polls faster than `interval` gets `slow_down`. After a denial it gets `access_denied`, and after `expires_in` it gets `expired_token`. On approval it gets the tokens.
+
+## Options
+
+| Option                          | Default            | What it sets                                                        |
+| ------------------------------- | ------------------ | ------------------------------------------------------------------- |
+| `durations.device`              | 600                | Seconds the device code and the user code stay valid                |
+| `device.interval`               | 5                  | Seconds the device waits between two polls                          |
+| `device.verification_uri`       | The `/device` route | The URI the device shows. It must lead to `/device` with its query. |
+| `limits.address.device_authorization` | 60 hits per 60 seconds | Requests to `/device_authorization` per address              |
+| `limits.address.device`         | 30 hits per 60 seconds | Visits to `/device` per address. It bounds how fast one address guesses user codes. |

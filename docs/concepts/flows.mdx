@@ -1,0 +1,98 @@
+---
+title: Derived flows
+description: The nine flows the library runs from one choreography, what each one needs, and how each one ends.
+order: 2
+---
+
+## Nine flows, one policy
+
+The state machine runs nine flows. You write none of them. Three read the choreography directly, the others act on the components it names.
+
+| Flow          | Needs a session | Needs a fresh sign-in | Reads the choreography                        | Ends with       |
+| ------------- | --------------- | --------------------- | --------------------------------------------- | --------------- |
+| `sign-in`     | No              | No                    | Walks one complete path                       | Tokens          |
+| `sign-up`     | No              | No                    | Walks one complete path and collects values   | Tokens          |
+| `recover`     | No              | No                    | Derives a recovery choreography               | Success result  |
+| `enroll`      | Yes             | Yes                   | No                                            | Success result  |
+| `unenroll`    | Yes             | Yes                   | Checks that a complete path survives          | Success result  |
+| `rotate`      | Yes             | Yes                   | No                                            | Success result  |
+| `subscribe`   | Yes             | Yes                   | No                                            | Success result  |
+| `unsubscribe` | Yes             | Yes                   | Checks that a complete path survives          | Success result  |
+| `delete`      | Yes             | Yes                   | No                                            | Success result  |
+
+Every flow starts with one call that returns the first prompt, an encrypted state, and the moment the state expires. The client then answers prompts until the flow ends. See [The prompt loop](/docs/concepts/prompt-loop).
+
+A flow that needs a session takes an access token that holds the `account` scope. A flow that needs a fresh sign-in refuses a session whose sign-in is older than `durations.elevated`, 300 seconds by default, with `FreshSignInRequiredError`. A refresh keeps the `auth_time` of the sign-in, so a refresh never opens the window again. The owner signs in again.
+
+## Sign-in
+
+The owner performs one complete path, one step at a time. Each step checks the value with the `verifyPrompt` of its component. The first step resolves the identity, and every later step must answer for the same identity, or the step raises `IdentityMismatchError`.
+
+At a choice, the owner answers any one branch. When the path completes, the library creates a session and mints tokens. A wrong value raises `InvalidPromptValueError`, and the dance stays on the same step.
+
+A step that accepts a value can rewrite the stored record. The password component uses this to rehash a password stored with older parameters.
+
+## Sign-up
+
+The sign-up walks the same path, but it collects each value instead of checking it. The state carries the new identity id from the start. Storage keeps nothing until the path completes.
+
+A component that can prove control of its own value is `verifiable`. After it collects the value, the flow asks for a validation before it moves on. The email component is verifiable: after the email address, the flow sends a one-time code to that email address, and the owner types it back. The validation prompt keeps the name of the step it proves, and it has its own type, for example `otp`.
+
+When the path completes, the library saves the identity, creates a session and mints tokens.
+
+## Enroll
+
+`enroll(name)` adds a component to the identity of the session. The prompt collects the new value. When the component is verifiable, a validation follows, and it targets the new value, never a value the identity already holds. The flow raises `ComponentAlreadyEnrolledError` for a component the identity holds.
+
+## Unenroll
+
+`unenroll(name)` removes a component, behind a confirmation. The prompt has the type `confirmation`, and the owner answers it with the boolean `true`.
+
+The removal follows the `linkedTo` links of the identity records in both directions. A channel that names the component goes too, and so does every other component that channel names. The email component links its email address, its channel and its one-time code challenge, so they go together.
+
+> **Note:** The library refuses a removal that leaves the identity with no complete path. It counts the whole set the removal takes, and raises `WouldLockOutError`. It checks at the start of the flow and again at the confirmation.
+
+## Rotate
+
+`rotate(name)` replaces the value of an enrolled component.
+
+- A component that can verify itself proves control of the current value first, then collects the replacement and validates it. The flow has two validation rounds.
+- A component that cannot verify itself, a password for example, collects the replacement at once. The session already proves what a second typing of the password would prove.
+
+A completed rotation deletes every other session of the identity, and the grants of the OAuth 2.0 module. It keeps the session that ran it. Set `revokeSessionsOnReset: false` to keep them all.
+
+## Recover
+
+`recover(name)` resets one component for an owner who can no longer provide it. It needs no session. The owner first performs the recovery choreography of the component, then the flow collects the replacement and validates it. The flow ends with a success result, never with tokens. A completed recovery deletes every session of the identity, unless `revokeSessionsOnReset` is `false`.
+
+[Recovery](/docs/concepts/recovery) explains how the library derives the recovery choreography.
+
+## Subscribe
+
+`subscribe(name)` attaches a channel, for example SMS. The prompt comes from the channel and collects the recipient. The library refuses a recipient that is not a string of 1 to 320 characters, or that holds a control character. The channel then turns the recipient into a channel record. The library delivers a one-time code over the new channel to that recipient, so the validation proves control of it.
+
+## Unsubscribe
+
+`unsubscribe(name)` detaches a channel, behind a confirmation. The removal also takes every component the channel names in `linkedTo`, and every record linked to those. The same lock-out check as unenroll applies.
+
+## Delete
+
+`delete()` removes the identity, behind a confirmation under the name `identity`. It deletes every session of the identity with it, so no token outlives the identity. There is no lock-out check. The client drops its tokens when the delete completes.
+
+## Hooks
+
+The server reports each change to the `hooks` option. The library calls a hook after the write, and awaits it. A hook that rejects never fails the flow; `onError` gets the rejection.
+
+| Flow completes   | Hooks, in order                                                       |
+| ---------------- | --------------------------------------------------------------------- |
+| sign-in          | `onSessionCreated`                                                    |
+| sign-up          | `onIdentityCreated`, `onSessionCreated`                               |
+| enroll, unenroll, subscribe, unsubscribe | `onIdentityUpdated`                           |
+| rotate, recover  | `onIdentityUpdated`, then `onSessionDeleted` for each deleted session |
+| delete           | `onSessionDeleted` for each session, then `onIdentityDeleted`         |
+| refresh          | `onSessionRefreshed`                                                  |
+| sign-out         | `onSessionDeleted` for each session                                   |
+
+## Durations
+
+Each flow has its own lifetime in `durations`, in seconds: `sign_in`, `sign_up`, `enroll`, `unenroll`, `rotate`, `recover`, `subscribe`, `unsubscribe` and `delete`. Each one defaults to 300. The deadline starts with the flow, and an answer to a prompt never extends it.

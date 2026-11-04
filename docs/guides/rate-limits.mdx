@@ -1,0 +1,93 @@
+---
+title: Rate limits and proxies
+description: Tell the server where the address of a request comes from, and tune the per-address and per-identity rate-limit buckets.
+order: 7
+---
+
+The server counts hits against fixed-window buckets. One kind keys on the address of the request, the other on the identity or the session. Both kinds go to the `rate_limiter` adapter of the storage. An empty bucket raises `RateLimitedError`, and the HTTP layer answers 429 with `{ "error": "RATE_LIMITED" }` and a `Retry-After` header in seconds when the adapter reports the wait.
+
+## Tell the server where the address lives
+
+The per-address buckets key on the address of the request, so the server must read the right one. By default it reads `cf-connecting-ip`, then the last entry of `x-forwarded-for`.
+
+> **Note:** Off Cloudflare, the client writes `cf-connecting-ip` itself. A server that keeps the default resolver there lets a client choose its own bucket. Pass the resolver that matches the deployment.
+
+| Deployment                         | Pass                                                         |
+| ---------------------------------- | ------------------------------------------------------------ |
+| Behind Cloudflare                  | `app: { address: cloudflareAddress }`                        |
+| Behind a chain of trusted proxies  | `app: { address: forwardedAddress(hops) }`                   |
+| Node.js with no proxy              | `app: { address: (c) => getConnInfo(c).remote.address }`     |
+
+`cloudflareAddress` and `forwardedAddress` come from `auth-dance`. `getConnInfo` comes from `@hono/node-server/conninfo`.
+
+`forwardedAddress(hops)` reads the entry of `x-forwarded-for` that is `hops` positions from the right. Each proxy appends the address it saw, so behind `hops` trusted proxies that entry is the first one the client cannot write. A header with fewer entries gives no address. `hops` defaults to 1, and a value that is not a positive integer raises `RangeError`.
+
+```ts
+import { createAuthDance, forwardedAddress } from "auth-dance";
+
+const auth = createAuthDance({
+	api: { /* … */ },
+	// A load balancer, then a reverse proxy, in front of the app.
+	app: { address: forwardedAddress(2) },
+});
+```
+
+Every request with no address shares one bucket, `unknown`. That throttles a configuration error, or a client that goes around the proxy.
+
+A server that calls `auth.fetch` on behalf of its own visitors forwards each address in a header, and reads that header in its resolver. Otherwise every visitor shares the address of that server.
+
+The resolver also gives the address that a session records, and `/list-sessions` shows it.
+
+## Per-address buckets
+
+The HTTP layer consumes them. Set them in `api.limits.address`. Each value is `{ limit, window }`: `limit` hits in each `window` seconds.
+
+| Bucket    | Default       | Counts                                                         |
+| --------- | ------------- | -------------------------------------------------------------- |
+| `request` | 300 per 60 s  | Every request, whatever the route                              |
+| `send`    | 60 per 60 s   | Each request to `/send-prompt`, on top of `request`            |
+
+## Per-identity buckets
+
+The state machine consumes them, keyed on the identity or the session the call belongs to. Set them in `api.limits.identity`.
+
+| Bucket      | Default       | Counts                                                                       |
+| ----------- | ------------- | ---------------------------------------------------------------------------- |
+| `verify`    | 10 per 300 s  | Each answer to a prompt or to a validation                                   |
+| `send`      | 5 per 300 s   | Each prompt or validation the library delivers over a channel                |
+| `manage`    | 20 per 300 s  | Each start of a management flow, and each sign-out                           |
+| `refresh`   | 60 per 300 s  | Each exchange of a refresh token                                             |
+| `recipient` | 5 per 900 s   | Each message to one recipient, whatever the flow, the state or the identity  |
+
+The `verify` bucket counts before the library reads the value, so a wrong password costs a hit. The `recipient` key holds a SHA-256 of the channel and the recipient, never the email address itself. A call that has no identity yet, the first step of a sign-in for example, keys on nothing here; the per-address buckets cover it.
+
+```ts
+limits: {
+	identity: { verify: { limit: 5, window: 300 } },
+	address: { request: { limit: 600, window: 60 } },
+},
+```
+
+A bucket you omit keeps its default.
+
+## The authorization server
+
+`createAuthDanceOauth2` takes the same `address` resolver in its `app` options, and its own buckets in `oauth2.limits`:
+
+| Bucket                         | Default        | Counts                                                     |
+| ------------------------------ | -------------- | ---------------------------------------------------------- |
+| `address.request`              | 300 per 60 s   | Every request                                              |
+| `address.token`                | 60 per 60 s    | `/token`, on top of `request`                              |
+| `address.client_auth`          | 100 per 300 s  | Each check of a client secret                              |
+| `address.register`             | 10 per 3600 s  | `/register`                                                |
+| `address.introspect`           | 300 per 60 s   | `/introspect`                                              |
+| `address.revoke`               | 60 per 60 s    | `/revoke`                                                  |
+| `address.device_authorization` | 60 per 60 s    | `/device_authorization`                                    |
+| `address.device`               | 30 per 60 s    | Visits to `/device`. It bounds how fast an address guesses user codes. |
+| `client.introspect`            | 600 per 60 s   | Each introspection one client asks for, from any address   |
+
+The authorization server answers an empty bucket with 429 and `temporarily_unavailable`.
+
+## The adapter
+
+`MemoryRateLimiterProvider` keeps one fixed window per key in a `Map`, in one process. Use it for tests or a single process. On Workers, `CloudflareRateLimiterProvider` counts in a Durable Object per key. Any other store implements `AuthDanceRateLimiterProvider`: one method, `limit(key, limit, window)`, which counts one hit and answers `{ allowed, retryAfter }`. The state machine and the HTTP layer both pass the window in milliseconds.

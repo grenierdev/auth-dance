@@ -1,0 +1,67 @@
+---
+title: Recovery
+description: How the library derives the recovery of each component from the choreography, and how to override it.
+order: 3
+---
+
+## The rule
+
+To recover one component, the owner performs a sign-in without it.
+
+The library takes every complete path of the choreography that holds the component, and removes the component from each one. A path that remains is a recovery path when:
+
+1. It starts with an identification, because something must resolve the identity.
+2. It holds a step that proves control.
+
+Inside a recovery, an identification that proves nothing on its own but can verify itself counts as proof once its verification succeeds. An email address counts after the owner types the one-time code sent to it.
+
+The recovery choreography is the choice of all the recovery paths. With N factors on a path, the owner recovers one with the other N−1.
+
+## Examples
+
+| Choreography                                         | Recover    | Recovery dance                                  |
+| ---------------------------------------------------- | ---------- | ----------------------------------------------- |
+| `sequence("email", "password")`                      | `password` | email address, its one-time code                |
+| `sequence("email", "password")`                      | `email`    | Not recoverable: `password` resolves nobody     |
+| `sequence("email", "password", "totp")`              | `password` | email address, its one-time code, TOTP code     |
+| `choice(sequence("email", "password"), "passkey")`   | `password` | email address, its one-time code                |
+| `choice(sequence("email", "password"), "passkey")`   | `passkey`  | Not recoverable: nothing remains on its path    |
+
+A component that no path can do without is not recoverable. `recover` raises `ComponentNotRecoverableError` for it. The owner signs in another way and enrolls the component again. In the last example, the owner signs in with the email address and the password, and enrolls a new passkey.
+
+## The flow
+
+`recover(name)` needs no session and no fresh sign-in.
+
+1. The owner performs the recovery dance. The first step resolves the identity. Every later step must answer for the same identity.
+2. When the first step is an email address, the next prompt is its validation: a one-time code sent to that email address.
+3. When the recovery dance completes, the flow collects the replacement of the component, with the prompt of that component.
+4. When the component is verifiable, the flow validates the replacement.
+5. The flow ends with `{ success: true }`.
+
+No prompt names a value, so the responses tell nothing about the identity. A completed recovery deletes every session of the identity, and the grants of the OAuth 2.0 module, unless `revokeSessionsOnReset` is `false`. The owner then signs in with the new value.
+
+## Overriding the rule
+
+`AuthDanceApiOptions.recovery` replaces the derived rule for one component:
+
+```ts
+recovery: {
+	// The password recovers with the email address and a backup code, in place of the derived dance.
+	password: sequence("email", "backup-code"),
+	// The TOTP key never recovers.
+	totp: false,
+},
+```
+
+`backup-code` here is a component you write and register in `components`. A component you leave out recovers through the derived rule.
+
+The constructor raises `InvalidChoreographyError` when:
+
+- A key is not a step of the choreography.
+- An entry names the key itself, or a component that `components` does not declare.
+- A path of an entry does not start with an identification, or holds no step that proves control.
+
+## Recovery and custom components
+
+A component takes part in recovery through the same interface as every other flow. A first step of a recovery must answer `verifyPrompt` with an identity id, not with `true`, or the library raises `IdentityNotResolvedError`. A component that is an identification, proves nothing, and sets `verifiable: true` must declare `verificationComponent`, or the recovery raises `ComponentNotVerifiableError` on the first submit. See [Write a custom component](/docs/guides/custom-component).

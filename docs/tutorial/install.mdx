@@ -1,0 +1,70 @@
+---
+title: Install and make the secrets
+description: Create a project, install Auth Dance, and generate the three secrets the server needs before its first start.
+order: 1
+---
+
+This tutorial builds a server that signs in with an email address and a password, then a command-line client that signs up and signs in, then a React page that does the same. Follow the pages in order.
+
+You need Node.js 24.4 or newer. Node.js 24 runs TypeScript files directly, so the tutorial has no build step.
+
+### 1. Create the project
+
+```sh
+mkdir auth-tutorial
+cd auth-tutorial
+npm init -y
+npm pkg set type=module
+```
+
+### 2. Install the packages
+
+```sh
+npm install auth-dance @hono/node-server
+```
+
+`auth-dance` is the library. `@hono/node-server` is the HTTP adapter that serves it on Node.js.
+
+### 3. Generate the signing key
+
+The server signs its tokens with an asymmetric key. Generate one:
+
+```sh
+node --input-type=module -e "import { generateSigningKey } from 'auth-dance'; console.log(JSON.stringify(await generateSigningKey()))"
+```
+
+The command prints a private JWK with `kid`, `alg: "ES256"` and `use: "sig"`. Copy the whole line.
+
+### 4. Generate the state secret
+
+The server encrypts the state of each flow with a base64url key. Generate one:
+
+```sh
+openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+```
+
+### 5. Generate the password pepper
+
+The password component puts a pepper in front of every password before it hashes it. The pepper holds at least 16 bytes. Generate one:
+
+```sh
+openssl rand -base64 32
+```
+
+### 6. Write the environment file
+
+Create `.env` and put the three values in it:
+
+```sh title=".env"
+AUTH_SIGNING_KEY='{"kty":"EC","crv":"P-256","x":"…","y":"…","d":"…","kid":"…","alg":"ES256","use":"sig"}'
+AUTH_SECRET=paste-the-state-secret-here
+PASSWORD_PEPPER=paste-the-pepper-here
+```
+
+> **Note:** These three values are secrets. Keep them out of version control, and keep them in a secret store in production. Keep the pepper apart from the identity store: a new pepper invalidates every stored password.
+
+### What you should see
+
+The project folder holds `package.json`, `node_modules/` and `.env`. Nothing runs yet.
+
+Next: [The server](/docs/tutorial/the-server).

@@ -1,0 +1,160 @@
+---
+title: Cloudflare Workers with D1 and KV
+description: Run the server on Cloudflare Workers, with identities in D1, sessions and codes in Workers KV, and rate limits in a Durable Object.
+order: 6
+---
+
+The core uses web APIs, so it runs on Cloudflare Workers. `auth-dance/providers/cloudflare` holds the storage for it:
+
+| Part         | Class                              | Binding                         |
+| ------------ | ---------------------------------- | ------------------------------- |
+| Identities   | `CloudflareD1IdentityProvider`     | A D1 database                   |
+| Key-value    | `CloudflareKvKvProvider`           | A Workers KV namespace          |
+| Rate limits  | `CloudflareRateLimiterProvider`    | A Durable Object namespace of `RateLimiterDurableObject` |
+| OAuth 2.0 clients | `CloudflareD1Oauth2ClientProvider` | The same D1 database        |
+| Email        | `CloudflareSendMailAuthDanceChannel` | A send-email binding          |
+
+`createAuthDanceCloudflareStorage(kv, d1, durableObjectNamespace)` builds the `AuthDanceStorage` from the first three.
+
+> **Note:** `auth-dance/providers/cloudflare` imports `cloudflare:workers`. Import it only in code that runs on Workers.
+
+### 1. Create the resources
+
+```sh
+npx wrangler d1 create auth
+npx wrangler kv namespace create AUTH_KV
+```
+
+Each command prints the id to put in the configuration.
+
+### 2. Create the tables
+
+The D1 schema is the file `src/providers/sqlite.sql` of the [auth-dance repository](https://github.com/grenierdev/auth-dance). It creates the `identity` table, an index table of identifications that triggers keep up to date, and the `oauth2_client` table. Copy it into your project, then apply it:
+
+```sh
+npx wrangler d1 execute auth --remote --file=sqlite.sql
+```
+
+### 3. Configure the worker
+
+```json title="wrangler.jsonc"
+{
+	"name": "auth",
+	"main": "src/worker.ts",
+	"compatibility_date": "2026-11-01",
+	"d1_databases": [{ "binding": "DB", "database_name": "auth", "database_id": "…" }],
+	"kv_namespaces": [{ "binding": "KV", "id": "…" }],
+	"durable_objects": { "bindings": [{ "name": "RATE_LIMITER", "class_name": "RateLimiterDurableObject" }] },
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["RateLimiterDurableObject"] }],
+	"send_email": [{ "name": "MAIL" }]
+}
+```
+
+Set up the sending domain of the email binding in your Cloudflare account.
+
+### 4. Store the secrets
+
+```sh
+npx wrangler secret put AUTH_SECRET
+npx wrangler secret put AUTH_SIGNING_KEY
+npx wrangler secret put PASSWORD_PEPPER
+```
+
+Generate the values as [the tutorial](/docs/tutorial/install) explains.
+
+### 5. Write the worker
+
+```ts title="src/worker.ts"
+import { type AuthDance, cloudflareAddress, createAuthDance, sequence } from "auth-dance";
+import { EmailAuthDanceComponent } from "auth-dance/components/email";
+import { OtpAuthDanceComponent } from "auth-dance/components/otp";
+import { PasswordAuthDanceComponent } from "auth-dance/components/password";
+import {
+	CloudflareSendMailAuthDanceChannel,
+	createAuthDanceCloudflareStorage,
+	RateLimiterDurableObject,
+} from "auth-dance/providers/cloudflare";
+
+// Workers needs the Durable Object class among the exports of the worker.
+export { RateLimiterDurableObject };
+
+interface Env {
+	DB: D1Database;
+	KV: KVNamespace;
+	RATE_LIMITER: DurableObjectNamespace<RateLimiterDurableObject>;
+	MAIL: SendEmail;
+	AUTH_SECRET: string;
+	AUTH_SIGNING_KEY: string;
+	PASSWORD_PEPPER: string;
+}
+
+let auth: AuthDance | undefined;
+
+function getAuth(env: Env): AuthDance {
+	auth ??= createAuthDance({
+		api: {
+			choreography: sequence("email", "password"),
+			components: {
+				email: new EmailAuthDanceComponent({ channel: "email", challenge: "otp" }),
+				otp: new OtpAuthDanceComponent({ channel: "email" }),
+				password: new PasswordAuthDanceComponent(env.PASSWORD_PEPPER),
+			},
+			channels: { email: new CloudflareSendMailAuthDanceChannel(env.MAIL, { from: "auth@example.com" }) },
+			secret: env.AUTH_SECRET,
+			keys: [JSON.parse(env.AUTH_SIGNING_KEY)],
+			tokens: { issuer: "https://auth.example.com" },
+			storage: createAuthDanceCloudflareStorage(env.KV, env.DB, env.RATE_LIMITER),
+		},
+		// Cloudflare sets cf-connecting-ip and drops a value the client sends.
+		app: { address: cloudflareAddress },
+	});
+	return auth;
+}
+
+export default {
+	fetch: (request, env) => getAuth(env).fetch(request),
+} satisfies ExportedHandler<Env>;
+```
+
+The worker builds the instance on the first request, and keeps it for the life of the isolate.
+
+### 6. Deploy
+
+```sh
+npx wrangler deploy
+```
+
+### What you should see
+
+`GET /.well-known/jwks.json` on the worker answers the public key set. `POST /sign-in` answers the first prompt. The email channel sends the one-time code of a sign-up to the email address the owner typed.
+
+## Consistency of Workers KV
+
+> **Note:** Workers KV is eventually consistent across locations, for up to about 60 seconds. A deleted session, after a sign-out, a reset or a revocation, reaches the other locations with that delay, so a refresh token of the session can still work there for that long. An access token needs no read and stays valid until `exp` anyway. A strongly consistent store, a Durable Object for example, closes the window.
+
+To use another store for one part, build `AuthDanceStorage` yourself:
+
+```ts
+import { AuthDanceStorage } from "auth-dance";
+import { CloudflareD1IdentityProvider, CloudflareRateLimiterProvider } from "auth-dance/providers/cloudflare";
+
+const storage = new AuthDanceStorage({
+	identity: new CloudflareD1IdentityProvider(env.DB),
+	kv: myStronglyConsistentKvProvider,
+	rate_limiter: new CloudflareRateLimiterProvider(env.RATE_LIMITER),
+});
+```
+
+`myStronglyConsistentKvProvider` stands for your own `AuthDanceKvProvider`. See the [providers reference](/docs/reference/providers) for the interface.
+
+## The OAuth 2.0 client store
+
+The authorization server keeps its clients in the `oauth2_client` table of the same D1 database:
+
+```ts
+import { createAuthDanceCloudflareOauth2ClientStorage } from "auth-dance/providers/cloudflare";
+
+const clients = createAuthDanceCloudflareOauth2ClientStorage(env.DB);
+```
+
+Pass `clients` to `createAuthDanceOauth2`. See [OAuth 2.0 authorization server](/docs/guides/oauth2-server).

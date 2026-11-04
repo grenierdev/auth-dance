@@ -1,0 +1,149 @@
+---
+title: auth-dance/client
+description: AuthDanceClient, its options and methods, the dance object every flow hands out, the stores and the client errors.
+order: 3
+---
+
+```ts
+import { AuthDanceClient } from "auth-dance/client";
+```
+
+This module calls the routes of the server. It imports no HTTP layer, so it runs in a browser. It also re-exports the types of the shapes the routes answer with: `AuthDancePrompt`, `AuthDancePromptInput`, `AuthDancePromptChoice`, `AuthDanceResponse`, `AuthDanceResponseResult`, `AuthDanceResponseSessions`, `AuthDanceResponseState`, `AuthDanceResponseTokens`, `AuthDanceSession` and the public identity component types.
+
+## AuthDanceClientOptions
+
+| Option        | Type                                                  | Default             | Description |
+| ------------- | ----------------------------------------------------- | ------------------- | ----------- |
+| `baseUrl`     | `string \| URL`                                       | Required            | What every route path hangs off, for example `https://auth.example.com` or `/auth`. A trailing slash goes away. |
+| `fetch`       | `(request: Request) => Response \| Promise<Response>` | `globalThis.fetch`  | What carries a request. Pass the `fetch` of an `AuthDance` instance to dance in process. |
+| `tokens`      | `AuthDanceResponseTokens`                             | None                | The tokens of a session the client already holds. |
+| `store`       | `AuthDanceTokenStore`                                 | Memory only         | Where the tokens live between two page loads. |
+| `locale`      | `string`                                              | `"en"`              | The language of every message. It travels as `accept-language`. |
+| `headers`     | `Record<string, string>`                              | None                | Extra headers on every request. They win over the headers the client writes, `authorization` excepted. |
+| `refreshSkew` | `number`                                              | `10`                | Seconds an access token must still be valid for the client to use it. Under this, the client exchanges the refresh token first. |
+
+## AuthDanceClient
+
+The constructor calls nothing. The client reads its store on the first call that needs the tokens.
+
+### Session state
+
+| Member                      | Description |
+| --------------------------- | ----------- |
+| `credentials`               | The whole answer of the last sign-in, sign-up or exchange: `{ tokens, session, identity }`, or `undefined`. |
+| `tokens`                    | The tokens of the session, or `undefined`. |
+| `session`                   | The session record, or `undefined`. |
+| `identity`                  | `{ id, data }`: who the tokens belong to, with the claims of the scopes. |
+| `onTokensChange(handler)`   | Calls `handler` each time the tokens change, with `undefined` once the client drops them. Returns a `Disposable`. |
+| `restore()`                 | Reads the store one time. Every call that needs the tokens awaits it first. |
+| `setTokens(tokens)`         | Takes a set of tokens as the session of the client, and writes them to the store. |
+| `clearTokens()`             | Drops the tokens and the store entry. It calls no route, so the session stays open on the server. |
+
+### Flows
+
+Each method starts a flow and returns an `AuthDanceClientChoreography` on its first prompt. Each takes an optional last argument `{ store?, signal? }`.
+
+| Method                     | Session | Description |
+| -------------------------- | ------- | ----------- |
+| `signIn(options?)`         | No      | Starts an authentication. |
+| `signUp(options?)`         | No      | Starts a registration. |
+| `recover(name, options?)`  | No      | Starts the recovery of the component `name`. |
+| `enroll(name, options?)`   | Yes     | Starts the enrollment of the component `name`. |
+| `unenroll(name, options?)` | Yes     | Starts the removal of the component `name`. Ends on a confirmation. |
+| `rotate(name, options?)`   | Yes     | Starts the replacement of the component `name`. |
+| `subscribe(name, options?)`| Yes     | Starts the subscription of the channel `name`. |
+| `unsubscribe(name, options?)` | Yes  | Starts the removal of the channel `name`. Ends on a confirmation. |
+| `delete(options?)`         | Yes     | Starts the deletion of the identity. Ends on a confirmation. |
+| `resume(store)`            | —       | Rebuilds the dance a store holds, whatever its flow, with no call. Returns `undefined` for an empty store. |
+
+A flow that needs a session also needs a recent sign-in. Past `durations.elevated`, the start raises `FreshSignInRequiredError`.
+
+### Account calls
+
+| Method                        | Description |
+| ----------------------------- | ----------- |
+| `signOut({ others?, signal? })` | Destroys the session, or every session of a dance of the identity with `others: true`, and drops the tokens. A refused call still drops the tokens. |
+| `listSessions(signal?)`       | Every session of a dance open on the identity, oldest first, with the address and user agent of each, and `current`. |
+| `listComponents(signal?)`     | Every component enrolled on the identity, without the private `data` of each one. |
+| `refreshTokens(signal?)`      | Exchanges the refresh token for a new set. Two calls at once share one exchange. |
+
+### Low-level calls
+
+| Method                                         | Description |
+| ---------------------------------------------- | ----------- |
+| `request(path, { body?, authenticated?, locale?, headers?, signal? })` | Calls one route with POST and returns the parsed body. A status other than 200 raises the class of the code the body names. |
+| `submitPrompt({ name, value, state, signal? })` | Answers a prompt. The dance calls it for you. |
+| `sendPrompt({ name, state, locale?, signal? })` | Delivers a prompt. The dance calls it for you. |
+
+## AuthDanceClientChoreography
+
+One flow in progress: the dance. It implements `Disposable`. It arms a timer on the moment the flow expires; dispose the dance, or answer a prompt, to disarm it.
+
+### Properties
+
+| Property    | Type                                | Description |
+| ----------- | ----------------------------------- | ----------- |
+| `flow`      | `AuthDanceFlow`                     | The flow that runs. |
+| `name`      | `string \| undefined`               | The component or the channel the flow acts on. |
+| `state`     | `string \| undefined`               | The encrypted state, or `undefined` once the flow is over. |
+| `prompt`    | `AuthDancePrompt \| null`           | One input or a choice. `null` once the flow is over. |
+| `current`   | `AuthDancePromptInput \| null`      | The input to answer now. `null` at a choice with no branch picked, and once the flow is over. |
+| `choices`   | `AuthDancePromptInput[]`            | The branches of a choice, or an empty array. |
+| `selected`  | `string \| undefined`               | The branch the owner picked. |
+| `trail`     | `string[]`                          | The names answered so far, oldest first. |
+| `expireAt`  | `Date \| null`                      | The moment the flow expires. An answer never moves it. |
+| `expired`   | `boolean`                           | Whether the flow expired. Start it again. |
+| `done`      | `boolean`                           | Whether the flow is over. |
+| `sendable`  | `boolean`                           | Whether `sendPrompt` has something to deliver. |
+
+### Methods
+
+| Method                                   | Description |
+| ---------------------------------------- | ----------- |
+| `submitPrompt(value, { name?, signal? })`| Answers the current input, or the branch `name`. Returns the next prompt, the tokens, or `{ success: true }`. The tokens go to the client. A completed delete drops the tokens of the client. |
+| `sendPrompt({ name?, locale?, signal? })`| Asks the server to deliver the current input over its channel. |
+| `choose(name)`                           | Picks one branch of a choice. Throws `AuthDanceClientChoreographyPromptError` for a name that is not a branch. |
+| `confirm({ signal? })`                   | Submits the boolean `true` to a confirmation. |
+| `prev()`                                 | Goes back one step. It does nothing on the first step. |
+| `restart(signal?)`                       | Starts the flow again with a fresh state. |
+| `abandon()`                              | Drops the flow. It calls no route. |
+| `onChange(handler)`                      | Calls `handler` each time the dance moves: a new step, a branch picked, an expiry, the end. Returns a `Disposable`. |
+| `toSnapshot()`                           | The snapshot of the dance, ready for `JSON.stringify`. |
+| `AuthDanceClientChoreography.start(client, flow, options?)` | Starts a flow, or resumes a snapshot of the same flow and the same name from `options.store`. The flow methods of the client call it. |
+
+`submitPrompt`, `sendPrompt` and `confirm` raise `AuthDanceClientChoreographyStateError` when the flow is over, expired, or at a choice with no branch picked.
+
+## Stores
+
+`AuthDanceTokenStore` and `AuthDanceClientChoreographyStore` each declare `get()`, `set(value)` and `delete()`. Each method may answer at once or with a promise.
+
+```ts
+function webStorageStore<T>(key: string, storage: AuthDanceWebStorage): { get(): T | null; set(value: T): void; delete(): void };
+```
+
+Builds a store over `localStorage` or `sessionStorage`. The value travels as JSON, and an entry that does not parse reads as empty. The result satisfies both store interfaces.
+
+```ts
+const tokens = webStorageStore<AuthDanceResponseTokens>("auth-dance.tokens", localStorage);
+const dance = webStorageStore<AuthDanceClientChoreographySnapshot>("auth-dance.dance", sessionStorage);
+```
+
+`AuthDanceClientChoreographySnapshot` is `{ flow, name?, steps, selected?, trail }`.
+
+## Flows table
+
+`AuthDanceFlows` maps each flow name to its route: `{ path, authenticated, argument }`. `argument` is `"none"`, `"component"` or `"channel"`. `AuthDanceFlow` is the union of its keys: `sign-in`, `sign-up`, `recover`, `enroll`, `unenroll`, `rotate`, `subscribe`, `unsubscribe` and `delete`.
+
+## Errors
+
+A failure the server reports keeps its own class, out of the `Errors` registry of `auth-dance`. See [Errors](/docs/reference/errors). The client adds:
+
+| Class                                    | When |
+| ---------------------------------------- | ---- |
+| `AuthDanceClientError`                   | The base class of the errors below. |
+| `AuthDanceResponseError`                 | A route answered a body that does not parse, or a code the registry does not hold. Carries `status` and `code`. |
+| `AuthDanceNotAuthenticatedError`         | A call needs a bearer token, and the client holds none. |
+| `AuthDanceClientChoreographyStateError`  | The dance holds no prompt to answer: it is over, it expired, or it is at a choice with no branch picked. |
+| `AuthDanceClientChoreographyPromptError` | The name given to `choose`, `sendPrompt` or `submitPrompt` is not a branch of the current step. |
+
+A start of a flow that names a component or a channel raises `TypeError` without a name.

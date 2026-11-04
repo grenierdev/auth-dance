@@ -1,0 +1,164 @@
+---
+title: A React page
+description: Build a React page that signs up, signs in and signs out against the tutorial server.
+order: 4
+---
+
+`auth-dance/react` wraps the client in a provider, starts a flow, and renders the prompt the owner answers next. This page builds a sign-in and sign-up page with Vite.
+
+Keep the server of [The server](/docs/tutorial/the-server) running on port 3000.
+
+### 1. Create the app
+
+In the `auth-tutorial` folder:
+
+```sh
+npm create vite@latest web -- --template react-ts
+cd web
+npm install
+npm install auth-dance
+```
+
+### 2. Send the routes to the server
+
+The page calls the routes under `/auth`. The Vite development server forwards them to port 3000, so the page and the routes share one host and port. Replace `vite.config.ts`:
+
+```ts title="web/vite.config.ts"
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+	plugins: [react()],
+	server: {
+		proxy: {
+			"/auth": { target: "http://localhost:3000", rewrite: (path) => path.replace(/^\/auth/, "") },
+		},
+	},
+});
+```
+
+### 3. Write the page
+
+Replace `src/App.tsx`:
+
+```tsx title="web/src/App.tsx"
+import type { AuthDanceResponseTokens } from "auth-dance/client";
+import { AuthDanceClient, webStorageStore } from "auth-dance/client";
+import type { AuthDanceFlowHandle, AuthDancePromptInput } from "auth-dance/react";
+import { AuthDanceFlowProvider, AuthDancePromptSwitch, AuthDanceProvider, useAuthDanceClient, useAuthDanceIdentity } from "auth-dance/react";
+import { useState } from "react";
+
+// One client for the whole page. The tokens survive a reload in localStorage.
+const client = new AuthDanceClient({
+	baseUrl: "/auth",
+	store: webStorageStore<AuthDanceResponseTokens>("auth-dance.tokens", localStorage),
+});
+
+// One input for any prompt. The name says which step; the type says what to collect.
+function Field({ prompt, flow }: { prompt: AuthDancePromptInput; flow: AuthDanceFlowHandle }) {
+	const [value, setValue] = useState("");
+	return (
+		<form
+			onSubmit={async (event) => {
+				event.preventDefault();
+				await flow.submitPrompt(value);
+				setValue("");
+			}}
+		>
+			<label>
+				{prompt.type === "otp" ? "Code sent to your email" : prompt.name}
+				<input
+					type={prompt.type === "password" ? "password" : "text"}
+					value={value}
+					onChange={(event) => setValue(event.target.value)}
+					disabled={flow.pending}
+				/>
+			</label>
+			{prompt.sendable ? (
+				<button type="button" onClick={() => flow.sendPrompt()} disabled={flow.pending}>
+					Send the code
+				</button>
+			) : null}
+			<button type="submit" disabled={flow.pending}>
+				Continue
+			</button>
+		</form>
+	);
+}
+
+function field(prompt: AuthDancePromptInput, flow: AuthDanceFlowHandle) {
+	return <Field prompt={prompt} flow={flow} />;
+}
+
+function Account() {
+	const client = useAuthDanceClient();
+	const identity = useAuthDanceIdentity();
+	const [flow, setFlow] = useState<"sign-in" | "sign-up">("sign-in");
+
+	if (identity) {
+		return (
+			<p>
+				Signed in as {identity.id}. <button onClick={() => client.signOut()}>Sign out</button>
+			</p>
+		);
+	}
+
+	return (
+		<>
+			<button onClick={() => setFlow("sign-in")}>Sign in</button>
+			<button onClick={() => setFlow("sign-up")}>Sign up</button>
+			<AuthDanceFlowProvider flow={flow} fallback={<p>One moment.</p>}>
+				{(handle) => (
+					<>
+						<h2>{handle.flow}</h2>
+						<AuthDancePromptSwitch prompts={{ email: field, password: field }} />
+						{handle.error ? <p role="alert">{String((handle.error as { code?: string }).code ?? handle.error)}</p> : null}
+					</>
+				)}
+			</AuthDanceFlowProvider>
+		</>
+	);
+}
+
+export default function App() {
+	return (
+		<AuthDanceProvider client={client}>
+			<Account />
+		</AuthDanceProvider>
+	);
+}
+```
+
+What the parts do:
+
+- `AuthDanceProvider` shares the client with the tree.
+- `AuthDanceFlowProvider` starts the flow when it mounts, and again when `flow` changes. It renders `fallback` while the first call is out.
+- `AuthDancePromptSwitch` picks the entry of `prompts` under the name of the current input, then under its type. The validation of the email address keeps the name `email`, so the `email` entry renders it too. `Field` reads `prompt.type` to tell the two apart.
+- `flow.submitPrompt` and `flow.sendPrompt` do not throw. A refused answer goes to `flow.error`. The library errors carry a `code`, such as `INVALID_PROMPT_VALUE`.
+- `useAuthDanceIdentity` renders again when the tokens change. A completed sign-in or sign-up gives the client its tokens, so the page shows the identity.
+- `webStorageStore` keeps the tokens in `localStorage`, so a reload stays signed in.
+
+### 4. Start the app
+
+```sh
+npm run dev
+```
+
+Open the URL Vite prints, `http://localhost:5173` by default.
+
+### 5. Sign up, then sign in
+
+1. Select **Sign up**.
+2. Type an email address and select **Continue**.
+3. Select **Send the code**. Read the code on the server console, type it, and select **Continue**.
+4. Type a password and select **Continue**.
+5. Select **Sign out**. The page shows the sign-in.
+6. Type the same email address and the same password.
+
+### What you should see
+
+After the sign-up and after the sign-in, the page shows `Signed in as id_…`. A reload keeps it. A wrong password shows `INVALID_PROMPT_VALUE`, and the field stays for another answer. **Sign out** ends the session on the server and drops the tokens.
+
+> **Note:** Behind the Vite proxy, every request reaches the server from the same address, so all of them share one per-address rate-limit bucket. That is acceptable in development. In production, read the address the way [Rate limits and proxies](/docs/guides/rate-limits) explains.
+
+You now have a working server, a command-line client and a React page. Next, read [The choreography](/docs/concepts/choreography) to see how the same declaration gives every other flow, or the [React guide](/docs/guides/react) for choices, management flows and a dance that survives a reload.

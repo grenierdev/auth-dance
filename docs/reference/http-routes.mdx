@@ -1,0 +1,82 @@
+---
+title: HTTP routes
+description: Every route of the core app and of the OAuth 2.0 app, with its method, its purpose and the token it needs.
+order: 9
+---
+
+## Core routes
+
+`createAuthDance` mounts 16 routes, under `app.basePath` when you give one. `auth.generateOpenAPISchema()` documents each one.
+
+| Method | Path                      | Purpose | Needs |
+| ------ | ------------------------- | ------- | ----- |
+| GET    | `/.well-known/jwks.json`  | The public JWK Set of the signing keys | Nothing |
+| POST   | `/sign-in`                | Start an authentication | Nothing |
+| POST   | `/sign-up`                | Start a registration | Nothing |
+| POST   | `/recover`                | Start a recovery. Body: `{ name }` | Nothing |
+| POST   | `/submit-prompt`          | Answer the current prompt of any flow. Body: `{ name, value, state }` | Nothing |
+| POST   | `/send-prompt`            | Deliver the current prompt over its channel. Body: `{ name, state, locale? }` | Nothing |
+| POST   | `/refresh-token`          | Exchange a refresh token of a dance. Body: `{ refresh_token }` | Nothing |
+| POST   | `/sign-out`               | Destroy the session, or every session of a dance with `{ others: true }` | `account` |
+| POST   | `/list-sessions`          | List every session of a dance of the identity, oldest first, with `current` | `account`, a live session |
+| POST   | `/list-components`        | List every component of the identity, without private data | `account`, a live session |
+| POST   | `/enroll`                 | Start an enrollment. Body: `{ name }` | `account`, fresh sign-in |
+| POST   | `/unenroll`               | Start the removal of a component. Body: `{ name }` | `account`, fresh sign-in |
+| POST   | `/rotate`                 | Start a rotation. Body: `{ name }` | `account`, fresh sign-in |
+| POST   | `/subscribe`              | Start the subscription of a channel. Body: `{ name }` | `account`, fresh sign-in |
+| POST   | `/unsubscribe`            | Start the removal of a channel. Body: `{ name }` | `account`, fresh sign-in |
+| POST   | `/delete`                 | Start the deletion of the identity | `account`, fresh sign-in |
+
+A route that needs `account` takes the access token in `Authorization: Bearer`. A fresh sign-in means a sign-in no older than `durations.elevated`.
+
+The start routes and `/submit-prompt` answer `{ state, prompt, expireAt }` while a step remains. `/submit-prompt` answers the tokens on the last step of a sign-in or a sign-up, and `{ success: true }` on the last step of any other flow.
+
+### Answers and errors
+
+| Status | Body | When |
+| ------ | ---- | ---- |
+| 200    | The result | Success |
+| 400    | `{ "error": "BAD_REQUEST" }` | The body is missing or does not match the schema |
+| 429    | `{ "error": "RATE_LIMITED" }` | A bucket is empty. `Retry-After` gives the wait in seconds when the adapter reports it. |
+| 500    | `{ "error": CODE }` | Any other `AuthDanceError`, with its code. Anything else answers `UNKNOWN`. |
+
+The error codes are on [Errors](/docs/reference/errors). A code never carries internal detail.
+
+The app reads the locale from the `locale` field of the body, then from the first entry of `accept-language`, then uses `en`. It reads the address with `app.address`, and the user agent from `user-agent`. Neither comes from the body.
+
+## OAuth 2.0 routes
+
+`createAuthDanceOauth2` mounts these routes under `app.basePath`, except the metadata.
+
+| Method | Path | Purpose | Needs |
+| ------ | ---- | ------- | ----- |
+| GET    | `/.well-known/oauth-authorization-server` | The RFC 8414 metadata. It sits at the root of the host, followed by the path of the issuer, whatever the `basePath`. | Nothing |
+| GET    | `/jwks.json` | The public JWK Set | Nothing |
+| GET, POST | `/authorize` | The authorization endpoint. Answers a 303. Sets no cookie. | Nothing |
+| POST   | `/token` | The token endpoint. A browser page of a public client may call it (CORS) from the scheme, host and port of one of its redirect URIs. | Client authentication, or `client_id` alone for a public client |
+| POST   | `/introspect` | RFC 7662 introspection | A confidential client |
+| POST   | `/revoke` | RFC 7009 revocation | Client authentication |
+| GET    | `/grants` | The grants of the owner, for an account page | Owner access token with `account` |
+| DELETE | `/grants/{id}` | Revoke one grant of the owner. Answers 204. | Owner access token with `account` |
+| POST   | `/register` | RFC 7591 registration. Answers 201. 404 unless `registration` opens it. | The initial access token, when `registration.authorize` is set |
+| POST   | `/device_authorization` | RFC 8628 device authorization. 404 unless `ui.device` opens it. | Client authentication, or `client_id` alone for a public client |
+| GET    | `/device` | The verification URI. Answers a 303 to `ui.device`. 404 unless `ui.device` opens it. | Nothing |
+
+With `app.admin`, the challenge API for pages in another process:
+
+| Method | Path | Calls |
+| ------ | ---- | ----- |
+| GET    | `/admin/login?login_challenge=` | `getLoginRequest` |
+| PUT    | `/admin/login/accept?login_challenge=` | `acceptLoginRequest`. Body: `{ access_token }` |
+| PUT    | `/admin/login/reject?login_challenge=` | `rejectLoginRequest`. Body: `{ error, error_description? }` |
+| GET    | `/admin/consent?consent_challenge=` | `getConsentRequest` |
+| PUT    | `/admin/consent/accept?consent_challenge=` | `acceptConsentRequest`. Body: `{ grant_scope, remember? }` |
+| PUT    | `/admin/consent/reject?consent_challenge=` | `rejectConsentRequest`. Body: `{ error, error_description? }` |
+| GET    | `/admin/device?device_challenge=` | `getDeviceRequest` |
+| PUT    | `/admin/device/accept?device_challenge=` | `acceptDeviceRequest`. Body: `{ user_code }` |
+
+`admin.authorize` decides for each request whether it may use these routes. A refusal answers 403.
+
+### Answers and errors
+
+An `AuthDanceOauth2Error` answers its `status` with `{ error, error_description }`. A 401 adds `WWW-Authenticate: Basic` when the request used Basic. An empty bucket answers 429 with `temporarily_unavailable`, and `Retry-After` when the adapter reports the wait. Anything else answers 500 with `server_error`. Every JSON answer carries `Cache-Control: no-store` and `Pragma: no-cache`.

@@ -1,0 +1,234 @@
+---
+title: auth-dance
+description: The main entry point. createAuthDance, every option of the state machine, the AuthDanceApi methods, keys, claims, storage and one-time code helpers.
+order: 1
+---
+
+```ts
+import { createAuthDance } from "auth-dance";
+```
+
+The main entry point holds `createAuthDance`, the [choreography functions](/docs/reference/choreography), `AuthDanceStorage`, the [errors](/docs/reference/errors) and every type.
+
+## createAuthDance
+
+```ts
+function createAuthDance(options: AuthDanceOptions): AuthDance;
+```
+
+Builds one instance: the state machine, the HTTP layer and the OpenAPI generator together.
+
+| Option | Type                              | Default                                   | Description                                         |
+| ------ | --------------------------------- | ----------------------------------------- | --------------------------------------------------- |
+| `api`  | `AuthDanceApiOptions`             | Required                                  | The state machine. See the table below.            |
+| `app`  | `AuthDanceAppOptions`             | Every route at the root, default resolver | The HTTP layer.                                    |
+| `info` | `OpenAPIV3_1.InfoObject`          | Title `Hono Documentation`, version `0.0.0` | The `info` block of the OpenAPI document.       |
+
+It returns an `AuthDance`:
+
+| Member                    | Description                                                                                     |
+| ------------------------- | ----------------------------------------------------------------------------------------------- |
+| `api`                     | The `AuthDanceApi`. Run every flow in process, without HTTP.                                    |
+| `app`                     | The Hono app behind `fetch`. To mount it in your own app, supply the `api` binding, and optionally `rate_limit`. |
+| `fetch(request)`          | The HTTP surface. It supplies both bindings. For example `serve({ fetch: auth.fetch })` with `@hono/node-server`. |
+| `generateOpenAPISchema()` | Builds the OpenAPI document of the routes.                                                      |
+
+It throws the error of `jose` when `api.secret` is not valid base64url, and `TypeError` for a key that `AuthDanceKeys` refuses or an issuer that is not an `https:` URL. See the constructor of `AuthDanceApi` below for the other checks.
+
+`createAuthDanceApi(options: AuthDanceApiOptions)` builds the state machine alone. `createAuthDanceApp(options?: AuthDanceAppOptions)` builds the HTTP layer alone.
+
+## AuthDanceApiOptions
+
+| Option                       | Type                                              | Default                      | Description |
+| ---------------------------- | ------------------------------------------------- | ---------------------------- | ----------- |
+| `choreography`               | `AuthDanceChoreography`                           | Required                     | The policy. Every complete path needs a step that proves control. |
+| `components`                 | `Record<string, AuthDanceComponent>`              | Required                     | What each step does, keyed by the name the choreography and the prompts use. |
+| `channels`                   | `Record<string, AuthDanceChannel>`                | Required                     | Where the library delivers a message, keyed by the channel name a component asks for. |
+| `secret`                     | `string`                                          | Required                     | The base64url key that encrypts the state of a flow. It signs nothing. |
+| `keys`                       | `JsonWebKey[]`                                    | Required                     | Private JWKs, ES256, EdDSA, RS256 or PS256. The first key signs. Every key verifies. A key after the first can hold its public part only. |
+| `storage`                    | `AuthDanceStorage`                                | Required                     | Where identities, sessions, one-time codes and rate-limit counters live. |
+| `tokens.issuer`              | `string`                                          | Required                     | The `iss` of every token, and the `client_id` and default `aud` of the tokens of a dance. An `https:` URL with no query and no fragment. `http:` passes for `localhost`, `127.0.0.1` and `[::1]`. |
+| `tokens.scopes`              | `Record<string, AuthDanceScope>`                  | `account` only               | The scopes the server knows. Each name is an RFC 6749 scope token. `account` always exists. |
+| `tokens.claims`              | `AuthDanceClaimsMapper`                           | The `claims` of each scope   | Maps the scopes of a token to its claims. |
+| `recovery`                   | `Record<string, AuthDanceChoreography \| false>`  | The derived rule for each component | `false` makes a component not recoverable. A choreography replaces its derived recovery. |
+| `durations.sign_in`          | `number`                                          | `300`                        | Seconds a sign-in state stays valid. |
+| `durations.sign_up`          | `number`                                          | `300`                        | Seconds a sign-up state stays valid. |
+| `durations.enroll`           | `number`                                          | `300`                        | Seconds an enroll state stays valid. |
+| `durations.unenroll`         | `number`                                          | `300`                        | Seconds an unenroll confirmation stays valid. |
+| `durations.rotate`           | `number`                                          | `300`                        | Seconds a rotate state stays valid, across both validation rounds. |
+| `durations.recover`          | `number`                                          | `300`                        | Seconds a recover state stays valid, across the whole reset. |
+| `durations.subscribe`        | `number`                                          | `300`                        | Seconds a subscribe state stays valid. |
+| `durations.unsubscribe`      | `number`                                          | `300`                        | Seconds an unsubscribe confirmation stays valid. |
+| `durations.delete`           | `number`                                          | `300`                        | Seconds a delete confirmation stays valid. |
+| `durations.access`           | `number`                                          | `300`                        | Seconds an access token stays valid, for a dance and for every OAuth 2.0 client. |
+| `durations.refresh`          | `number`                                          | `86400`                      | Seconds a session lasts from its sign-in, and a grant from its consent. A refresh never extends it. |
+| `durations.elevated`         | `number`                                          | `300`                        | Seconds after a sign-in in which a session may run `enroll`, `unenroll`, `rotate`, `subscribe`, `unsubscribe` and `delete`. |
+| `limits.identity.verify`     | `AuthDanceRateLimit`                              | `{ limit: 10, window: 300 }` | Each answer to a prompt or a validation. |
+| `limits.identity.send`       | `AuthDanceRateLimit`                              | `{ limit: 5, window: 300 }`  | Each prompt or validation delivered over a channel. |
+| `limits.identity.manage`     | `AuthDanceRateLimit`                              | `{ limit: 20, window: 300 }` | Each start of a management flow, and each sign-out. |
+| `limits.identity.refresh`    | `AuthDanceRateLimit`                              | `{ limit: 60, window: 300 }` | Each exchange of a refresh token. |
+| `limits.identity.recipient`  | `AuthDanceRateLimit`                              | `{ limit: 5, window: 900 }`  | Each message to one recipient, whatever the flow, the state or the identity. |
+| `limits.address.request`     | `AuthDanceRateLimit`                              | `{ limit: 300, window: 60 }` | Every HTTP request, per address. |
+| `limits.address.send`        | `AuthDanceRateLimit`                              | `{ limit: 60, window: 60 }`  | Each request to `/send-prompt`, per address, on top of `request`. |
+| `hooks`                      | `AuthDanceApiHooks`                               | No listener                  | Listeners for changes to identities and sessions. |
+| `revokeSessionsOnReset`      | `boolean`                                         | `true`                       | Whether a completed rotate or recover deletes the other sessions of the identity, the OAuth 2.0 grants included. |
+
+`AuthDanceRateLimit` is `{ limit: number; window: number }`: `limit` hits in each `window` seconds. `IdentityRateLimits` exports the defaults of `limits.identity`.
+
+## AuthDanceAppOptions
+
+| Option     | Type                                         | Default                                                  | Description |
+| ---------- | -------------------------------------------- | -------------------------------------------------------- | ----------- |
+| `basePath` | `string`                                     | Every route at the root                                  | A prefix for every route, for example `/auth`. |
+| `address`  | `(c: Context) => string \| undefined`        | `cf-connecting-ip`, then the last entry of `x-forwarded-for` | Reads the address of a request. The per-address buckets key on it, and a session records it. |
+
+### Address resolvers
+
+| Function                 | Description |
+| ------------------------ | ----------- |
+| `cloudflareAddress(c)`   | Reads `cf-connecting-ip`. Use it only behind Cloudflare. |
+| `forwardedAddress(hops)` | Returns a resolver that reads the entry of `x-forwarded-for` that is `hops` positions from the right. `hops` defaults to `1`. It throws `RangeError` when `hops` is not a positive integer. |
+
+See [Rate limits and proxies](/docs/guides/rate-limits).
+
+## AuthDanceApi
+
+The state machine. Every flow method returns an `AuthDanceResponseState`: `{ state, prompt, expireAt }`. Each method raises an `AuthDanceError` for a failure the application can act on, and wraps any other failure in `AuthDanceUnknownError`, with the original in `cause`.
+
+The constructor raises `TypeError` for a refused key, a bad issuer or a scope name that is not a scope token, `UnknownComponentError` for a step that `components` does not declare, and `InvalidChoreographyError` for a path with no step that proves control or a bad `recovery` entry.
+
+### Flows
+
+| Method                                   | Description |
+| ---------------------------------------- | ----------- |
+| `signIn()`                               | Starts an authentication. |
+| `signUp()`                               | Starts a registration. The state carries the new identity id. |
+| `recover({ name })`                      | Starts the recovery of one component. Needs no access token. |
+| `enroll({ name, access_token })`         | Starts the enrollment of a new component. |
+| `unenroll({ name, access_token })`       | Starts the removal of a component, behind a confirmation. |
+| `rotate({ name, access_token })`         | Starts the replacement of an enrolled component. |
+| `subscribe({ name, access_token })`      | Starts the subscription of a channel. |
+| `unsubscribe({ name, access_token })`    | Starts the removal of a channel, behind a confirmation. |
+| `delete({ access_token })`               | Starts the deletion of the identity, behind a confirmation. |
+| `submitPrompt({ name, value, state, address?, userAgent? })` | Answers the current prompt of any flow. Returns the next state and prompt, the tokens of a completed sign-in or sign-up, or `{ success: true }`. The session records `address` and `userAgent`. |
+| `sendPrompt({ name, locale, state })`    | Delivers the current prompt or validation over its channel. Returns `{ success: true }`. |
+
+### Tokens and sessions
+
+| Method                                              | Description |
+| --------------------------------------------------- | ----------- |
+| `verifyAccessToken(token, { audience?, scope?, session? })` | Verifies an access token of this issuer and returns an `AuthDanceToken`. Reads no storage unless `session` is `true`. |
+| `refreshToken(refresh_token, { client_id?, scope?, audience? })` | Exchanges a refresh token for a new pair on the same session. |
+| `signOut(access_token, others?)`                    | Destroys the session of the token, or with `others: true` every session of a dance of the identity. Needs `account`. |
+| `mintTokens(options)`                               | Mints the tokens of one session, or of a client that acts for itself. The OAuth 2.0 module mints through it. |
+| `jwks()`                                            | The public JWK Set of `keys`. |
+| `sendMessageTo(identityId, channel, message)`       | Sends a message to one identity over a channel it subscribes to. |
+| `sendMessage(message)`                              | Sends a message that already names its recipient. |
+
+### Properties
+
+| Property          | Description |
+| ----------------- | ----------- |
+| `storage`         | The `AuthDanceStorage` of the instance. |
+| `keys`            | The `AuthDanceKeys` built from `keys`. |
+| `issuer`          | `tokens.issuer` as given. |
+| `clientId`        | The `client_id` of the tokens of a dance: the issuer. |
+| `sessionDuration` | `durations.refresh`, in seconds. |
+| `scopes`          | Every scope the server knows, `account` included. |
+
+### AuthDanceToken
+
+What `verifyAccessToken` returns: `subject` (the `sub`), `client_id`, `scope` (an array), `session_id` (the `sid`, absent for client credentials), `auth_time` (absent for client credentials), and `claims`, every claim of the token. `readToken(payload)` builds one from a verified payload, and returns `undefined` for a payload of the wrong shape. `ACCESS_TOKEN_TYPE` is `"at+jwt"` and `REFRESH_TOKEN_TYPE` is `"rt+jwt"`.
+
+## AuthDanceApiHooks
+
+| Hook                 | Event                                    | When |
+| -------------------- | ---------------------------------------- | ---- |
+| `onIdentityCreated`  | `{ flow: "sign-up", identity }`          | A sign-up saved a new identity. |
+| `onIdentityUpdated`  | `{ flow, identity, name }`               | Enroll, unenroll, rotate, recover, subscribe or unsubscribe changed an identity. |
+| `onIdentityDeleted`  | `{ flow: "delete", identity }`           | A delete removed an identity. |
+| `onSessionCreated`   | `{ flow, session, identity }`            | A sign-in or a sign-up minted a session. |
+| `onSessionRefreshed` | `{ flow: "refresh", session, identity }` | A refresh minted new tokens on a session. |
+| `onSessionDeleted`   | `{ flow, session, identity }`            | A sign-out, a delete, a rotate or a recover deleted a session. |
+| `onError`            | `{ hook, cause }`                        | Another hook rejected. |
+
+The library calls a hook after the write and awaits it. A hook that rejects never fails the flow. Session events carry no token.
+
+## Keys
+
+| Export                          | Description |
+| ------------------------------- | ----------- |
+| `generateSigningKey(alg?)`      | Generates a private JWK with `alg` and `use: "sig"`. `alg` is `"ES256"` (default) or `"EdDSA"`. The `kid` is the RFC 7638 thumbprint. |
+| `AuthDanceKeys`                 | The keys that sign and verify. `new AuthDanceKeys(jwks)` checks the shapes and imports nothing. `AuthDanceKeys.fromJwks(jwks)` imports every key at once. Methods: `sign(payload, { typ? })`, `verify(token, options)`, `jwks()`. |
+| `AuthDanceSigningKey`           | `{ jwk: JsonWebKey & { kid: string; alg: string } }`. |
+
+## Scopes and claims
+
+| Export                 | Description |
+| ---------------------- | ----------- |
+| `ACCOUNT_SCOPE`        | `"account"`, the scope that opens the management routes. |
+| `AccountScope`         | The default `AuthDanceScope` of `account`. |
+| `AuthDanceScope`       | `{ description: string \| Record<string, string>; claims?: string[] }`. |
+| `AuthDanceClaimsMapper`| `(context: AuthDanceClaimsContext) => Record<string, Record<string, AuthDanceClaimJson>>`, or a promise of it. |
+| `AuthDanceClaimsContext` | `client_id`, `identity`, `subject`, `scopes`, `session_id`, `grant_type`, `target` (`"access_token"`) and `defaults`. |
+| `RESERVED_CLAIMS`      | The claims a mapper cannot give: `iss`, `sub`, `aud`, `exp`, `nbf`, `iat`, `jti`, `client_id`, `scope`, `auth_time`, `sid`, `typ`. |
+| `isScopeToken(value)`  | Whether a value is an RFC 6749 §3.3 scope token. |
+| `defaultClaims(identity, scopes, known)` | The default mapping. |
+| `resolveClaims(context, known, mapper?)` | Computes the claims of one access token. Throws `ClaimsMapperError`. |
+
+## AuthDanceStorage
+
+```ts
+new AuthDanceStorage({ identity, kv, rate_limiter });
+```
+
+The three adapters are `AuthDanceIdentityProvider`, `AuthDanceKvProvider` and `AuthDanceRateLimiterProvider`. See [Providers](/docs/reference/providers) for the interfaces and the shipped adapters.
+
+| Method                                        | Description |
+| --------------------------------------------- | ----------- |
+| `createIdentity(data?, components?)`          | Creates and saves an identity with a fresh `id_` id. |
+| `getIdentity(id)`                             | Reads one identity, or `undefined`. |
+| `getIdentityByIdentification(component, value)` | Finds the identity that holds one identification. |
+| `listIdentities(cursor?, limit?)`             | Lists identities. The adapter decides the pagination. |
+| `setIdentity(identity)`                       | Writes a whole identity. |
+| `deleteIdentity(id)`                          | Deletes one identity. It does not delete its sessions. |
+| `createSession(options)`                      | Creates a session with a fresh `ses_` id, under `session/<id>` and `sessions/<identityId>/<id>`. |
+| `getSession(id)`, `deleteSession(id)`, `listSession(identityId)` | Read, delete and list sessions. |
+| `getKv`, `setKv`, `listKv`, `unsetKv`         | Raw key-value access. |
+| `consumeRateLimit(key, limit, window)`        | Counts one hit of a bucket. |
+
+## Channels and messages
+
+`AuthDanceChannel` is where the library delivers a message. It declares `sendMessage(message)`, `getPrompt(context)` for the recipient prompt of a `subscribe`, and `getIdentityChannel(channel, value, confirmed)`, which turns a recipient into a channel record. `AuthDanceMessage` is `{ recipient, subject, content }`, where `content` maps a media type to a body. The one-time code component puts the bare code under `text/x-code`.
+
+## Component interface
+
+`AuthDanceComponent` and `AuthDanceComponentContext` define a step. See [Write a custom component](/docs/guides/custom-component).
+
+## One-time code helpers
+
+| Export                        | Description |
+| ----------------------------- | ----------- |
+| `otp({ digits? })`            | A random code from `crypto.getRandomValues`. `digits` defaults to `6`. |
+| `hotp({ key, counter, algorithm?, digits? })` | An RFC 4226 counter-based code. |
+| `totp({ key, time?, period?, algorithm?, digits? })` | An RFC 6238 time-based code. `period` defaults to `60` here. Pass `30` to match `toURI` and `TotpAuthDanceComponent`. |
+| `generateKey(length?, alphabet?)` | A random base32 key. `length` defaults to `32`. |
+| `toURI(options)`              | Builds the `otpauth://` URI an authenticator app reads. For `type: "totp"`, `period` defaults to `30`. |
+| `OTPAlgorithm`                | `"SHA-1" \| "SHA-256" \| "SHA-384" \| "SHA-512"`. |
+
+The module also exports the type guards `isOTPAlgorithm`, `isHOTPOptions`, `isTOTPOptions`, `isOTPOptions`, their `assert…` forms, and their error classes.
+
+## Data types
+
+Each type below also exists as a valibot schema of the same name, for runtime parsing.
+
+| Type | Description |
+| ---- | ----------- |
+| `AuthDanceIdentity` | `{ id, data?, components }`. |
+| `AuthDanceIdentityComponent` | An identification, a challenge or a channel record, with its private `data`. The `…Public` forms drop `data`. |
+| `AuthDancePrompt` | `AuthDancePromptInput` or `AuthDancePromptChoice`. |
+| `AuthDanceSession` | `{ id, identityId, client_id, scopes, expireAt, address?, userAgent? }`. |
+| `AuthDanceResponse` | `AuthDanceResponseState`, `AuthDanceResponseTokens` or `AuthDanceResponseResult`. |
+| `AuthDanceTokenResponse` | The RFC 6749 §5.1 token response. |
+| `AuthDanceResponseSessions`, `AuthDanceResponseComponents` | The bodies of `/list-sessions` and `/list-components`. |
+| `AuthDanceState` | The decrypted state of each flow. A client never reads it. |

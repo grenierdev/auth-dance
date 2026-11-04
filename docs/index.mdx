@@ -1,0 +1,43 @@
+---
+title: Introduction
+description: Auth Dance is an authentication library for TypeScript. You declare the steps one time, and it derives every flow from them.
+order: 0
+---
+
+## The idea
+
+Everybody already does the dance. Type your email, wait for the code, paste the code, type your password. You did those steps a thousand times and never called them a routine.
+
+Auth Dance records the choreography.
+
+```ts
+choreography: choice(sequence("email", "password"), "passkey");
+```
+
+That is a complete authentication policy. The library derives sign-in, sign-up and account recovery from it, and it checks every removal of a component against it. Enrollment, credential rotation, channel subscription and deletion act on the same components. You declare the steps one time.
+
+## What you get
+
+- A server. `createAuthDance(options)` returns an HTTP handler, a Hono app, the state machine without HTTP, and an OpenAPI document of the routes.
+- A client. `auth-dance/client` runs each flow as a loop of prompts until the server answers with tokens or with a success result. It runs in a browser, in Node.js, or in the same process as the server.
+- React bindings. `auth-dance/react` starts a flow and renders its prompts.
+- An OAuth 2.0 authorization server. `auth-dance/oauth2` lets third-party apps sign in the owner with the same dance, through login and consent pages that you host.
+- Batteries. Components for email, one-time codes, passwords, TOTP, passkeys, policy acceptance, OAuth 2.0 and OpenID Connect providers. Storage providers for memory and for Cloudflare.
+
+The access tokens are RFC 9068 JWTs, signed with an asymmetric key. Another service checks them against the public key set and needs no secret.
+
+## Two rules to know first
+
+- Every complete path of the choreography needs a step that proves control: a challenge such as a password or a one-time code, or an identification that checks a secret, such as a passkey. An email address alone proves nothing, so `choice("email", "passkey")` fails at startup.
+- To recover one component, the owner signs in by a path without it. A component that no path can do without is not recoverable.
+
+## Where to go next
+
+| You want to                                   | Read                                                          |
+| --------------------------------------------- | ------------------------------------------------------------- |
+| Get a working server and client, step by step | [Tutorial](/docs/tutorial/install)                            |
+| Understand how one declaration gives every flow | [The choreography](/docs/concepts/choreography)             |
+| Solve one task                                | [Guides](/docs/guides/react)                                  |
+| Look up an option, a method or a route        | [Reference](/docs/reference/auth-dance)                       |
+
+Auth Dance needs Node.js 24.4 or newer. The core uses web APIs, so it also runs on Cloudflare Workers. The version is 0.1.0, a release candidate. A live demo runs at [demo.auth.dance](https://demo.auth.dance).

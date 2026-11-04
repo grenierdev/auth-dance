@@ -1,0 +1,135 @@
+---
+title: React bindings
+description: Start a flow, render its prompts and choices, run management flows, and keep a dance across a reload with auth-dance/react.
+order: 1
+---
+
+`auth-dance/react` reads the client and the dance of `auth-dance/client`, and renders again each time either one changes. It keeps no state of its own. It needs React 19.
+
+## Share the client
+
+Build one client, and put it above the tree:
+
+```tsx
+import type { AuthDanceResponseTokens } from "auth-dance/client";
+import { AuthDanceClient, webStorageStore } from "auth-dance/client";
+import { AuthDanceProvider } from "auth-dance/react";
+
+const client = new AuthDanceClient({
+	baseUrl: "/auth",
+	store: webStorageStore<AuthDanceResponseTokens>("auth-dance.tokens", localStorage),
+});
+
+export function Root() {
+	return (
+		<AuthDanceProvider client={client}>
+			<App />
+		</AuthDanceProvider>
+	);
+}
+```
+
+Every hook reads that client. Each hook also takes a client of its own as an argument, over the one of the tree.
+
+## Read the session
+
+```tsx
+import { useAuthDanceIdentity, useAuthDanceSession, useAuthDanceTokens } from "auth-dance/react";
+
+function Who() {
+	const identity = useAuthDanceIdentity();
+	return identity ? <p>Signed in as {identity.id}</p> : <p>Signed out</p>;
+}
+```
+
+`useAuthDanceTokens` returns the whole answer of the last sign-in, sign-up or refresh. `useAuthDanceIdentity` and `useAuthDanceSession` return one part of it. The first render answers with what the client holds in memory. The client then reads its store, and the hook renders again with what the store held.
+
+## Run a flow
+
+`AuthDanceFlowProvider` starts a flow and shares it with the tree. `AuthDancePromptSwitch` renders the current prompt:
+
+```tsx
+<AuthDanceFlowProvider flow="sign-in" fallback={<p>One moment.</p>}>
+	<AuthDancePromptSwitch
+		prompts={{
+			email: (prompt, flow) => <EmailField prompt={prompt} onSubmit={flow.submitPrompt} />,
+			password: (prompt, flow) => <PasswordField onSubmit={flow.submitPrompt} />,
+		}}
+	/>
+</AuthDanceFlowProvider>
+```
+
+`AuthDancePromptSwitch` looks up the entry under the `name` of the current input first, then under its `type`. One entry under `otp` therefore covers every one-time code that has no entry of its own name. A validation keeps the name of the step it proves, so an entry under that name also renders the validation. Read `prompt.type` in the entry to tell them apart.
+
+`useAuthDanceFlow` does the same without a provider, and returns the handle:
+
+```tsx
+const flow = useAuthDanceFlow({ flow: "rotate", name: "password" });
+```
+
+The hook starts the flow when the node mounts, and again when `flow` or `name` changes. Set `enabled: false` to hold the flow back. `onDone` runs when an answer ends the flow, with that answer. `onError` runs for each refused action.
+
+## The flow handle
+
+| Member                                  | What it is                                                               |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| `prompt`, `current`, `choices`, `selected` | The prompt, the input to answer now, the branches of a choice, the branch picked |
+| `trail`                                 | The names answered so far                                                |
+| `sendable`                              | `true` when `sendPrompt` has something to deliver                        |
+| `pending`                               | `true` while a call is out                                               |
+| `error`                                 | The failure of the last refused action                                   |
+| `expired`, `done`                       | The state expired; the flow is over                                      |
+| `choose`, `sendPrompt`, `submitPrompt`, `confirm` | The actions that move the dance                                |
+| `prev`, `restart`, `abandon`, `clearError` | Go back, start again, drop the flow, drop the error                   |
+
+> **Note:** The actions never throw. A refused action keeps its failure under `error` and resolves with nothing. Render `error`, and read its `code`, such as `INVALID_PROMPT_VALUE` or `RATE_LIMITED`.
+
+## Render a choice
+
+```tsx
+<AuthDancePromptSwitch
+	choice={(choices, flow) => choices.map((branch) => (
+		<button key={branch.name} onClick={() => flow.choose(branch.name)}>{branch.name}</button>
+	))}
+	prompts={{ email: renderField, password: renderField, passkey: renderPasskey }}
+	fallback={(prompt, flow) => (flow.done ? <p>Done.</p> : null)}
+/>
+```
+
+`choice` renders until the owner picks a branch. From then on, the entry of that branch renders. `fallback` renders when nothing else matches, the end of the flow included.
+
+## Management flows
+
+The flows that change an account need a session with a recent sign-in. Name the component or the channel:
+
+```tsx
+function RemovePasskey() {
+	const flow = useAuthDanceFlow({ flow: "unenroll", name: "passkey", onDone: () => alert("Removed") });
+	if (flow.current?.type !== "confirmation") return null;
+	return <button onClick={() => flow.confirm()} disabled={flow.pending}>Remove the passkey</button>;
+}
+```
+
+Past `durations.elevated`, the start fails with `FRESH_SIGN_IN_REQUIRED`. Ask the owner to sign in again, then call `flow.restart()`.
+
+## Keep a dance across a reload
+
+Pass a store. The hook reads it when the flow starts, and the dance writes a snapshot on every change:
+
+```tsx
+import { webStorageStore, type AuthDanceClientChoreographySnapshot } from "auth-dance/client";
+
+const danceStore = webStorageStore<AuthDanceClientChoreographySnapshot>("auth-dance.dance", sessionStorage);
+
+<AuthDanceFlowProvider flow="sign-up" store={danceStore}>
+	…
+</AuthDanceFlowProvider>;
+```
+
+When the node unmounts, the hook disposes the dance and keeps the snapshot, so the same node picks the flow back up on the step it left.
+
+## Read the flow lower in the tree
+
+`useAuthDanceFlowContext()` returns the handle of the nearest `AuthDanceFlowProvider`, and throws a `TypeError` without one. `useOptionalAuthDanceFlowContext()` and `useOptionalAuthDanceClient()` return nothing instead of throwing.
+
+See the [React reference](/docs/reference/react) for every prop and type.

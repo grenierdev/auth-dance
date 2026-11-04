@@ -1,0 +1,89 @@
+---
+title: Tokens and sessions
+description: What a completed dance mints, how long each token lasts, how to check one, and what ends a session.
+order: 4
+---
+
+## A session and two tokens
+
+A completed sign-in or sign-up creates a session and mints two tokens on it. A refresh and every OAuth 2.0 grant mint the same two tokens.
+
+- The **access token** is an RFC 9068 JWT with `typ: at+jwt`. It carries the identity id as `sub`, the session as `sid`, the client as `client_id`, the scopes as `scope`, the moment of the sign-in as `auth_time`, and the claims of its scopes. A dance mints it for the issuer: `client_id` and `aud` are the issuer, and `scope` holds every scope the server knows.
+- The **refresh token** is a JWT with `typ: rt+jwt`. It stays valid until its session ends, `durations.refresh` after the sign-in. A refresh gives a new pair, and the old refresh token still works.
+
+The response follows RFC 6749 §5.1: `access_token`, `token_type`, `expires_in`, `refresh_token` and `scope`. A completed dance also returns the session record and the identity:
+
+```json
+{
+	"tokens": { "access_token": "…", "token_type": "Bearer", "expires_in": 300, "refresh_token": "…", "scope": "account profile" },
+	"session": { "id": "ses_…", "identityId": "id_…", "client_id": "https://auth.example.com", "scopes": ["account", "profile"], "expireAt": "…" },
+	"identity": { "id": "id_…", "data": {} }
+}
+```
+
+`identity.data` holds the claims of the scopes, the same claims the access token carries.
+
+## Lifetimes
+
+| Option               | Default | What it sets                                                             |
+| -------------------- | ------- | ------------------------------------------------------------------------ |
+| `durations.access`   | 300     | Seconds an access token stays valid                                      |
+| `durations.refresh`  | 86400   | Seconds a session lasts from its sign-in. A refresh never extends it.    |
+| `durations.elevated` | 300     | Seconds after a sign-in in which a session may run a sensitive flow      |
+
+## Signing keys
+
+The server signs every token with an asymmetric key: ES256, EdDSA, RS256 or PS256. `keys` is a list. The first key signs, and every key verifies. `GET /.well-known/jwks.json` serves the public part of each key, so another service checks a token with no secret. See [Rotate the signing keys](/docs/guides/key-rotation).
+
+The `secret` option is a separate key. It encrypts the state of each flow, and it signs nothing.
+
+## Scopes and claims
+
+`tokens.scopes` declares the scopes the server knows. Each scope has a description for the consent page and, optionally, the keys of `identity.data` it discloses as claims:
+
+```ts
+tokens: {
+	issuer: "https://auth.example.com",
+	scopes: { profile: { description: "Your name", claims: ["name"] } },
+},
+```
+
+`account` always exists. It opens the management routes, from `/sign-out` to `/delete`. A dance grants every scope, `account` included. A client of the authorization server holds `account` only when it asks for it and the owner consents.
+
+`tokens.claims` replaces the default mapping with a function. It gets the context of the token, with the default claims under `defaults`, and returns the claims of each scope, keyed by scope:
+
+```ts
+claims: ({ identity, defaults }) => {
+	const email = identity?.components.find((c) => c.kind === "identification" && c.component === "email");
+	return email?.kind === "identification" ? { ...defaults, profile: { email: email.identification } } : defaults;
+},
+```
+
+The library raises `ClaimsMapperError` when the mapper throws, when two scopes give one claim two values, when a claim has a reserved name such as `iss` or `sub`, or when a value is not JSON.
+
+## Checking an access token
+
+Verify the token against the JWK Set, or call `auth.api.verifyAccessToken(token)` in process. Neither one reads storage.
+
+```ts
+const token = await auth.api.verifyAccessToken(access_token, { scope: "profile" });
+console.log(token.subject, token.session_id, token.scope);
+```
+
+> **Note:** A check that reads no storage accepts the token until `exp`, after a sign-out too. Pass `{ session: true }` where that window matters: the call then reads the session and refuses a token whose session ended. Or lower `durations.access`.
+
+## What ends a session
+
+A refresh reads the session, so each of these stops the refresh token at once:
+
+- A sign-out. `POST /sign-out` with `others: true` ends every session of a dance of the identity.
+- A delete of the identity.
+- A completed rotate or recover, unless `revokeSessionsOnReset` is `false`. A rotate keeps the session that ran it.
+- A revocation at the OAuth 2.0 module, for a grant.
+- The end of `durations.refresh`.
+
+A sign-out leaves the grants of the OAuth 2.0 module. A grant is a session the owner gave to a client with a consent, and it ends on its own terms. See [OAuth 2.0 authorization server](/docs/guides/oauth2-server).
+
+## The client side
+
+`AuthDanceClient` keeps the tokens of the session. Before each call that needs the access token, it checks `exp`. When less than `refreshSkew` seconds remain, 10 by default, it exchanges the refresh token first. Two calls at once share one exchange. Pass a `store` to keep the tokens across a page reload.

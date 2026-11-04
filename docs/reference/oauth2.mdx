@@ -1,0 +1,195 @@
+---
+title: auth-dance/oauth2
+description: The OAuth 2.0 authorization server. createAuthDanceOauth2, its options, the AuthDanceOauth2Api methods, the client storage and the errors.
+order: 5
+---
+
+```ts
+import { createAuthDanceOauth2 } from "auth-dance/oauth2";
+```
+
+See [OAuth 2.0 authorization server](/docs/guides/oauth2-server) and [The device grant](/docs/guides/device-grant) for the procedures.
+
+## createAuthDanceOauth2
+
+```ts
+function createAuthDanceOauth2(options: AuthDanceOauth2Options): AuthDanceOauth2;
+```
+
+| Option   | Type                         | Default                    | Description |
+| -------- | ---------------------------- | -------------------------- | ----------- |
+| `oauth2` | `AuthDanceOauth2ApiOptions`  | Required                   | The protocol logic. |
+| `app`    | `AuthDanceOauth2AppOptions`  | Routes at the root         | The HTTP layer. |
+| `info`   | `OpenAPIV3_1.InfoObject`     | The `hono-openapi` placeholder | The `info` block of the OpenAPI document. |
+
+It returns `{ oauth2, app, fetch, generateOpenAPISchema }`. `oauth2` is the `AuthDanceOauth2Api`. `app` is the Hono app; mount it with the `oauth2` binding, and optionally `rate_limit`. `fetch` supplies both bindings.
+
+`createAuthDanceOauth2Api(options)` and `createAuthDanceOauth2App(options?)` build each half alone.
+
+## AuthDanceOauth2ApiOptions
+
+| Option                        | Type | Default | Description |
+| ----------------------------- | ---- | ------- | ----------- |
+| `api`                         | `AuthDanceApi` | Required | The core state machine. It mints and verifies every token, and its storage keeps the records under `oauth2/`. |
+| `clients`                     | `AuthDanceOauth2ClientStorage` | Required | The registered clients. |
+| `issuer`                      | `string` | Required | The `iss` of every token. It must equal the issuer of `api`. |
+| `ui.login`                    | `string` | Required | The login page. The browser arrives with `?login_challenge=`. |
+| `ui.consent`                  | `string` | Required | The consent page. The browser arrives with `?consent_challenge=`. |
+| `ui.error`                    | `string` | A plain HTML page | The page for an error the server cannot send to the client, with `?error=` and `&error_description=`. |
+| `ui.device`                   | `string` | Grant closed | The device page. Opens the device grant. The browser arrives with `?device_challenge=`. |
+| `durations.challenge`         | `number` | `600` | Seconds a login or consent challenge stays valid. |
+| `durations.code`              | `number` | `60` | Seconds an authorization code stays valid. Workers KV refuses a time to live under 60 seconds. |
+| `durations.device`            | `number` | `600` | Seconds a device code and its user code stay valid. |
+| `device.verification_uri`     | `string` | The `/device` route | The URI the device shows. It must lead to `/device` with its query. |
+| `device.interval`             | `number` | `5` | Seconds the device waits between two polls. |
+| `limits.address`              | `AuthDanceOauth2AddressRateLimits` | See below | The per-address buckets of the HTTP layer. |
+| `limits.client.introspect`    | `AuthDanceRateLimit` | `{ limit: 600, window: 60 }` | Introspections per client, from any address. |
+| `registration`                | `false \| AuthDanceOauth2RegistrationOptions` | `false` | Opens `/register`. |
+| `introspection.username`      | `(identity) => string \| undefined` | No `username` | Gives the `username` of an active token. |
+| `hooks`                       | `AuthDanceOauth2Hooks` | No listener | `onGrantCreated`, `onGrantRevoked`, `onClientRegistered`, `onError`. |
+
+Each URL of `ui` is `https:`, or `http:` on `localhost`, `127.0.0.1` or `[::1]`. The lifetime of each token comes from the `durations` of `api`.
+
+### limits.address
+
+| Bucket                 | Default                         |
+| ---------------------- | ------------------------------- |
+| `request`              | `{ limit: 300, window: 60 }`    |
+| `token`                | `{ limit: 60, window: 60 }`     |
+| `client_auth`          | `{ limit: 100, window: 300 }`   |
+| `register`             | `{ limit: 10, window: 3600 }`   |
+| `introspect`           | `{ limit: 300, window: 60 }`    |
+| `revoke`               | `{ limit: 60, window: 60 }`     |
+| `device_authorization` | `{ limit: 60, window: 60 }`     |
+| `device`               | `{ limit: 30, window: 60 }`     |
+
+### AuthDanceOauth2RegistrationOptions
+
+| Option            | Type | Default | Description |
+| ----------------- | ---- | ------- | ----------- |
+| `authorize`       | `(initialAccessToken, c) => boolean \| Promise<boolean>` | Anyone can register | Checks the bearer token of a registration request. A refusal answers 401 with `invalid_token`. |
+| `policy`          | `(metadata) => metadata` | None | Rewrites or refuses the metadata. Throw an `AuthDanceOauth2Error` to refuse. |
+| `scope`           | `string[]` | Every scope but `account` | The most a registered client may ask for. |
+| `secret_lifetime` | `number` | `0` | Seconds a client secret stays valid. `0` means never. |
+
+## AuthDanceOauth2AppOptions
+
+It takes the options of the core app, `basePath` and `address`, and:
+
+| Option  | Type | Description |
+| ------- | ---- | ----------- |
+| `admin` | `{ authorize: (c: Context) => boolean \| Promise<boolean> }` | Mounts the challenge API under `/admin`, for pages in another process. A refusal answers 403. Without it, the routes do not exist. |
+
+## AuthDanceOauth2Api
+
+### Pages
+
+| Method | Description |
+| ------ | ----------- |
+| `getLoginRequest(challenge)` | Reads the request behind a login challenge: `client`, `requested_scope`, `request_url`, and `user_code` for a device. |
+| `acceptLoginRequest(challenge, { access_token })` | Accepts a login with the access token of the dance. It must hold `account`. Returns `{ redirect_to }`. |
+| `rejectLoginRequest(challenge, { error, error_description? })` | Refuses a login. The client gets the error. |
+| `getConsentRequest(challenge)` | Reads the request behind a consent challenge: `client`, `requested_scope`, `subject`, `skip`, and `user_code` for a device. |
+| `acceptConsentRequest(challenge, { grant_scope, remember? })` | Accepts a consent for some or all requested scopes. `remember` keeps the consent. |
+| `rejectConsentRequest(challenge, { error, error_description? })` | Refuses a consent. |
+| `getDeviceRequest(challenge)` | Reads a device challenge, with the `user_code` of `verification_uri_complete`. |
+| `acceptDeviceRequest(challenge, { user_code })` | Takes the user code the owner typed. Raises `InvalidUserCodeError` for a wrong code. Five wrong codes end the challenge. |
+
+### Endpoints
+
+The HTTP layer calls these methods. Call them in process to serve the protocol from your own routes.
+
+| Method | Description |
+| ------ | ----------- |
+| `authorize({ params, endpoint })` | The authorization endpoint. Returns `{ location }` for a 303. |
+| `token({ params, authorization? })` | The token endpoint: `authorization_code` with PKCE, `refresh_token`, `client_credentials`, and the device code. |
+| `deviceAuthorization({ params, authorization?, verification_uri })` | The device authorization endpoint. |
+| `startDeviceVerification({ params, endpoint, verification_uri })` | The verification URI. Returns `{ location }`. |
+| `introspect(caller, token, hint?)` | RFC 7662. A client sees its own tokens. A client with `introspect: true` sees every token. |
+| `revoke(caller, token, hint?)` | RFC 7009. Ends the whole session of the token. |
+| `metadata(endpoint)` | The RFC 8414 metadata for routes under `endpoint`. |
+| `jwks()` | The public JWK Set. |
+
+### Grants and clients
+
+| Method | Description |
+| ------ | ----------- |
+| `listOwnGrants(access_token)` | The grants of the owner of the token, oldest first. Needs `account`. |
+| `revokeOwnGrant(access_token, grantId)` | Revokes one grant of the owner and forgets the kept consent. Needs `account`. |
+| `listGrants(identityId)` | The grants of one identity, for an administrator. |
+| `revokeGrant(sessionId)` | Revokes one grant. |
+| `revokeClientGrants(identityId, clientId)` | Revokes every grant one identity gave one client, and forgets the consent. |
+| `deleteClient(clientId)` | Revokes every grant of a client, then deletes it. |
+| `registerClient(metadata, { registered_by? })` | Registers a client with the checks of RFC 7591. `registered_by: "admin"` may set `skip_consent`, `introspect` and `audience`. |
+
+Properties: `issuer`, `keys`, `clients`, `storage`, `registration`, `device`.
+
+## Clients
+
+### AuthDanceOauth2ClientStorage
+
+```ts
+new AuthDanceOauth2ClientStorage({ clients: provider });
+```
+
+| Method | Description |
+| ------ | ----------- |
+| `createClient(metadata)` | Creates a client with a fresh `cli_` id. A confidential client gets a secret of 32 random bytes. Returns `{ client, client_secret? }`. The secret is readable this one time. |
+| `getClient(clientId)` | Reads one client. |
+| `listClients(cursor?, limit?)` | Lists clients in the order of `client_id`. |
+| `updateClient(client)` | Writes a whole client, with the same checks as `createClient`. |
+| `deleteClient(clientId)` | Deletes the client only. Its grants stay active; use `AuthDanceOauth2Api.deleteClient`. |
+| `rotateSecret(clientId, expiresAt?)` | Replaces the secret. The old one stops working at once. |
+| `verifySecret(client, secret)` | Checks a secret in constant time. |
+
+`hashClientSecret(secret)` gives the SHA-256 in base64url, to seed a client with a secret you already hold. `AuthDanceOauth2ClientProvider` is the adapter interface: `get`, `list`, `set`, `delete`. See [Providers](/docs/reference/providers).
+
+### AuthDanceOauth2ClientMetadata
+
+| Field | Default | Description |
+| ----- | ------- | ----------- |
+| `redirect_uris` | `[]` | Exact match, except the port of a loopback URI. |
+| `token_endpoint_auth_method` | `"client_secret_basic"` | `client_secret_basic`, `client_secret_post` or `none` for a public client. |
+| `grant_types` | `["authorization_code"]` | `authorization_code`, `refresh_token`, `client_credentials`, `urn:ietf:params:oauth:grant-type:device_code`. |
+| `response_types` | `["code"]` with `authorization_code`, else `[]` | `code` is the only one. |
+| `scope` | — | The scopes the client may ask for, separated by spaces. |
+| `client_secret_expires_at` | `0` | Seconds since the epoch. `0` means never. |
+| `client_name`, `client_uri`, `logo_uri`, `tos_uri`, `policy_uri`, `contacts`, `software_id`, `software_version`, `localized` | — | The RFC 7591 metadata the consent page can show. |
+| `skip_consent` | — | Server only. A first-party client never sees the consent page. |
+| `introspect` | — | Server only. A resource server that may introspect every token. |
+| `audience` | The client id | Server only. The `aud` of the access tokens of the client. |
+
+The rules: `authorization_code` comes with `code`, `refresh_token` comes with `authorization_code` or the device code, `client_credentials` needs a confidential client, and `authorization_code` needs at least one redirect URI. A redirect URI is `https:`, `http:` on a loopback host, or a private-use scheme with a dot.
+
+Helpers: `validateRedirectUri`, `matchRedirectUri`, `isPublic`, `isLanguageTag`, `checkClientMetadata`, `parseClientMetadata`, `toPublicClient`, and the constant `DEVICE_CODE_GRANT_TYPE`.
+
+## Errors
+
+Each error carries the RFC `error` code, an HTTP `status`, and a `description` for the client. The HTTP layer answers `status` with `{ error, error_description }`.
+
+| Class | `error` | Status |
+| ----- | ------- | ------ |
+| `InvalidRequestError` | `invalid_request` | 400 |
+| `InvalidUserCodeError` | `invalid_request` | 400 |
+| `InvalidClientError` | `invalid_client` | 401 |
+| `InvalidGrantError` | `invalid_grant` | 400 |
+| `UnauthorizedClientError` | `unauthorized_client` | 400 |
+| `UnsupportedGrantTypeError` | `unsupported_grant_type` | 400 |
+| `UnsupportedResponseTypeError` | `unsupported_response_type` | 400 |
+| `InvalidScopeError` | `invalid_scope` | 400 |
+| `InvalidTokenError` | `invalid_token` | 401 |
+| `InsufficientScopeError` | `insufficient_scope` | 403 |
+| `AccessDeniedError` | `access_denied` | 403 |
+| `DeviceAccessDeniedError` | `access_denied` | 400 |
+| `ServerError` | `server_error` | 500 |
+| `TemporarilyUnavailableError` | `temporarily_unavailable` | 503 |
+| `UnsupportedTokenTypeError` | `unsupported_token_type` | 400 |
+| `InvalidRedirectUriError` | `invalid_redirect_uri` | 400 |
+| `InvalidClientMetadataError` | `invalid_client_metadata` | 400 |
+| `InvalidSoftwareStatementError` | `invalid_software_statement` | 400 |
+| `UnapprovedSoftwareStatementError` | `unapproved_software_statement` | 400 |
+| `AuthorizationPendingError` | `authorization_pending` | 400 |
+| `SlowDownError` | `slow_down` | 400 |
+| `ExpiredTokenError` | `expired_token` | 400 |
+
+All extend `AuthDanceOauth2Error`. This `InsufficientScopeError` is a different class from the one of `auth-dance`.

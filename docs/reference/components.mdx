@@ -1,0 +1,189 @@
+---
+title: auth-dance/components/*
+description: The shipped components for email, one-time codes, passwords, TOTP, passkeys, policies, OAuth 2.0 and OpenID Connect, with every option.
+order: 6
+---
+
+Each component lives at its own import path. Register an instance under a name in `components`, and use that name in the choreography.
+
+| Import path                       | Class                          | `kind`           | Proves | Verifiable | Prompt types |
+| --------------------------------- | ------------------------------ | ---------------- | ------ | ---------- | ------------ |
+| `auth-dance/components/email`     | `EmailAuthDanceComponent`      | identification   | No     | Yes        | `email`, then `otp` |
+| `auth-dance/components/otp`       | `OtpAuthDanceComponent`        | challenge        | Yes    | No         | `otp` |
+| `auth-dance/components/password`  | `PasswordAuthDanceComponent`   | challenge        | Yes    | No         | `password` |
+| `auth-dance/components/totp`      | `TotpAuthDanceComponent`       | challenge        | Yes    | Yes        | `totp-key`, `totp` |
+| `auth-dance/components/webauthn`  | `WebAuthnAuthDanceComponent`   | identification   | Yes    | Yes        | `webauthn-create`, `webauthn` |
+| `auth-dance/components/policy`    | `PolicyAuthDanceComponent`     | challenge        | No     | No         | `policy` |
+| `auth-dance/components/oauth2`    | `OAuth2AuthDanceComponent` (abstract) | identification | Yes | No       | `oauth2` |
+| `auth-dance/components/oidc`      | `OidcAuthDanceComponent`       | identification   | Yes    | No         | `oauth2` |
+
+The provider components of `auth-dance/components/oauth2/*` are on [Social providers](/docs/reference/social-providers).
+
+## `email`
+
+```ts
+import { EmailAuthDanceComponent } from "auth-dance/components/email";
+
+new EmailAuthDanceComponent({ channel: "email", challenge: "otp" });
+```
+
+An email address as the step that resolves the identity, and a code sent to that email address as the proof. It contributes three records that `linkedTo` binds into one set: the identification that holds the email address, the channel that reaches it, and the one-time code challenge under `challenge`.
+
+In a sign-in, the email address names an identity and proves nothing. Follow it with a step that proves control: a password, or the one-time code step under `challenge`.
+
+| Option              | Type      | Default | Description |
+| ------------------- | --------- | ------- | ----------- |
+| `channel`           | `string`  | Required | The channel that delivers the code. |
+| `challenge`         | `string`  | Required | The name the one-time code challenge is stored under. Register an `OtpAuthDanceComponent` under the same name. |
+| `preserveLocalCase` | `boolean` | `false` | Keeps the case of the local part. Without it, `Ada@Example.com` and `ada@example.com` name one identity. |
+| `digits`, `ttl`, `subject`, `html`, `text` | | | The options of the one-time code. See `otp` below. |
+
+For a sign-in by email address and code, put the step named by `challenge` right after the email address: `sequence("email", "otp")` with `challenge: "otp"`. A code step under a name of its own fails in a sign-up, because the sign-up then collects the code as a value.
+
+The component stores and looks up each email address in the form `normalizeEmailAddress(value, options?)` gives: trimmed, in NFC, and in lower case, the local part included unless `preserveLocalCase` is set. It returns `null` for a value that is not one email address.
+
+`normalizeEmailIdentifications(storage, component, options?)` rewrites the identifications that versions before rc.5 stored as typed. It returns `{ updated, collisions }`. It changes nothing in a collision group, two identities for one inbox, so a person decides which account stays. Run it one time, with the options the component uses.
+
+## `otp`
+
+```ts
+import { OtpAuthDanceComponent } from "auth-dance/components/otp";
+
+new OtpAuthDanceComponent({ channel: "email" });
+```
+
+A one-time code that the library delivers over a channel. `sendPrompt` writes the code to the key-value store under `otp/<stateId>/<name>`, with the identity and the recipient it goes to. `verifyPrompt` accepts the code for that identity and that recipient only, and deletes it on a match, so a code works one time.
+
+| Option    | Type                               | Default | Description |
+| --------- | ---------------------------------- | ------- | ----------- |
+| `channel` | `string`                           | Required | The channel that delivers the code. The identity must hold a channel of this name. |
+| `digits`  | `number`                           | `6`     | The number of digits in a code. |
+| `ttl`     | `number`                           | `300`   | Seconds a code stays valid. |
+| `subject` | `Record<string, string \| (code, context) => string>` | `"Your one-time code"` | The subject of the message. |
+| `text`    | `Record<string, string \| (code, context) => string>` | `"Your one-time code is: …"` | The `text/plain` body. |
+| `html`    | `Record<string, string \| (code, context) => string>` | A paragraph with the code | The `text/html` body. |
+
+The message also carries the bare code under `text/x-code`. The component ignores the locale of the request and reads only the `en` entry of `subject`, `text` and `html`.
+
+## `password`
+
+```ts
+import { PasswordAuthDanceComponent, pbkdf2PasswordHasher } from "auth-dance/components/password";
+
+new PasswordAuthDanceComponent(process.env.PASSWORD_PEPPER!);
+new PasswordAuthDanceComponent(process.env.PASSWORD_PEPPER!, pbkdf2PasswordHasher(1_000_000));
+```
+
+| Parameter | Type             | Default                 | Description |
+| --------- | ---------------- | ----------------------- | ----------- |
+| `pepper`  | `string`         | Required                | A secret of at least 16 bytes, put in front of every password. A shorter or missing value throws `TypeError`. |
+| `hasher`  | `PasswordHasher` | `pbkdf2PasswordHasher()` | Turns the salted password into the stored record. |
+
+The component normalizes the password to NFKC, then puts the pepper and the identity id in front of it before it hashes. The id binds a record to its owner. A sign-up, an enroll, a rotate and a recover refuse an empty password, a password equal to the one it replaces, and a password equal to an identification of the owner, ignoring case. A sign-in rewrites a record that `needsRehash` reports.
+
+`pbkdf2PasswordHasher(iterations?)` derives PBKDF2-HMAC-SHA256 with 600000 iterations by default and a random 16-byte salt per record. `PasswordHasher` declares `hash(value)`, `verify(value, record)` and `needsRehash(record)`.
+
+> **Note:** Keep the pepper in a secret store, apart from the identity store. A new pepper invalidates every record. Only the rotate and recover flows can rebuild one.
+
+## `totp`
+
+```ts
+import { TotpAuthDanceComponent } from "auth-dance/components/totp";
+
+new TotpAuthDanceComponent();
+```
+
+A time-based code, RFC 6238. A sign-up, an enroll, a rotate and the reset of a recover collect the key through a prompt of type `totp-key`: the client generates the key with `generateKey()`, shows the `toURI()` QR code, and submits the key. A prompt of type `totp` then asks for a code from that key. A sign-in and a recovery step ask for a code with type `totp`.
+
+| Option         | Type           | Default   | Description |
+| -------------- | -------------- | --------- | ----------- |
+| `digits`       | `number`       | `6`       | The number of digits in a code. |
+| `period`       | `number`       | `30`      | Seconds in one time step. |
+| `algorithm`    | `OTPAlgorithm` | `"SHA-1"` | Keep the default: authenticator apps expect SHA-1. |
+| `window`       | `number`       | `1`       | Time steps accepted on each side of the current one. |
+| `minKeyLength` | `number`       | `32`      | The shortest key in base32 characters. A multiple of 8, at least 32. Otherwise the constructor throws `RangeError`. |
+
+A code works one time: the component writes the step it accepted under `totp/<identityId>/<name>` and refuses that step and every step before it. The identity store holds the key, so protect it the way you protect a password store.
+
+## `webauthn`
+
+```ts
+import { WebAuthnAuthDanceComponent } from "auth-dance/components/webauthn";
+
+new WebAuthnAuthDanceComponent({ rp: { id: "example.com", name: "Example" } });
+```
+
+A passkey or a security key. The credential id names the owner, so a sign-in needs no email address. A sign-up, an enroll, a rotate and the reset of a recover collect a credential through a prompt of type `webauthn-create`: pass `options.publicKey` to `PublicKeyCredential.parseCreationOptionsFromJSON`, call `navigator.credentials.create`, and submit `credential.toJSON()`. A prompt of type `webauthn` then asks for a signature. A sign-in asks with type `webauthn`, for `navigator.credentials.get`.
+
+| Option                    | Type | Default | Description |
+| ------------------------- | ---- | ------- | ----------- |
+| `rp`                      | `{ id: string; name: string }` | Required | The relying party. A change of `rp.id` makes every credential unusable. |
+| `origins`                 | `string[]` | `["https://" + rp.id]` | The web origins, scheme, host and port, accepted in the client data. |
+| `algorithms`              | `number[]` | `[-7, -257]` | COSE algorithms, in order of preference. |
+| `userVerification`        | `"required" \| "preferred" \| "discouraged"` | `"preferred"` | Whether the owner must verify to the authenticator. |
+| `residentKey`             | `"required" \| "preferred" \| "discouraged"` | `"required"` | Keep `required`: only a credential the authenticator keeps answers a sign-in. |
+| `authenticatorAttachment` | `"platform" \| "cross-platform"` | Both | Which authenticators the client offers. |
+| `attestation`             | `"none" \| "indirect" \| "direct" \| "enterprise"` | `"none"` | The component reads no attestation statement. |
+| `timeout`                 | `number` | `60000` | Milliseconds the client waits. |
+| `ttl`                     | `number` | `300` | Seconds a challenge stays valid. |
+| `cloneDetection`          | `boolean` | `true` | Refuse a signature counter that does not go up. |
+| `user`                    | `(context) => { name; displayName }` | The first confirmed identification | How the passkey manager names the owner. Give it to name the owner in a sign-up. |
+
+The component keeps `webauthn/count/<credentialId>` in the key-value store with no time to live. Remove it when the credential leaves the identity.
+
+## `policy`
+
+```ts
+import { PolicyAuthDanceComponent } from "auth-dance/components/policy";
+
+new PolicyAuthDanceComponent({
+	policies: [{ identifier: "tos", version: "2", required: true, name: { en: "Terms" }, content: { en: "https://example.com/tos" } }],
+});
+```
+
+A step in which the owner accepts documents. The prompt has the type `policy`. The owner answers with a `PolicyAcceptance`, for example `{ tos: "2" }`. The step is skippable: a sign-in goes past it when the identity already accepted every required document at its current version. Change `version` to ask every owner again.
+
+| Field of a `Policy` | Description |
+| ------------------- | ----------- |
+| `identifier`        | The key of the document. Unique in the component. |
+| `version`           | The current version. |
+| `required`          | Whether the step refuses an answer that does not accept it. |
+| `name`, `content`   | The title and the text or link, per locale. The library never reads them. |
+
+Put the step after a step that proves control, for example `sequence("email", "otp", "policy")`. The constructor throws `TypeError` for an empty list, an empty identifier or version, or two documents with one identifier.
+
+## `oauth2`
+
+```ts
+import { OAuth2AuthDanceComponent } from "auth-dance/components/oauth2";
+```
+
+The abstract base of every OAuth 2.0 provider: the authorization code grant with PKCE. Extend it and implement `retrieveIdentification(token, context)`. See [Social sign-in](/docs/guides/social-sign-in).
+
+| Option         | Type | Default | Description |
+| -------------- | ---- | ------- | ----------- |
+| `endpoints`    | `OAuth2Endpoints \| () => Promise<OAuth2Endpoints>` | Required | `authorizationUrl`, `tokenUrl`, and `clientAuthentication` (`"client_secret_basic"` by default, or `"client_secret_post"`). |
+| `redirectUrl`  | `string` | Required | The page of the client the provider sends the owner back to. |
+| `clientId`     | `string` | Required | The client id the provider issued. |
+| `clientSecret` | `string \| () => string \| Promise<string>` | Required | The client secret. It stays on the server. |
+| `scope`        | `string` | No `scope` | The scopes, separated by spaces. |
+| `parameters`   | `Record<string, string>` | None | More parameters for the authorization URL. |
+| `ttl`          | `number` | `300` | Seconds an authorization stays valid. |
+
+A subclass can override the protected methods `getAuthorizationParameters(context)` and `verifyToken(token, parameters, context)`. `OAuth2ProviderOptions` is these options without `endpoints`. The exported types are `OAuth2TokenResponse`, `OAuth2Identification` (`{ identification, data? }`) and `OAuth2Endpoints`.
+
+## `oidc`
+
+```ts
+import { OidcAuthDanceComponent } from "auth-dance/components/oidc";
+```
+
+An OpenID Connect provider. It takes the options of `OAuth2ProviderOptions`, and:
+
+| Option      | Type | Default | Description |
+| ----------- | ---- | ------- | ----------- |
+| `issuer`    | `string` | Required | The issuer. The component reads `<issuer>/.well-known/openid-configuration`, and the ID token must carry the same `iss`. |
+| `scope`     | `string` | `"openid"` | Keep `openid` in it, or the answer holds no ID token. |
+| `endpoints` | `Partial<OAuth2Endpoints>` | From the discovery document | Give `authorizationUrl` and `tokenUrl` to skip the document. |
+
+The record holds `sub`. The component sends a `nonce` with each authorization, and checks `iss`, `aud`, `exp` and the `nonce` of the ID token. Override `checkIssuer(claims)` to accept another `iss`, and read `retrieveProfile(token)` for the claims.

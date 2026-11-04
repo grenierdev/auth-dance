@@ -1,0 +1,107 @@
+---
+title: The choreography
+description: How one tree of components, sequences and choices states a whole authentication policy, and the rule that every path must prove control.
+order: 1
+---
+
+## One declaration
+
+A choreography is the authentication policy as data. It is a tree with three kinds of node:
+
+- A **component** is one step. Its name is a key of the `components` map, and that map says what the step does.
+- A **sequence** is an ordered run. The owner performs every child, from the first to the last.
+- A **choice** is a fork. The owner performs exactly one branch, and each branch is a whole path on its own.
+
+You build the tree with functions from `auth-dance`:
+
+```ts
+import { choice, component, pick, sequence } from "auth-dance";
+
+sequence("email", "password");
+choice(sequence("email", "password"), "passkey");
+sequence("email", choice("password", "otp"));
+```
+
+A plain string is sugar for `component(name)`. The result is a plain object, so you can store it, compare it with `isEquals`, and log it:
+
+```json
+{
+	"kind": "choice",
+	"components": [
+		{ "kind": "sequence", "components": [{ "kind": "component", "component": "email" }, { "kind": "component", "component": "password" }] },
+		{ "kind": "component", "component": "passkey" }
+	]
+}
+```
+
+`pick(count, ...components)` builds a choice of every ordered permutation of `count` components, one sequence for each permutation. Order matters, so a pair gives one branch for each order:
+
+```ts
+// After the email address, any 2 of the 3 challenges, in any order.
+sequence("email", pick(2, "password", "totp", "pin"));
+```
+
+The names in these examples are the names you register in `components`. The library knows no name of its own.
+
+## Paths
+
+The library reads the tree as a set of complete paths. A complete path is one ordered list of steps from the start to the end of the dance. `walk(choreography)` yields them.
+
+| Choreography                                           | Complete paths                                       |
+| ------------------------------------------------------ | ---------------------------------------------------- |
+| `sequence("email", "password")`                        | email, password                                      |
+| `choice(sequence("email", "password"), "passkey")`     | email, password · passkey                            |
+| `sequence("email", choice("password", "otp"))`         | email, password · email, otp                         |
+| `sequence("email", "password", "totp")`                | email, password, totp                                |
+
+Every flow reads these paths:
+
+- A sign-in and a sign-up walk one path, one step at a time. `peek(choreography, path)` gives the next step after the steps already done: one component, a choice of components, or `null` at the end.
+- A recovery takes the paths that hold the component to recover, and removes that component from them. See [Recovery](/docs/concepts/recovery).
+- An unenroll and an unsubscribe check that the identity still covers at least one complete path after the removal.
+
+## What a component contributes
+
+Each component declares a `kind`. The kind says what the step adds to an identity:
+
+- An **identification** names the owner on its own. The library finds an identity by its value: an email address, a passkey credential id, an account at a social provider.
+- A **challenge** proves a claim against an identity that another step resolved: a password, a one-time code, a TOTP code.
+- A **channel** is where the library delivers a message. A component never declares `channel`, but a component can add a channel record to the identity. The email component adds one.
+
+A sign-in starts with a step that resolves the identity. A first step that resolves nobody raises `IdentityNotResolvedError`.
+
+## Proof of control
+
+> **Note:** Every complete path of the choreography needs one step that proves control. The constructor of the server raises `InvalidChoreographyError` for a path without one.
+
+A step proves control when an accepted value shows that the owner holds the factor, and not only that the owner knows a name. By default, a challenge proves and an identification does not. A component overrides the default with `proves`.
+
+- A password and a one-time code are challenges, so they prove.
+- An email address is an identification that proves nothing. Anyone can type an email address.
+- A passkey is an identification that checks a signature, so it sets `proves: true`.
+- An OAuth 2.0 or OpenID Connect account exchanges a code that only the provider issues, so it sets `proves: true`.
+
+So `choice("email", "passkey")` fails at startup: the path that holds only `email` proves nothing. To sign in by email address and code, write `sequence("email", "otp")`, with an email component whose `challenge` option is `"otp"`.
+
+The constructor also raises `UnknownComponentError` for a step that `components` does not declare. A sign-in and a sign-up check the proof rule again before they mint tokens, in case the choreography object changed after the start.
+
+## Prompts
+
+The library turns the next step into a prompt for the client:
+
+- One component gives one input: `{ kind: "input", name, type, sendable }`. The `name` is the name of the step. The `type` says what to collect, for example `email`, `password`, `otp`, `totp`, `webauthn`.
+- A choice gives `{ kind: "choice", components: [...] }`, one input per branch. The client answers any one of them under its name, and that answer selects the branch.
+
+See [The prompt loop](/docs/concepts/prompt-loop) for how a client answers them.
+
+## Steps the library skips
+
+A component can set `skippable: true` and declare `skipPrompt`. When `skipPrompt` answers `true` for the identity, a sign-in or a recovery goes past the step without a prompt, and the step counts as done on the path. The policy component uses this: an owner who already accepted every required document does not see the step again.
+
+The library skips a step only when the next step is one component, never a choice. It skips only after a step of the path proved control, so the prompts tell nothing about the identity to a person who only knows an email address. A sign-up never skips.
+
+## Smaller trees
+
+`simplify(choreography)` rewrites a tree into a smaller tree with the same policy. It lifts a child of the same kind into its parent, drops an equal duplicate child, and replaces a node of one child with that child. The comparison `isEquals` respects order, so `choice(a, b)` and `choice(b, a)` are two different trees.
+
+See the [choreography reference](/docs/reference/choreography) for each function.

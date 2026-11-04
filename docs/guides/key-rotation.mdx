@@ -1,0 +1,63 @@
+---
+title: Rotate the signing keys
+description: Replace the key that signs the tokens without a failed check, and rotate the state secret and the pepper.
+order: 8
+---
+
+`keys` is a list of private JWKs. The first key signs every new token. Every key in the list verifies. `GET /.well-known/jwks.json` publishes the public part of each one, so a service that checks tokens finds the key that the `kid` header of a token names.
+
+### 1. Generate the new key
+
+```sh
+node --input-type=module -e "import { generateSigningKey } from 'auth-dance'; console.log(JSON.stringify(await generateSigningKey()))"
+```
+
+`generateSigningKey()` makes an ES256 key. Pass `"EdDSA"` for an Ed25519 key. The `kid` is the JWK thumbprint of the key (RFC 7638).
+
+### 2. Publish it
+
+Add the new key at the end of `keys`, and deploy:
+
+```ts
+keys: [JSON.parse(process.env.AUTH_SIGNING_KEY!), JSON.parse(process.env.AUTH_SIGNING_KEY_NEXT!)],
+```
+
+The old key still signs. The key set now holds both public keys.
+
+### 3. Wait for the services that check tokens
+
+Wait until every service that checks tokens has read the new key set. A service that caches the key set reads it again after its own cache time.
+
+### 4. Sign with the new key
+
+Move the new key to the front, and deploy:
+
+```ts
+keys: [JSON.parse(process.env.AUTH_SIGNING_KEY_NEXT!), JSON.parse(process.env.AUTH_SIGNING_KEY!)],
+```
+
+New tokens carry the `kid` of the new key. Tokens of the old key still verify.
+
+### 5. Retire the old key
+
+Keep the old key until the last token it signed expires: `durations.refresh` after it stops signing, because a refresh token lives as long as its session. Then remove it from `keys`.
+
+A key after the first can hold its public part only, because it signs nothing. You can drop the private part of the old key at step 4.
+
+### What you should see
+
+At each step, `GET /.well-known/jwks.json` lists every key in `keys`, with `kid`, `alg`, `use: "sig"` and no private member. No token fails its check during the rotation.
+
+## What the server refuses
+
+The constructor raises `TypeError` when `keys` is empty, when a key is symmetric (`kty: "oct"`), has no `kid`, has an `alg` other than ES256, EdDSA, RS256 or PS256, does not match its `alg`, or has a `use` other than `sig`, when two keys share a `kid`, and when the first key has no private part.
+
+The constructor imports no key. A key whose material is bad fails on the first token. `AuthDanceKeys.fromJwks(keys)` imports every key at once, so a deploy script can check them before a deploy.
+
+## The state secret
+
+`secret` encrypts the state of each flow. It is one key, not a list. A new secret makes every flow in progress fail with `INVALID_STATE`. Each flow lasts 300 seconds by default, so change the secret at a quiet time, and the owners start their flow again.
+
+## The password pepper
+
+> **Note:** A new pepper invalidates every stored password. Only the `rotate` and `recover` flows can rebuild a password record. Keep the pepper stable, and keep it apart from the identity store.

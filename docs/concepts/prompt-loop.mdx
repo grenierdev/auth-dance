@@ -1,0 +1,99 @@
+---
+title: The prompt loop
+description: How a client runs any flow as one loop of prompts, with an encrypted state that the server never stores.
+order: 5
+---
+
+## The loop
+
+Every flow is the same loop. Start the flow, read the prompt, answer it, repeat until the server answers with tokens or with a success result.
+
+```ts
+import { AuthDanceClient } from "auth-dance/client";
+
+const client = new AuthDanceClient({ baseUrl: "https://auth.example.com" });
+
+using dance = await client.signIn();
+
+while (!dance.done) {
+	const prompt = dance.current!; // { kind: "input", name: "email", type: "email", sendable: false }
+	if (prompt.sendable) {
+		// A one-time code the library delivers over a channel.
+		await dance.sendPrompt();
+	}
+	await dance.submitPrompt(await ask(prompt));
+}
+
+console.log(client.identity, client.tokens);
+```
+
+`ask` stands for your own interface: a form, a terminal question, a test fixture. The same object runs every other flow: `client.signUp()`, `client.enroll("totp")`, `client.rotate("password")`, `client.recover("password")`, `client.subscribe("sms")`, `client.unenroll(name)`, `client.unsubscribe(name)` and `client.delete()`.
+
+## The state
+
+The server keeps nothing between two calls. Each answer carries an opaque `state`: a JWE, encrypted with the `secret` option. The client sends it back with the next call. The state holds the flow, the steps done, the identity resolved so far and the values collected so far. It expires at `expireAt`, and an answer never moves that moment.
+
+Because the state is all the server needs, the client can step back: `dance.prev()` returns to the state of the previous step. A step that already collected a value answers `COMPONENT_ALREADY_COLLECTED` when it gets a second value. `dance.restart()` starts the flow again with a fresh state.
+
+## Three kinds of prompt
+
+| Prompt                                       | What the client does                                                  |
+| -------------------------------------------- | --------------------------------------------------------------------- |
+| An input, `kind: "input"`                    | Collect a value of `type`, and submit it under `name`                 |
+| A choice, `kind: "choice"`                   | Show the branches, let the owner pick one, then answer that branch    |
+| A confirmation, `type: "confirmation"`       | Ask the owner to confirm, then submit the boolean `true`              |
+
+### Inputs
+
+`name` is the step. `type` is what to collect: `email`, `password`, `otp`, `totp`, `totp-key`, `webauthn`, `webauthn-create`, `oauth2`, `policy`, or the type a channel declares. `options` carries extra data a component publishes for the client, for example the WebAuthn request options or the authorization URL of a social provider. The library never reads `options`.
+
+`sendable: true` means the server can deliver the value over a channel. Call `sendPrompt` to ask it to, and call it again to send a new code.
+
+### Choices
+
+A step with `prompt.kind === "choice"` is a fork in the choreography. `dance.current` is `null` until a branch is picked.
+
+```ts
+if (dance.prompt?.kind === "choice") {
+	console.log(dance.choices.map((branch) => branch.name)); // ["email", "passkey"]
+	await dance.choose("passkey");
+}
+// dance.current is now the passkey input.
+```
+
+You can also answer a branch directly with `dance.submitPrompt(value, { name: "passkey" })`.
+
+### Confirmations
+
+An unenroll, an unsubscribe and a delete each end on a confirmation. Answer it with `dance.confirm()`, which submits `true`. Any other value raises `ConfirmationRequiredError`.
+
+## Validations
+
+When a flow collects a value it must prove, the next prompt is a validation. It keeps the `name` of the step it proves, and it has its own `type`. In a sign-up with the email component, the step `email` first asks for the email address (type `email`), then for the code sent to it (type `otp`, `sendable: true`). A client that renders by `name` alone shows the wrong field, so read `type` too.
+
+## How a flow ends
+
+| Flow                                   | Last answer                          | Effect on the client                |
+| -------------------------------------- | ------------------------------------ | ----------------------------------- |
+| sign-in, sign-up                       | The tokens, the session, the identity | The client keeps the tokens        |
+| enroll, unenroll, rotate, recover, subscribe, unsubscribe | `{ success: true }` | None                             |
+| delete                                 | `{ success: true }`                  | The client drops its tokens         |
+
+`dance.done` is `true` from then on, and `dance.current` is `null`.
+
+## Keeping a dance across a reload
+
+Pass a `store` when the flow starts. The dance writes a snapshot on every change. A later start of the same flow, on the same component, resumes from the snapshot instead of calling the server.
+
+```ts
+import { webStorageStore, type AuthDanceClientChoreographySnapshot } from "auth-dance/client";
+
+const store = webStorageStore<AuthDanceClientChoreographySnapshot>("auth-dance.dance", sessionStorage);
+using dance = await client.signIn({ store });
+```
+
+`client.resume(store)` rebuilds whatever flow the store holds, with no call. A social sign-in uses this to come back from the provider. See [Social sign-in](/docs/guides/social-sign-in).
+
+## Errors
+
+A failed call raises the class of the code the server answered, out of the `Errors` registry: `InvalidPromptValueError` for a wrong password, `InvalidValidationValueError` for a wrong code, `RateLimitedError` with `retryAfter` for an empty bucket. The dance stays on the same step, so the owner answers again. See [Errors](/docs/reference/errors).

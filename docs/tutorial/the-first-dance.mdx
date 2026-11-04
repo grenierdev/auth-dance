@@ -1,0 +1,99 @@
+---
+title: The first dance
+description: Write a command-line client that signs up and signs in against the server, one prompt at a time.
+order: 3
+---
+
+`auth-dance/client` calls the routes of the server. A flow is a loop: read the prompt, answer it, repeat until the server answers with tokens. The client keeps the tokens of the session.
+
+This page writes a command-line client. The same loop runs in a browser.
+
+### 1. Write the client
+
+Create `client.ts` beside `server.ts`:
+
+```ts title="client.ts"
+import { createInterface } from "node:readline/promises";
+import { AuthDanceClient } from "auth-dance/client";
+
+const terminal = createInterface({ input: process.stdin, output: process.stdout });
+const client = new AuthDanceClient({ baseUrl: "http://localhost:3000" });
+
+async function perform(flow: "sign-up" | "sign-in"): Promise<void> {
+	using dance = flow === "sign-up" ? await client.signUp() : await client.signIn();
+	while (!dance.done) {
+		const prompt = dance.current!;
+		if (prompt.sendable) {
+			// The server delivers this value over a channel: here, a one-time code on the server console.
+			await dance.sendPrompt();
+			console.log("The server sent a one-time code.");
+		}
+		const value = await terminal.question(`${flow} · ${prompt.name} (${prompt.type}): `);
+		await dance.submitPrompt(value);
+	}
+	console.log(`${flow} complete. Identity: ${client.identity?.id}`);
+}
+
+const flow = process.argv[2] === "sign-in" ? "sign-in" : "sign-up";
+await perform(flow);
+console.log("Access token:", client.tokens?.access_token.slice(0, 32), "…");
+terminal.close();
+```
+
+What the loop does:
+
+- `client.signUp()` and `client.signIn()` start a flow and return the dance, on its first prompt.
+- `dance.current` is the input to answer now. Its `name` is the step, and its `type` says what to collect.
+- When `prompt.sendable` is `true`, the server can deliver the value over a channel. `dance.sendPrompt()` asks it to do so.
+- `dance.submitPrompt(value)` answers the prompt. The dance moves to the next prompt, or ends.
+- `dance.done` becomes `true` when the server answers with tokens or with a success result.
+- `using` disposes the dance at the end of the block. The dance arms a timer on its expiry, and the disposal disarms it.
+
+### 2. Sign up
+
+Keep the server running. In the second terminal:
+
+```sh
+node client.ts sign-up
+```
+
+Answer each prompt:
+
+1. `sign-up · email (email)`: type an email address, for example `ada@example.com`.
+2. `sign-up · email (otp)`: the client asks the server to send a code first. Read the code on the server console, in the line `Your one-time code: 123456`, and type it.
+3. `sign-up · password (password)`: type a password.
+
+### 3. Sign in
+
+```sh
+node client.ts sign-in
+```
+
+Type the same email address, then the same password.
+
+### What you should see
+
+The sign-up asks three times. The second prompt keeps the name `email` and has the type `otp`: it is the validation that proves control of the email address the first prompt collected. The sign-in asks two times, one time per step of the choreography, and sends no code.
+
+Each flow ends with lines like these:
+
+```sh
+sign-in complete. Identity: id_0VfZUw2q9aVxu2mAHlCH2LtA3I
+Access token: eyJhbGciOiJFUzI1NiIsImtpZCI6Ij …
+```
+
+The identity id is the same in both flows. A wrong password answers `INVALID_PROMPT_VALUE`, and the client raises `InvalidPromptValueError`. A wrong code answers `INVALID_VALIDATION_VALUE`.
+
+> **Note:** The server keeps everything in memory. Restart it, and you must sign up again.
+
+### 4. Dance in process
+
+Nothing binds the client to HTTP over the network. A test can hand it the `fetch` of the `AuthDance` instance:
+
+```ts
+const client = new AuthDanceClient({ baseUrl: "http://local", fetch: auth.fetch });
+```
+
+A request that comes through `auth.fetch` has no Node.js connection, so `getConnInfo` fails on it. In a test, build the instance with an `app.address` resolver that does not read the connection.
+
+Next: [A React page](/docs/tutorial/react).

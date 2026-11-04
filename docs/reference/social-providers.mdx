@@ -1,0 +1,99 @@
+---
+title: auth-dance/components/oauth2/*
+description: The shipped social provider components for Apple, Facebook, GitHub, GitLab, Google, Microsoft and X, with their options and setup.
+order: 7
+---
+
+Each provider is an identification that proves control, with a prompt of type `oauth2`. Each takes `OAuth2ProviderOptions`: `clientId`, `clientSecret`, `redirectUrl`, and optionally `scope`, `parameters` and `ttl`. The provider sets the endpoints itself. See [Social sign-in](/docs/guides/social-sign-in) for the client side, and [components](/docs/reference/components) for the shared options.
+
+To keep more than the id, extend the class, override `retrieveIdentification`, and read the protected `retrieveProfile(token)`.
+
+| Import path                             | Class                          | Base        | The record holds |
+| --------------------------------------- | ------------------------------ | ----------- | ---------------- |
+| `auth-dance/components/oauth2/apple`    | `AppleAuthDanceComponent`      | OpenID Connect | `sub`, the id of the account for the team |
+| `auth-dance/components/oauth2/facebook` | `FacebookAuthDanceComponent`   | OAuth 2.0   | The app-scoped id of the account |
+| `auth-dance/components/oauth2/github`   | `GitHubAuthDanceComponent`     | OAuth 2.0   | The numeric id of the account |
+| `auth-dance/components/oauth2/gitlab`   | `GitLabAuthDanceComponent`     | OpenID Connect | `sub`, the numeric id on the instance |
+| `auth-dance/components/oauth2/google`   | `GoogleAuthDanceComponent`     | OpenID Connect | `sub`, the id of the account |
+| `auth-dance/components/oauth2/microsoft`| `MicrosoftAuthDanceComponent`  | OpenID Connect | `sub`, the id of the account for this application |
+| `auth-dance/components/oauth2/x`        | `XAuthDanceComponent`          | OAuth 2.0   | The numeric id of the account |
+
+## Apple
+
+```ts
+import { AppleAuthDanceComponent } from "auth-dance/components/oauth2/apple";
+```
+
+Apple takes a signed JWT as the client secret, so the options replace `clientSecret`:
+
+| Option       | Description |
+| ------------ | ----------- |
+| `clientId`   | The Services ID, for example `com.example.web`. |
+| `teamId`     | The 10-character Team ID of the developer account. |
+| `keyId`      | The 10-character id of the Sign in with Apple key. |
+| `privateKey` | The content of the `.p8` file, in PKCS #8 PEM. |
+| `scope`      | `name`, `email`, or both. Without it, the authorization asks for none. |
+
+Make a Services ID with Sign in with Apple, register `redirectUrl` as a return URL, and make a Sign in with Apple key. The component signs a new client secret for each exchange.
+
+> **Note:** With a `scope`, Apple sends the answer as an HTTP POST to `redirectUrl` in a form encoding, and the component sets `response_mode=form_post`. The page at `redirectUrl` must read that body; a static page cannot. Without `scope`, Apple sends `code` and `state` in the query, as every other provider does.
+
+## Facebook
+
+```ts
+import { FacebookAuthDanceComponent } from "auth-dance/components/oauth2/facebook";
+```
+
+| Option    | Default   | Description |
+| --------- | --------- | ----------- |
+| `version` | `"v26.0"` | The Graph API version of the dialog, the token endpoint and `/me`. |
+
+Add the Facebook Login product to a Meta app, and give one of its valid OAuth redirect URIs as `redirectUrl`. The id needs no scope. Every call to `/me` carries `appsecret_proof`. `retrieveProfile(token, fields)` reads the fields you name.
+
+## GitHub
+
+```ts
+import { GitHubAuthDanceComponent } from "auth-dance/components/oauth2/github";
+```
+
+Register an OAuth app or a GitHub App, and give its callback URL as `redirectUrl`. The id needs no scope. `retrieveProfile` reads `GET https://api.github.com/user`.
+
+## GitLab
+
+```ts
+import { GitLabAuthDanceComponent } from "auth-dance/components/oauth2/gitlab";
+```
+
+| Option    | Default                | Description |
+| --------- | ---------------------- | ----------- |
+| `baseUrl` | `"https://gitlab.com"` | The URL of the instance. Give the URL of a self-managed instance here. |
+
+Add an application in the settings of a GitLab account, a group or the instance, give `redirectUrl` as its redirect URI, mark it confidential, and select the `openid` scope. `scope` defaults to `openid`; a scope you give must keep it.
+
+## Google
+
+```ts
+import { GoogleAuthDanceComponent } from "auth-dance/components/oauth2/google";
+```
+
+Create an OAuth client ID of the type "Web application", and give one of its authorized redirect URIs as `redirectUrl`. `scope` defaults to `openid`; add `email` or `profile` for the claims of those scopes. The component accepts both forms of `iss` that Google writes.
+
+## Microsoft
+
+```ts
+import { MicrosoftAuthDanceComponent } from "auth-dance/components/oauth2/microsoft";
+```
+
+| Option   | Default    | Description |
+| -------- | ---------- | ----------- |
+| `tenant` | `"common"` | `common` for work, school and personal accounts. `organizations` for work and school. `consumers` for personal. A tenant id or a domain name for one tenant. |
+
+Register an application in Microsoft Entra ID, add `redirectUrl` under the "Web" platform, and make a client secret. The "Single-page application" platform does not work, because the server redeems the code. The same person has another `sub` in an application with another client id, so a new app registration makes every linked account unusable.
+
+## X
+
+```ts
+import { XAuthDanceComponent } from "auth-dance/components/oauth2/x";
+```
+
+Turn on OAuth 2.0 in the "User authentication settings" of the app, select "Web App" so the app is a confidential client, and give `redirectUrl` as its callback URI. `scope` defaults to `users.read tweet.read`, the two scopes `GET /2/users/me` needs; a scope you give must keep both.

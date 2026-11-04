@@ -1,0 +1,137 @@
+---
+title: OAuth 2.0 authorization server
+description: Make the server an identity provider for third-party apps, with login and consent pages that you host.
+order: 2
+---
+
+`auth-dance/oauth2` makes the server an OAuth 2.0 authorization server. A third-party app sends the owner to it. The owner signs in with the same dance, on login and consent pages you host, and the app gets tokens.
+
+It supports the authorization code grant with PKCE S256, `refresh_token`, `client_credentials`, the device grant, introspection (RFC 7662), revocation (RFC 7009) and dynamic registration (RFC 7591).
+
+## 1. Build the authorization server
+
+Build it on the core instance:
+
+```ts
+import { createAuthDanceOauth2 } from "auth-dance/oauth2";
+import { createAuthDanceMemoryOauth2ClientStorage } from "auth-dance/providers/memory";
+
+const idp = createAuthDanceOauth2({
+	oauth2: {
+		// The core instance. It mints every token, with the scopes of its `tokens.scopes`. `issuer` must equal its
+		// `tokens.issuer`.
+		api: auth.api,
+		clients: createAuthDanceMemoryOauth2ClientStorage(),
+		issuer: "https://auth.example.com",
+		ui: { login: "https://auth.example.com/login", consent: "https://auth.example.com/consent" },
+	},
+	app: { basePath: "/oauth2" },
+});
+```
+
+The constructor raises `TypeError` when `issuer` differs from the issuer of the core, or when a URL of `ui` is not an absolute `https:` URL. `http:` passes on `localhost`, `127.0.0.1` and `[::1]`.
+
+## 2. Route the requests
+
+`GET /.well-known/oauth-authorization-server` serves the RFC 8414 metadata. It sits where RFC 8414 puts it, at the root of the host followed by the path of the issuer, whatever the `basePath`. Every other route sits under the `basePath`: `/oauth2/authorize`, `/oauth2/token`, `/oauth2/jwks.json` and the others. Send them all to `idp.fetch`, and the core routes to `auth.fetch`. See [HTTP routes](/docs/reference/http-routes).
+
+## 3. Register a client
+
+```ts
+// The secret is readable one time. The store keeps only its hash.
+const { client, client_secret } = await idp.oauth2.clients.createClient({
+	client_name: "Example App",
+	redirect_uris: ["https://app.example.com/callback"],
+	scope: "profile",
+});
+```
+
+By default a client is confidential (`client_secret_basic`) with the `authorization_code` grant type. A public client, a single-page app or a mobile app, sets `token_endpoint_auth_method: "none"`. Add `refresh_token` to `grant_types` for refresh tokens.
+
+A first-party client with `skip_consent: true` never sees the consent page. A resource server with `introspect: true` sees every token at the introspection endpoint. `audience` sets the `aud` of the access tokens of a client. These three fields are for an administrator only.
+
+## 4. Write the login page
+
+`/oauth2/authorize` shows no page of its own. It sends the browser to `ui.login` with a `login_challenge`. The login page lets the owner dance against the core app, then hands the access token of the dance to the authorization server:
+
+```ts
+// The server side of ui.login.
+const challenge = new URL(request.url).searchParams.get("login_challenge")!;
+const login = await idp.oauth2.getLoginRequest(challenge);
+// login.client.client_name and login.requested_scope describe the request.
+// … the owner dances with AuthDanceClient against auth.fetch …
+const { redirect_to } = await idp.oauth2.acceptLoginRequest(challenge, { access_token: client.tokens!.access_token });
+return Response.redirect(redirect_to, 303);
+```
+
+The access token must hold `account`, and its session must still exist. The identity, the session and the `auth_time` come from that token, never from the page. A login page that keeps the owner signed in hands over the access token of that session and skips the dance.
+
+## 5. Write the consent page
+
+The consent page does the same with the consent challenge:
+
+```ts
+// The server side of ui.consent.
+const challenge = new URL(request.url).searchParams.get("consent_challenge")!;
+const consent = await idp.oauth2.getConsentRequest(challenge);
+// Show consent.client and consent.requested_scope. consent.skip is true when the owner already granted them.
+const { redirect_to } = await idp.oauth2.acceptConsentRequest(challenge, {
+	grant_scope: consent.requested_scope,
+	remember: true,
+});
+return Response.redirect(redirect_to, 303);
+```
+
+`grant_scope` holds some or all of the requested scopes. `remember: true` keeps the consent, so a later request for these scopes skips the page. To refuse, call `rejectLoginRequest` or `rejectConsentRequest` with `{ error: "access_denied" }`. The client gets the error.
+
+A page that runs in another process calls the same methods over HTTP. Pass `app: { admin: { authorize } }` to mount them under `/oauth2/admin`. `authorize` decides for each request whether it may use these routes.
+
+> **Note:** The authorization server sets no cookie. Each redirect carries a single-use verifier, and that is all it needs to continue a request. The pages own the browser. A page that wants the browser that comes back to be the one that left binds the request to it with its own session.
+
+## 6. The client gets its tokens
+
+At `/oauth2/token`, a client uses the authorization code grant with PKCE S256, `refresh_token`, or `client_credentials`. The core mints the tokens, so they are the tokens of a dance with the client and the scopes of the grant. They work wherever the tokens of a dance work: an access token that holds `account` manages the account.
+
+Its `aud` is the issuer, or the `audience` of the client record of a resource server. A resource server checks it against `/oauth2/jwks.json`.
+
+## Grants
+
+A consent creates a session for the client: its grant. A grant stands alone.
+
+- A sign-out in the core, of one session or of all, leaves it, and `/list-sessions` does not list it.
+- It lasts `durations.refresh` from its consent. A revocation, a delete or a reset in the core ends it sooner.
+- `/refresh-token` takes the refresh token of a dance. `/oauth2/token` takes the refresh token of a client, once the client authenticates.
+
+For an account page, `GET /oauth2/grants` lists the clients that have access, and `DELETE /oauth2/grants/{id}` revokes one and forgets the consent the owner kept for its client. Both take the access token of the owner as `Authorization: Bearer`, and the token must hold `account`. In process, `listOwnGrants` and `revokeOwnGrant` do the same. `listGrants(identityId)`, `revokeGrant` and `revokeClientGrants` serve an administrator.
+
+Delete a client with `idp.oauth2.deleteClient`, which revokes its grants first. The client storage alone leaves them active.
+
+## Revocation and introspection
+
+A client revokes a token at `/oauth2/revoke`. Any token of a grant, access or refresh, ends the session of the grant. A token of client credentials has no session, so it stays valid until `exp`.
+
+> **Note:** A resource server that only checks the signature accepts an access token until `exp`, 300 seconds by default. To see a revocation at once, it asks `/oauth2/introspect` as a confidential client, or calls `auth.api.verifyAccessToken(token, { session: true })` in process.
+
+A client sees only its own tokens at `/oauth2/introspect`. Set `introspect: true` on the client record of a resource server to let it see every token, the tokens of a dance included.
+
+## Dynamic registration
+
+`/oauth2/register` lets a client register itself. It is closed until you pass `registration`:
+
+```ts
+registration: {
+	// Without it, anyone can register a client. The owner still sees the client name on the consent page,
+	// but a name can mislead.
+	authorize: (initialAccessToken) => initialAccessToken === process.env.REGISTRATION_TOKEN,
+	// The most a registered client may ask for.
+	scope: ["profile"],
+},
+```
+
+A registered client never gets `skip_consent`, `introspect` or `audience`, and it may not ask for `account` unless `registration.scope` lists it. A setup script calls `idp.oauth2.registerClient(metadata, { registered_by: "admin" })` to run the same checks and set those fields.
+
+## Hooks
+
+`hooks` takes `onGrantCreated`, `onGrantRevoked`, `onClientRegistered` and `onError`. A hook that rejects never fails the request.
+
+Next: [The device grant](/docs/guides/device-grant).

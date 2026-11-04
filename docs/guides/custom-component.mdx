@@ -1,0 +1,133 @@
+---
+title: Write a custom component
+description: Implement AuthDanceComponent, and your own factor works in sign-in, sign-up, enroll, rotate and recover.
+order: 4
+---
+
+A step is a small interface. Implement `AuthDanceComponent`, register the class under a name, and use the name in the choreography. Your factor then works in every flow, the flows you have not considered yet included.
+
+## The contract
+
+| Member                     | Required | What it does                                                                                     |
+| -------------------------- | -------- | ------------------------------------------------------------------------------------------------ |
+| `kind`                     | Yes      | `"identification"` resolves an identity on its own. `"challenge"` proves a claim against one.     |
+| `verifiable`               | Yes      | `true` when the component can prove control of its own value with a second prompt.               |
+| `proves`                   | No       | Whether an accepted value proves control. Defaults to `true` for a challenge, `false` for an identification. |
+| `skippable`                | No       | `true` when the library can go past the step for an identity that needs nothing more from it.   |
+| `getPrompt`                | Yes      | Builds the prompt the client renders.                                                            |
+| `getIdentityComponent`     | Yes      | Turns a submitted value into the records the identity stores.                                    |
+| `verifyPrompt`             | Yes      | Checks a submitted value.                                                                        |
+| `verificationComponent`    | No       | Returns the component that proves control of the collected value. A `verifiable` component declares it. |
+| `sendPrompt`               | No       | Returns a message for the library to deliver over a channel.                                     |
+| `skipPrompt`               | No       | Tells whether the identity needs nothing more from the step. A `skippable` component declares it. |
+| `upgradeIdentityComponent` | No       | Rewrites a stored record after a sign-in step accepts a value.                                   |
+
+Two rules apply.
+
+> **Note:** `verifyPrompt` accepts a value only with `true` or an identity id. Any other answer, `undefined` included, rejects it. An identity id that names no stored identity rejects it too.
+
+> **Note:** Every complete path of the choreography needs a step that proves control. An identification proves nothing by default. Set `proves: true` only when `verifyPrompt` checks a secret, as WebAuthn checks a signature.
+
+## Example: a PIN
+
+This component is a challenge: a PIN of 6 digits, checked against a hash on the identity. It reuses the PBKDF2 hasher of the password component.
+
+```ts title="pin.ts"
+import type { AuthDanceComponent, AuthDanceComponentContext, AuthDanceIdentityComponent, AuthDancePromptInput } from "auth-dance";
+import { InvalidPromptValueError } from "auth-dance";
+import { pbkdf2PasswordHasher } from "auth-dance/components/password";
+
+const hasher = pbkdf2PasswordHasher();
+
+// A PIN of 6 digits, as a challenge. It proves a claim against an identity that an earlier step resolved.
+export class PinAuthDanceComponent implements AuthDanceComponent {
+	readonly kind = "challenge" as const;
+	// A PIN cannot prove control of itself with a second prompt.
+	readonly verifiable = false;
+
+	async getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput> {
+		return { kind: "input", name: context.name, type: "pin", sendable: false, options: { length: 6 } };
+	}
+
+	// Sign-up, enroll, rotate and recover call this method with the value to store.
+	async getIdentityComponent(
+		component: string,
+		value: unknown,
+		confirmed: boolean,
+		context: AuthDanceComponentContext,
+	): Promise<AuthDanceIdentityComponent[]> {
+		if (typeof value !== "string" || !/^\d{6}$/.test(value) || !context.identity) {
+			throw new InvalidPromptValueError(component);
+		}
+		// The identity id binds the record to its owner.
+		const hash = await hasher.hash(`${context.identity.id}:${value}`);
+		return [{ kind: "challenge", component, confirmed, data: { hash } }];
+	}
+
+	// Sign-in and recovery call this method. Answer `true` to accept. Any other answer rejects.
+	async verifyPrompt(value: unknown, context: AuthDanceComponentContext): Promise<boolean> {
+		const record = context.identity?.components.find((c) => c.kind === "challenge" && c.component === context.name);
+		const hash = record?.data?.hash;
+		if (typeof value !== "string" || typeof hash !== "string" || !context.identity) {
+			return false;
+		}
+		return hasher.verify(`${context.identity.id}:${value}`, hash);
+	}
+}
+```
+
+Register it, and use its name:
+
+```ts
+choreography: sequence("email", "pin"),
+components: {
+	email: new EmailAuthDanceComponent({ channel: "email", challenge: "otp" }),
+	otp: new OtpAuthDanceComponent({ channel: "email" }),
+	pin: new PinAuthDanceComponent(),
+},
+```
+
+With no more code, the sign-up collects the PIN, the sign-in checks it, `enroll("pin")` and `rotate("pin")` set it, and `recover("pin")` resets it after the email address and its one-time code. The client sees a prompt of type `pin` with `options.length`.
+
+## The context
+
+Each call gets an `AuthDanceComponentContext`:
+
+- `storage`: the storage of the server. Keep your own records in its key-value part.
+- `stateId`: the id of the dance in progress. Key a record that lives between two calls on it.
+- `name`: the name of the step. A verification component reads the name of the component it proves.
+- `flow`: `sign-in`, `sign-up`, `enroll`, `rotate`, `recover` or `subscribe`.
+- `identity`: the identity as it stands, when the library holds one.
+
+> **Note:** The client can replay an earlier state, and the replay keeps the same `stateId`. A replay can resolve another identity or collect another value. Keep the identity or the recipient in a record you key on `stateId`, and compare them when you read it back. The one-time code component does this.
+
+The library gives no identity to `getPrompt` in a sign-in, a sign-up or a step of a recovery dance. In a sign-in and a recovery, `verifyPrompt` gets the identity the earlier steps resolved.
+
+## An identification
+
+An identification resolves the owner. Its `verifyPrompt` looks up the identity and returns its id:
+
+```ts
+async verifyPrompt(value: unknown, context: AuthDanceComponentContext): Promise<boolean | string> {
+	if (typeof value !== "string") return false;
+	const identity = await context.storage.getIdentityByIdentification(context.name, value.trim().toLowerCase());
+	const record = identity?.components.find((c) => c.kind === "identification" && c.component === context.name);
+	return identity && record?.confirmed ? identity.id : false;
+}
+```
+
+Normalize the value the same way in `getIdentityComponent` and in `verifyPrompt`, so a lookup finds what a sign-up stored. A recovery needs an identity id from its first step: an answer of `true` there raises `IdentityNotResolvedError`.
+
+## A verifiable component
+
+A component that can prove control of its own value sets `verifiable: true` and declares `verificationComponent`. After the flow collects the value, it asks the verification component for a second prompt, and confirms the record when that prompt passes. The email component returns a one-time code component that sends a code to the collected email address. On a verification component, the library accepts `true` alone.
+
+The library confirms a collected value at once for a component with no verification. A flow that needs proof of a component that declares none raises `ComponentNotVerifiableError`.
+
+## Delivering a value
+
+A component whose value the owner cannot type declares `sendPrompt`, and sets `sendable: true` on its prompt. `sendPrompt` returns an `AuthDanceMessage`: a `recipient` (a channel record of the identity), a `subject`, and a `content` record keyed by media type. The library delivers it over the channel the recipient names.
+
+## Linked records
+
+A component can return more than one record, and link them with `linkedTo`. A removal follows the links in both directions. The email component returns three records: the identification, the channel that reaches the email address, and the one-time code challenge. An unenroll of `email` removes the three together.

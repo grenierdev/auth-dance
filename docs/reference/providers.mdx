@@ -1,0 +1,107 @@
+---
+title: auth-dance/providers/*
+description: The storage adapter interfaces, the memory providers for tests, and the Cloudflare providers for Workers.
+order: 8
+---
+
+`AuthDanceStorage` runs on three adapters. The authorization server adds a fourth for its clients. `auth-dance/providers/memory` ships all four for tests, and `auth-dance/providers/cloudflare` ships them for Workers.
+
+## Interfaces
+
+These interfaces come from `auth-dance`, and `AuthDanceOauth2ClientProvider` from `auth-dance/oauth2`.
+
+### AuthDanceIdentityProvider
+
+| Method | Description |
+| ------ | ----------- |
+| `list(cursor?, limit?)` | One page of identities. |
+| `get(id)` | One identity, or `undefined`. |
+| `getByIdentification(component, identification)` | The identity that holds one identification, or `undefined`. |
+| `set(identity)` | Writes a whole identity. After the write, `getByIdentification` must find it by each identification it holds. |
+| `delete(id)` | Deletes one identity. An unknown id is not a failure. |
+
+### AuthDanceKvProvider
+
+| Method | Description |
+| ------ | ----------- |
+| `get(key)` | The value, or `undefined` for a key that holds nothing or that expired. |
+| `list(prefix, offset?, limit?)` | The keys under a prefix. |
+| `set(key, value, ttl?)` | Writes a value. `ttl` is in seconds. Without it, the value stays until `unset`. |
+| `unset(key)` | Deletes one key. |
+
+The library uses the key spaces `session/<id>`, `sessions/<identityId>/<id>`, `otp/<stateId>/<name>`, the records of the components, and `oauth2/` for the authorization server.
+
+### AuthDanceRateLimiterProvider
+
+| Method | Description |
+| ------ | ----------- |
+| `limit(key, limit, window)` | Counts one hit of the bucket `key`, and answers `{ allowed, retryAfter }`. `window` is in milliseconds; `retryAfter` is in seconds, or `undefined`. |
+
+### AuthDanceOauth2ClientProvider
+
+| Method | Description |
+| ------ | ----------- |
+| `get(clientId)` | One client, or `undefined`. |
+| `list(cursor?, limit?)` | One page of clients, in the order of `client_id`, from the first id equal to `cursor` or after it. |
+| `set(client)` | Writes a whole client. |
+| `delete(clientId)` | Deletes one client. |
+
+## auth-dance/providers/memory
+
+```ts
+import {
+	createAuthDanceMemoryStorage,
+	MemoryAuthDanceChannel,
+	MemoryIdentityProvider,
+	MemoryKvProvider,
+	MemoryRateLimiterProvider,
+} from "auth-dance/providers/memory";
+```
+
+> **Note:** Each memory provider loses its data when the process stops. Use them for tests and for a single process. Each provider implements `Disposable`, which empties it.
+
+| Export | Description |
+| ------ | ----------- |
+| `MemoryIdentityProvider` | Identities in a `Map`. The constructor takes `[id, identity]` pairs to seed it. Reads return clones. |
+| `MemoryKvProvider` | Keys in a `Map`. It runs no timer: `get` and `list` ignore an expired entry. `clearExpired()` removes them. |
+| `MemoryRateLimiterProvider` | One fixed window per key, in one process. |
+| `MemoryAuthDanceChannel` | A channel that keeps each message in `messages` and delivers nothing. The constructor takes the prompt type its subscribe prompt reports. `getIdentityChannel` writes the recipient under `data.sms`. |
+| `createAuthDanceMemoryStorage()` | An `AuthDanceStorage` on the three memory adapters. |
+| `MemoryOauth2ClientProvider` | Clients in a `Map`. The constructor takes clients to seed it, for a fixed list of first-party clients. |
+| `createAuthDanceMemoryOauth2ClientStorage(clients?)` | An `AuthDanceOauth2ClientStorage` on a `MemoryOauth2ClientProvider`. |
+
+A test reads the one-time code off the channel:
+
+```ts
+using channel = new MemoryAuthDanceChannel("email");
+// … the dance sends a code …
+const code = channel.messages[0].content["text/x-code"];
+```
+
+## auth-dance/providers/cloudflare
+
+```ts
+import {
+	CloudflareD1IdentityProvider,
+	CloudflareD1Oauth2ClientProvider,
+	CloudflareKvKvProvider,
+	CloudflareRateLimiterProvider,
+	CloudflareSendMailAuthDanceChannel,
+	createAuthDanceCloudflareOauth2ClientStorage,
+	createAuthDanceCloudflareStorage,
+	RateLimiterDurableObject,
+} from "auth-dance/providers/cloudflare";
+```
+
+| Export | Description |
+| ------ | ----------- |
+| `CloudflareD1IdentityProvider(db)` | Identities in the `identity` table of a D1 database. Lookups by identification use the `mv_identity_identification` table that triggers keep. |
+| `CloudflareKvKvProvider(kv)` | Keys in a Workers KV namespace. Workers KV is eventually consistent for up to about 60 seconds across locations. |
+| `CloudflareRateLimiterProvider(namespace)` | One `RateLimiterDurableObject` per bucket key. |
+| `RateLimiterDurableObject` | The Durable Object class. Export it from the worker. |
+| `CloudflareSendMailAuthDanceChannel(sendMail, { from, replyTo? })` | An email channel on a send-email binding. It sends the `text/plain` and `text/html` bodies to `data.email` of the recipient, and stores a normalized email address on subscribe. |
+| `createAuthDanceCloudflareStorage(kv, d1, namespace)` | An `AuthDanceStorage` on the D1, KV and Durable Object adapters. |
+| `CloudflareD1Oauth2ClientProvider(db)` | Clients as JSON in the `oauth2_client` table. |
+| `createAuthDanceCloudflareOauth2ClientStorage(d1)` | An `AuthDanceOauth2ClientStorage` on it. |
+
+The tables are in `src/providers/sqlite.sql` of the repository. See [Cloudflare Workers with D1 and KV](/docs/guides/cloudflare).

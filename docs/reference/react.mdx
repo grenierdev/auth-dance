@@ -1,0 +1,101 @@
+---
+title: auth-dance/react
+description: The React provider, the hooks, the flow handle and the prompt switch of auth-dance/react.
+order: 4
+---
+
+```tsx
+import { AuthDanceFlowProvider, AuthDancePromptSwitch, AuthDanceProvider, useAuthDanceFlow } from "auth-dance/react";
+```
+
+The module needs React 19, an optional peer dependency of `auth-dance`. It re-exports the client types it names: `AuthDanceClient`, `AuthDanceClientChoreography`, `AuthDanceClientChoreographySnapshot`, `AuthDanceClientChoreographyStep`, `AuthDanceClientChoreographyStore`, `AuthDanceFlow`, `AuthDancePrompt`, `AuthDancePromptChoice`, `AuthDancePromptInput`, `AuthDanceResponse`, `AuthDanceResponseTokens` and `AuthDanceSession`.
+
+See the [React guide](/docs/guides/react) for worked examples.
+
+## AuthDanceProvider
+
+| Prop       | Type              | Description |
+| ---------- | ----------------- | ----------- |
+| `client`   | `AuthDanceClient` | The client every hook under this node reads. |
+| `children` | `ReactNode`       | The tree. |
+
+## Client hooks
+
+| Hook                               | Returns | Description |
+| ---------------------------------- | ------- | ----------- |
+| `useAuthDanceClient(client?)`      | `AuthDanceClient` | The client of the tree, or `client`. Throws `TypeError` with neither. |
+| `useOptionalAuthDanceClient()`     | `AuthDanceClient \| undefined` | The client of the tree, or `undefined`. Never throws. |
+| `useAuthDanceTokens(client?)`      | `AuthDanceResponseTokens \| undefined` | The tokens, the session and the identity. Renders again when they change. |
+| `useAuthDanceIdentity(client?)`    | `{ id, data? } \| undefined` | The identity part of the tokens. |
+| `useAuthDanceSession(client?)`     | `AuthDanceSession \| undefined` | The session part of the tokens. |
+
+## useAuthDanceFlow
+
+```ts
+function useAuthDanceFlow(options: AuthDanceFlowOptions): AuthDanceFlowHandle;
+```
+
+Starts one flow and drives it. It starts when the node mounts, and again when `flow` or `name` changes. It disposes the dance when the node unmounts, and keeps the snapshot in the store.
+
+### AuthDanceFlowOptions
+
+| Option    | Type                                   | Default         | Description |
+| --------- | -------------------------------------- | --------------- | ----------- |
+| `flow`    | `AuthDanceFlow`                        | Required        | The flow to start. A new value starts the new flow and drops the old dance. |
+| `name`    | `string`                               | None            | The component or the channel the flow acts on. Seven of the nine flows need one. |
+| `client`  | `AuthDanceClient`                      | The tree client | A client over the one of the tree. |
+| `store`   | `AuthDanceClientChoreographyStore`     | None            | Where the dance keeps its progress. The hook reads it when the flow starts. |
+| `enabled` | `boolean`                              | `true`          | Whether the flow starts. |
+| `onDone`  | `(response, choreography) => void`     | None            | Called once an answer ends the flow. |
+| `onError` | `(error) => void`                      | None            | Called each time an action is refused. |
+
+### AuthDanceFlowHandle
+
+| Member         | Type                              | Description |
+| -------------- | --------------------------------- | ----------- |
+| `choreography` | `AuthDanceClientChoreography \| undefined` | The dance, or `undefined` while the start is out or after it failed. |
+| `flow`, `name` | `AuthDanceFlow`, `string \| undefined` | The flow and what it acts on. |
+| `prompt`       | `AuthDancePrompt \| null`         | One input or a choice. `null` once the flow is over. |
+| `current`      | `AuthDancePromptInput \| null`    | The input to answer now. |
+| `choices`      | `AuthDancePromptInput[]`          | The branches of a choice. |
+| `selected`     | `string \| undefined`             | The branch picked. |
+| `trail`        | `string[]`                        | The names answered so far. |
+| `sendable`     | `boolean`                         | Whether `sendPrompt` has something to deliver. |
+| `expired`      | `boolean`                         | Whether the flow expired. |
+| `done`         | `boolean`                         | Whether the flow is over. |
+| `pending`      | `boolean`                         | Whether a call is out. |
+| `error`        | `unknown`                         | The failure of the last refused action. |
+| `choose(name)` | `Promise<void>`                   | Picks a branch. |
+| `sendPrompt({ name?, locale? })` | `Promise<void>`   | Delivers the current input over its channel. |
+| `submitPrompt(value, { name? })` | `Promise<AuthDanceResponse \| undefined>` | Answers the current input. `undefined` when refused. |
+| `confirm()`    | `Promise<AuthDanceResponse \| undefined>` | Submits `true` to a confirmation. |
+| `prev()`       | `Promise<void>`                   | Goes back one step. |
+| `restart()`    | `Promise<void>`                   | Starts the flow again. A flow whose start failed starts over from here. |
+| `abandon()`    | `Promise<void>`                   | Drops the flow. It calls no route. |
+| `clearError()` | `void`                            | Drops `error`. |
+
+The actions never throw. A refused action keeps its failure under `error` and resolves with nothing.
+
+## AuthDanceFlowProvider
+
+Takes every option of `useAuthDanceFlow`, and:
+
+| Prop       | Type                                                     | Description |
+| ---------- | -------------------------------------------------------- | ----------- |
+| `children` | `ReactNode \| ((flow: AuthDanceFlowHandle) => ReactNode)` | The tree, or a function the provider calls with the handle. |
+| `fallback` | `ReactNode`                                              | What to render while the start is out. Without it, the children render at once. |
+
+`useAuthDanceFlowContext(flow?)` returns the handle of the nearest provider, or `flow`, and throws `TypeError` with neither. `useOptionalAuthDanceFlowContext()` returns it or `undefined`.
+
+## AuthDancePromptSwitch
+
+Renders the prompt the owner answers next.
+
+| Prop       | Type | Description |
+| ---------- | ---- | ----------- |
+| `prompts`  | `Record<string, (prompt: AuthDancePromptInput, flow: AuthDanceFlowHandle) => ReactNode>` | What to render for one input. The switch looks up the `name` of the input first, then its `type`. |
+| `choice`   | `(choices: AuthDancePromptInput[], flow: AuthDanceFlowHandle) => ReactNode` | What to render for a choice with no branch picked. |
+| `fallback` | `(prompt: AuthDancePrompt \| null, flow: AuthDanceFlowHandle) => ReactNode` | What to render when nothing else matches, the end of the flow included. |
+| `flow`     | `AuthDanceFlowHandle` | A flow over the one of the tree. |
+
+It throws `TypeError` when no `flow` is given and no `AuthDanceFlowProvider` stands above it.

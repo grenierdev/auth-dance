@@ -1,0 +1,92 @@
+---
+title: Errors
+description: Every error code of the core, the class that carries it, and when the library raises it.
+order: 10
+---
+
+Every failure the core reports extends `AuthDanceError`. Each error has a stable `code`. `JSON.stringify(error)` gives exactly `{"code":"…"}`, so the message, which holds internal detail for the server log, never reaches a response. The HTTP layer answers `{ "error": CODE }`.
+
+`Errors` maps each code to its class. The client uses it to raise the same class on its side:
+
+```ts
+import { InvalidPromptValueError, RateLimitedError } from "auth-dance";
+
+try {
+	await dance.submitPrompt(value);
+} catch (error) {
+	if (error instanceof InvalidPromptValueError) {
+		// A wrong value. The dance stays on the same step.
+	} else if (error instanceof RateLimitedError) {
+		console.log(`Wait ${error.retryAfter} seconds.`);
+	}
+}
+```
+
+The HTTP layer answers 429 for `RATE_LIMITED`, and 500 for every other code. A body that does not match the route answers 400 with `BAD_REQUEST`, which is not in the registry.
+
+## Tokens and sessions
+
+| Code | Class | When |
+| ---- | ----- | ---- |
+| `INVALID_ACCESS_TOKEN` | `InvalidAccessTokenError` | The access token does not verify, is not an access token of this issuer, or is for another audience. Also a missing or malformed `Authorization` header. |
+| `INVALID_REFRESH_TOKEN` | `InvalidRefreshTokenError` | The refresh token does not verify, is not of this issuer, or belongs to another client. |
+| `INSUFFICIENT_SCOPE` | `InsufficientScopeError` | The access token does not hold the scope the action needs, `account` for a management route. |
+| `CLAIMS_MAPPER_FAILED` | `ClaimsMapperError` | The `claims` mapper threw, or its result broke a rule. |
+| `SESSION_NOT_FOUND` | `SessionNotFoundError` | No session exists under the id a token or a state names. |
+| `IDENTITY_NOT_FOUND` | `IdentityNotFoundError` | No identity exists under the id a session or a state names. |
+
+## State
+
+| Code | Class | When |
+| ---- | ----- | ---- |
+| `INVALID_STATE` | `InvalidStateError` | The state does not decrypt, carries no expiry, or does not match the schema. An expired state answers this code. |
+| `INVALID_STATE_FOR_FLOW` | `InvalidStateForFlowError` | The step does not accept the flow of the state, for example `sendPrompt` on a confirmation. |
+| `FRESH_SIGN_IN_REQUIRED` | `FreshSignInRequiredError` | The sign-in is older than `durations.elevated`. A refresh does not help: sign in again. |
+| `RATE_LIMITED` | `RateLimitedError` | A bucket is empty. `retryAfter` holds the wait in seconds, or `undefined`. |
+
+## Configuration
+
+| Code | Class | When |
+| ---- | ----- | ---- |
+| `UNKNOWN_COMPONENT` | `UnknownComponentError` | A name that `components` does not declare. |
+| `UNKNOWN_CHANNEL` | `UnknownChannelError` | A channel that `channels` does not declare. |
+| `COMPONENT_NOT_IN_CHOREOGRAPHY` | `ComponentNotInChoreographyError` | A name that the current step does not offer. |
+| `COMPONENT_NOT_VERIFIABLE` | `ComponentNotVerifiableError` | The flow needs proof of a value, and the component declares no `verificationComponent`. |
+| `COMPONENT_NOT_SENDABLE` | `ComponentNotSendableError` | The component declares no `sendPrompt`, or it produced no message. |
+| `COMPONENT_NOT_RECOVERABLE` | `ComponentNotRecoverableError` | `recovery` marks the component `false`, or no path stays a recovery path without it. |
+| `INVALID_CHOREOGRAPHY` | `InvalidChoreographyError` | A path of the choreography or of a recovery entry has no step that proves control, or a recovery entry is not valid. |
+| `CHOREOGRAPHY_EMPTY` | `ChoreographyEmptyError` | A sign-in or a sign-up found no first step. |
+
+## Flows
+
+| Code | Class | When |
+| ---- | ----- | ---- |
+| `COMPONENT_ALREADY_ENROLLED` | `ComponentAlreadyEnrolledError` | `enroll` named a component the identity holds. |
+| `COMPONENT_NOT_ENROLLED` | `ComponentNotEnrolledError` | `unenroll` or `rotate` named a component the identity does not hold. |
+| `COMPONENT_ALREADY_COLLECTED` | `ComponentAlreadyCollectedError` | The flow already collected a value for this component, for example after `prev()`. |
+| `COMPONENT_NOT_COLLECTED` | `ComponentNotCollectedError` | The state holds no collected value for the component. |
+| `WOULD_LOCK_OUT` | `WouldLockOutError` | An unenroll or an unsubscribe would leave no complete path. |
+| `COMPONENT_IN_USE` | `ComponentInUseError` | A removal would leave a record that names a component which is gone, and the library cannot take it down. |
+| `CHANNEL_ALREADY_SUBSCRIBED` | `ChannelAlreadySubscribedError` | `subscribe` named a channel the identity holds. |
+| `CHANNEL_NOT_SUBSCRIBED` | `ChannelNotSubscribedError` | `unsubscribe` or `sendMessageTo` named a channel the identity does not hold. |
+| `IDENTIFICATION_TAKEN` | `IdentificationTakenError` | Another identity already holds the identification. |
+| `CONFIRMATION_REQUIRED` | `ConfirmationRequiredError` | A confirmation got a value other than `true`. |
+
+## Verification
+
+| Code | Class | When |
+| ---- | ----- | ---- |
+| `INVALID_PROMPT_VALUE` | `InvalidPromptValueError` | A component rejected the value, a wrong password for example, or refused to store it. |
+| `INVALID_VALIDATION_VALUE` | `InvalidValidationValueError` | A validation rejected the value, a wrong one-time code for example. |
+| `IDENTITY_NOT_RESOLVED` | `IdentityNotResolvedError` | A step needs an identity, and no step resolved one. |
+| `IDENTITY_MISMATCH` | `IdentityMismatchError` | Two steps of one dance resolved two different identities. |
+| `RECOVERY_NOT_IDENTIFIED` | `RecoveryNotIdentifiedError` | A recovery step needs the identity, and the first step is not answered yet. |
+| `UNKNOWN` | `AuthDanceUnknownError` | Any other failure. The original is in `cause`, for the server log. |
+
+## Client errors
+
+`auth-dance/client` adds its own errors for failures on the client side. See [the client reference](/docs/reference/client#errors).
+
+## OAuth 2.0 errors
+
+`auth-dance/oauth2` reports RFC error codes, such as `invalid_grant`, with their own classes. See [the oauth2 reference](/docs/reference/oauth2#errors).

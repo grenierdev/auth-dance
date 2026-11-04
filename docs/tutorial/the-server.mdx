@@ -1,0 +1,123 @@
+---
+title: The server
+description: Declare the choreography, say what each step does, and serve the routes on Node.js.
+order: 2
+---
+
+The server holds the whole policy. You declare the choreography, map each name in it to a component, and serve the handler that `createAuthDance` returns.
+
+This server signs in with an email address and a password. A sign-up proves the email address with a one-time code. The tutorial keeps everything in memory, and it prints each one-time code on the console instead of sending an email.
+
+### 1. Write the server
+
+Create `server.ts`:
+
+```ts title="server.ts"
+import { serve } from "@hono/node-server";
+import { getConnInfo } from "@hono/node-server/conninfo";
+import type { AuthDanceMessage } from "auth-dance";
+import { AuthDanceStorage, createAuthDance, sequence } from "auth-dance";
+import { EmailAuthDanceComponent } from "auth-dance/components/email";
+import { OtpAuthDanceComponent } from "auth-dance/components/otp";
+import { PasswordAuthDanceComponent } from "auth-dance/components/password";
+import { MemoryAuthDanceChannel, MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "auth-dance/providers/memory";
+
+// A channel that prints each one-time code on the console. It sends no email.
+class ConsoleChannel extends MemoryAuthDanceChannel {
+	async sendMessage(message: AuthDanceMessage): Promise<void> {
+		console.log(`${message.subject}: ${message.content["text/x-code"]}`);
+		await super.sendMessage(message);
+	}
+}
+
+const auth = createAuthDance({
+	api: {
+		// The dance itself: an email address, then a password.
+		choreography: sequence("email", "password"),
+		// What each step does. The keys are the names the choreography and the prompts use.
+		components: {
+			email: new EmailAuthDanceComponent({ channel: "email", challenge: "otp" }),
+			otp: new OtpAuthDanceComponent({ channel: "email" }),
+			password: new PasswordAuthDanceComponent(process.env.PASSWORD_PEPPER!),
+		},
+		// Where the messages go.
+		channels: { email: new ConsoleChannel("email") },
+		// Encrypts the state of a flow.
+		secret: process.env.AUTH_SECRET!,
+		// Signs the tokens. The first key signs; every key verifies.
+		keys: [JSON.parse(process.env.AUTH_SIGNING_KEY!)],
+		// The `iss` of every token. http: passes only for localhost.
+		tokens: { issuer: "http://localhost:3000" },
+		storage: new AuthDanceStorage({
+			identity: new MemoryIdentityProvider(),
+			kv: new MemoryKvProvider(),
+			rate_limiter: new MemoryRateLimiterProvider(),
+		}),
+	},
+	// No proxy stands in front of this server, so the address comes from the connection.
+	app: { address: (c) => getConnInfo(c).remote.address },
+	info: { title: "Auth API", version: "1.0.0" },
+});
+
+serve({ fetch: auth.fetch, port: 3000 });
+console.log("Auth Dance listens on http://localhost:3000");
+```
+
+What each part does:
+
+- `choreography` is the policy. `sequence("email", "password")` asks for the email address, then the password.
+- `components` maps each name to a component. `email` resolves the identity. `password` proves control. `otp` is the one-time code that proves the email address. The `challenge: "otp"` option of the email component names it.
+- `channels` delivers messages. The email component and the one-time code both use the channel named `email`.
+- `secret` encrypts the state that the client carries between two steps. It signs nothing.
+- `keys` signs the tokens.
+- `tokens.issuer` is the `iss` of every token. It must be an `https:` URL. `http:` passes only for `localhost`, `127.0.0.1` and `[::1]`.
+- `storage` holds the identities, the sessions, the one-time codes and the rate-limit counters.
+- `app.address` tells the rate limits where the address of a request comes from. See [Rate limits and proxies](/docs/guides/rate-limits).
+
+> **Note:** The memory providers lose every identity when the process stops. Use them for tests and for this tutorial only.
+
+### 2. Start the server
+
+```sh
+node --env-file=.env server.ts
+```
+
+### 3. Read the public keys
+
+In a second terminal:
+
+```sh
+curl http://localhost:3000/.well-known/jwks.json
+```
+
+### 4. Start a sign-in by hand
+
+```sh
+curl -X POST http://localhost:3000/sign-in
+```
+
+### What you should see
+
+The server prints `Auth Dance listens on http://localhost:3000`.
+
+The key set holds one public key, with no private member:
+
+```json
+{ "keys": [{ "kty": "EC", "crv": "P-256", "x": "…", "y": "…", "kid": "…", "alg": "ES256", "use": "sig" }] }
+```
+
+The sign-in answers with an encrypted state, the first prompt, and the moment the state expires:
+
+```json
+{
+	"state": "eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0…",
+	"prompt": { "kind": "input", "name": "email", "type": "email", "sendable": false },
+	"expireAt": "…"
+}
+```
+
+The prompt names the first step of the choreography. A client answers it at `POST /submit-prompt` with the same `state`. The next page does that with the client library.
+
+If the server does not start, read the error. A `TypeError` names a bad signing key, a bad issuer, or a pepper under 16 bytes. An error from `jose` names a state secret that is not base64url.
+
+Next: [The first dance](/docs/tutorial/the-first-dance).
