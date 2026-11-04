@@ -93,7 +93,7 @@ function IdpLogin() {
 		return (
 			<AuthLayout>
 				<FieldGroup>
-					<h1 className="text-center text-xl font-bold">Sign in with Auth Dance</h1>
+					<h1 className="text-center text-xl display">Sign in with Auth Dance</h1>
 					{card}
 					{failure !== undefined && (
 						<Alert variant="destructive">

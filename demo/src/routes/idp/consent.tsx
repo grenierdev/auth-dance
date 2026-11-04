@@ -92,7 +92,7 @@ function IdpConsent() {
 		<AuthLayout>
 			<FieldGroup>
 				<div className="text-center">
-					<h1 className="text-xl font-bold">Allow access?</h1>
+					<h1 className="text-xl display">Allow access?</h1>
 					<FieldDescription>Grant only what you are comfortable with. You can revoke it from your account page.</FieldDescription>
 				</div>
 				<ClientCard client={request.client} scopes={request.requested_scope} userCode={request.user_code} />

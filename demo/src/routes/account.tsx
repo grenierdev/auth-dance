@@ -102,10 +102,10 @@ function Account() {
 	const emailChannel = components?.find((c) => c.kind === "channel" && c.component === "email");
 
 	return (
-		<main className="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-10">
+		<main className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-10 sm:px-6">
 			<div className="flex flex-wrap items-end justify-between gap-4">
 				<div>
-					<h1 className="text-2xl font-bold tracking-tight">Account</h1>
+					<h1 className="text-2xl display">Account</h1>
 					<p className="text-sm text-muted-foreground">
 						{emailOf(tokens.tokens.access_token) ?? "No address on this account"} · <code className="text-xs">{tokens.identity.id}</code>
 					</p>

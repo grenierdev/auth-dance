@@ -30,7 +30,7 @@ export function LoginForm({ title, description, children, footer, compact, class
 							<FingerprintIcon className="size-6" />
 						</div>
 					)}
-					<h1 className="text-xl font-bold">{title}</h1>
+					<h1 className="text-xl display">{title}</h1>
 					{description && <FieldDescription>{description}</FieldDescription>}
 				</div>
 				{children}

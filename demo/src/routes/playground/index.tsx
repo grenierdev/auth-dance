@@ -66,7 +66,7 @@ function Playground() {
 					<NotebookPenIcon className="size-5" />
 				</div>
 				<div>
-					<h1 className="text-2xl font-bold tracking-tight">Dance Notes</h1>
+					<h1 className="text-2xl display">Dance Notes</h1>
 					<p className="text-sm text-muted-foreground">A pretend third-party app. It knows Auth Dance only through OAuth 2.0.</p>
 				</div>
 			</div>

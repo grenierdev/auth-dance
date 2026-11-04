@@ -42,7 +42,7 @@ function IdpDevice() {
 			<AuthLayout>
 				<FieldGroup className="items-center text-center">
 					{approved ? <CheckCircle2Icon className="size-10 text-green-600" /> : <XCircleIcon className="size-10 text-destructive" />}
-					<h1 className="text-xl font-bold">{approved ? "Your device is connected" : "The device was not connected"}</h1>
+					<h1 className="text-xl display">{approved ? "Your device is connected" : "The device was not connected"}</h1>
 					<FieldDescription>
 						{approved ? "Go back to your device: it signs in at its next poll." : (search.error_description ?? "The request was denied.")}
 					</FieldDescription>
@@ -59,7 +59,7 @@ function IdpDevice() {
 			<AuthLayout>
 				<FieldGroup className="items-center text-center">
 					<MonitorIcon className="size-8" />
-					<h1 className="text-xl font-bold">Connect a device</h1>
+					<h1 className="text-xl display">Connect a device</h1>
 					<FieldDescription>
 						Open the address your device shows, <code>/oauth2/device</code>. It brings you back here with a fresh request.
 					</FieldDescription>
@@ -108,7 +108,7 @@ function UserCodeForm({ challenge }: { challenge: string }) {
 				<FieldGroup>
 					<div className="flex flex-col items-center gap-2 text-center">
 						<MonitorIcon className="size-6" />
-						<h1 className="text-xl font-bold">Connect a device</h1>
+						<h1 className="text-xl display">Connect a device</h1>
 						<FieldDescription>Type the code your device shows. Five wrong codes end the request.</FieldDescription>
 					</div>
 					{failure !== undefined && (

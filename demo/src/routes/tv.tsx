@@ -81,7 +81,7 @@ function Tv() {
 	return (
 		<main className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-10">
 			<div>
-				<h1 className="text-2xl font-bold tracking-tight">Dance TV</h1>
+				<h1 className="text-2xl display">Dance TV</h1>
 				<p className="text-sm text-muted-foreground">
 					A pretend TV. It cannot show a login page, so it shows a code to type on another screen: the device authorization grant.
 				</p>
@@ -122,7 +122,7 @@ function Tv() {
 					)}
 					{screen.kind === "signed-in" && (
 						<>
-							<p className="text-3xl font-bold">Welcome back</p>
+							<p className="text-3xl display">Welcome back</p>
 							<p className="text-lg opacity-80">{String(screen.claims.email ?? screen.claims.sub)}</p>
 							<p className="max-w-md text-xs opacity-60">
 								The TV holds an access token for <code>{String(screen.claims.client_id)}</code> with the scope{" "}
@@ -132,7 +132,7 @@ function Tv() {
 					)}
 					{screen.kind === "failed" && (
 						<>
-							<p className="text-2xl font-bold">Sign-in failed</p>
+							<p className="text-2xl display">Sign-in failed</p>
 							<p className="opacity-80">{screen.error}</p>
 							<Button variant="secondary" onClick={start}>
 								Try again
