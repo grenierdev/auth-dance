@@ -122,7 +122,7 @@ A passkey or a security key. The credential id names the owner, so a sign-in nee
 | `rp`                      | `{ id: string; name: string }` | Required | The relying party. A change of `rp.id` makes every credential unusable. |
 | `origins`                 | `string[]` | `["https://" + rp.id]` | The web origins, scheme, host and port, accepted in the client data. |
 | `algorithms`              | `number[]` | `[-7, -257]` | COSE algorithms, in order of preference. |
-| `userVerification`        | `"required" \| "preferred" \| "discouraged"` | `"preferred"` | Whether the owner must verify to the authenticator. |
+| `userVerification`        | `"required" \| "preferred" \| "discouraged"` | `"preferred"` | Whether the owner must verify to the authenticator, with a PIN or a biometric. `required` refuses every answer without the `UV` flag. `preferred` refuses it only for a credential that verified the owner at its registration. `discouraged` never checks it. |
 | `residentKey`             | `"required" \| "preferred" \| "discouraged"` | `"required"` | Keep `required`: only a credential the authenticator keeps answers a sign-in. |
 | `authenticatorAttachment` | `"platform" \| "cross-platform"` | Both | Which authenticators the client offers. |
 | `attestation`             | `"none" \| "indirect" \| "direct" \| "enterprise"` | `"none"` | The component reads no attestation statement. |

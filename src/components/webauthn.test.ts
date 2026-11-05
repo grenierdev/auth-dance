@@ -467,6 +467,37 @@ describe("WebAuthnAuthDanceComponent", () => {
 		vitestAssert.isFalse(await component.verifyPrompt({ ...forged, id: authenticator.id, rawId: authenticator.id }, ctx));
 	});
 
+	it("should keep asking for user verification from a credential that verified at its registration", async () => {
+		const store = storage();
+		const preferred = new WebAuthnAuthDanceComponent({ rp: RP });
+		const { authenticator, record } = await enroll(preferred, store);
+		deepEqual(record.data?.uvInitialized, true);
+		await store.createIdentity({}, [{ ...record, confirmed: true }]);
+		const ctx = context(store, { flow: "sign-in" });
+		// Presence alone does not answer for that credential.
+		vitestAssert.isFalse(
+			await preferred.verifyPrompt(await authenticator.authenticate(await preferred.getPrompt(ctx), { flags: 0x01 }), ctx),
+		);
+		ok(await preferred.verifyPrompt(await authenticator.authenticate(await preferred.getPrompt(ctx), { signCount: 1 }), ctx));
+		// `discouraged` never reads the flag.
+		const discouraged = new WebAuthnAuthDanceComponent({ rp: RP, userVerification: "discouraged" });
+		ok(
+			await discouraged.verifyPrompt(
+				await authenticator.authenticate(await discouraged.getPrompt(ctx), { flags: 0x01, signCount: 2 }),
+				ctx,
+			),
+		);
+	});
+
+	it("should accept presence alone from a credential that did not verify at its registration", async () => {
+		const store = storage();
+		const component = new WebAuthnAuthDanceComponent({ rp: RP });
+		const { authenticator, record } = await enroll(component, store);
+		await store.createIdentity({}, [{ ...record, confirmed: true, data: { ...record.data, uvInitialized: false } }]);
+		const ctx = context(store, { flow: "sign-in" });
+		ok(await component.verifyPrompt(await authenticator.authenticate(await component.getPrompt(ctx), { flags: 0x01 }), ctx));
+	});
+
 	it("should refuse a signature that does not read, and a credential nobody holds", async () => {
 		const component = new WebAuthnAuthDanceComponent({ rp: RP });
 		const store = storage();

@@ -204,7 +204,10 @@ interface WebAuthnRecord {
 	backupEligible: boolean;
 	/** Whether a copy of the credential rests outside the authenticator that made it. */
 	backupState: boolean;
-	/** Whether the owner ever verified themself to the authenticator with this credential. */
+	/**
+	 * Whether the owner verified themself to the authenticator at the registration of this credential. With
+	 * `userVerification` at `preferred`, a credential with this flag must verify the owner in every signature.
+	 */
 	uvInitialized: boolean;
 }
 
@@ -245,7 +248,11 @@ export interface WebAuthnAuthDanceComponentOptions {
 	algorithms?: number[];
 	/**
 	 * Whether the owner must verify themself to the authenticator, with a fingerprint or a PIN for one. `required`
-	 * makes one credential a factor of its own.
+	 * makes one credential a factor of its own, and refuses every answer without the `UV` flag.
+	 *
+	 * `preferred` accepts an answer without the `UV` flag, except for a credential that verified the owner at its
+	 * registration. That credential must verify the owner every time, so a client cannot drop it to presence alone.
+	 * `discouraged` never reads the `UV` flag.
 	 * @defaultValue `"preferred"`
 	 */
 	userVerification?: "required" | "preferred" | "discouraged";
@@ -673,8 +680,8 @@ export class WebAuthnAuthDanceComponent implements AuthDanceComponent {
 	/**
 	 * Checks the answer of `navigator.credentials.get` against the credential the id of the answer names.
 	 *
-	 * The method reads the challenge of the prompt, the origin, the relying party, the presence of the owner, the
-	 * signature over the authenticator data and the hash of the client data, and the signature counter. It then
+	 * The method reads the challenge of the prompt, the origin, the relying party, the presence and the verification
+	 * of the owner, the signature over the authenticator data and the hash of the client data, and the signature counter. It then
 	 * drops the challenge, so one prompt answers one time.
 	 *
 	 * A verification accepts the credential the flow just collected, and nothing else. Every other case accepts any
@@ -683,7 +690,8 @@ export class WebAuthnAuthDanceComponent implements AuthDanceComponent {
 	 * @param context The context of the dance, which carries the identity when the library holds one.
 	 * @returns The id of the identity that owns the credential. `true` from the verification of a credential the
 	 * flow just collected. `false` in every other case, which includes an answer that does not read, a challenge
-	 * that expired, a credential nobody holds and a signature counter that did not go up.
+	 * that expired, a credential nobody holds, a signature counter that did not go up, and an answer without the `UV`
+	 * flag for a credential that verified the owner at its registration.
 	 */
 	async verifyPrompt(response: unknown, context: AuthDanceComponentContext): Promise<boolean | AuthDanceIdentity["id"]> {
 		const ceremony = await this.#ceremony(context);
@@ -727,6 +735,15 @@ export class WebAuthnAuthDanceComponent implements AuthDanceComponent {
 		}
 		const authenticatorData = parseAuthenticatorData(authenticatorBytes);
 		if (!authenticatorData || !(await this.#verifyAuthenticatorData(authenticatorData))) {
+			return false;
+		}
+		// A credential that verified the owner at its registration must keep doing it. `required` already refused the
+		// answer above, and `discouraged` asks the client not to verify.
+		if (
+			record.uvInitialized &&
+			(this.#options.userVerification ?? "preferred") === "preferred" &&
+			(authenticatorData.flags & FLAG_USER_VERIFIED) === 0
+		) {
 			return false;
 		}
 		if (!(await this.#verifySignature(record, authenticatorBytes, clientData, signature))) {
