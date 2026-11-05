@@ -254,15 +254,22 @@ describe("token endpoint", () => {
 	});
 
 	describe("refresh_token", () => {
-		it("should give a new refresh token, and keep the old one valid until the session ends", async () => {
+		it("should give a new refresh token on the same session, and keep it valid for the next refresh", async () => {
 			const { code, verifier } = await authorize();
 			const first = await exchange(code, verifier);
 			const second = await refresh(first.refresh_token ?? "");
 			ok(second.refresh_token);
 			deepEqual(decodeJwt(second.access_token).sid, decodeJwt(first.access_token).sid);
-			await refresh(first.refresh_token ?? "");
-			await refresh(second.refresh_token);
+			const third = await refresh(second.refresh_token);
+			ok(third.refresh_token);
 			deepEqual(events.revoked, []);
+		});
+		it("should end the session when a refresh token comes back after its refresh", async () => {
+			const { code, verifier } = await authorize();
+			const first = await exchange(code, verifier);
+			const second = await refresh(first.refresh_token ?? "");
+			await fails(() => refresh(first.refresh_token ?? ""), InvalidGrantError);
+			await fails(() => refresh(second.refresh_token ?? ""), InvalidGrantError);
 		});
 		it("should refuse garbage, a forged refresh token and an access token, and revoke nothing", async () => {
 			const { code, verifier } = await authorize();

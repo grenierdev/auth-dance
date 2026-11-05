@@ -20,6 +20,11 @@ export interface AuthDanceSession {
 	address?: string;
 	/** The user agent of the client that signed in. The HTTP layer reads it from the `user-agent` header. */
 	userAgent?: string;
+	/**
+	 * The number of refreshes of the session, the `refresh_counter` of its last refresh token. Only that refresh token
+	 * refreshes the session. A new session starts at 0.
+	 */
+	refreshCounter: number;
 }
 
 /**
@@ -35,6 +40,7 @@ export const AuthDanceSession: v.GenericSchema<AuthDanceSession> = v.pipe(
 		expireAt: v.pipe(v.string(), v.isoTimestamp()),
 		address: v.optional(v.string()),
 		userAgent: v.optional(v.string()),
+		refreshCounter: v.pipe(v.number(), v.integer(), v.minValue(0)),
 	}),
 	v.title("AuthDanceSession"),
 	v.description("A user session"),

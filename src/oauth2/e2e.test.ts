@@ -174,13 +174,7 @@ describe("oauth4webapi interop", () => {
 		);
 		ok(refreshed.refresh_token && refreshed.refresh_token !== tokens.refresh_token);
 
-		// The old refresh token stays valid until its session ends. A revocation of either one ends the session, and both
-		// stop working.
-		await oauth.processRefreshTokenResponse(
-			as,
-			confidential,
-			await oauth.refreshTokenGrantRequest(as, confidential, auth, tokens.refresh_token, options),
-		);
+		// A refresh stops the old refresh token. A revocation of the new one ends the session, and both stop working.
 		await oauth.processRevocationResponse(await oauth.revocationRequest(as, confidential, auth, refreshed.refresh_token, options));
 		for (const token of [tokens.refresh_token, refreshed.refresh_token]) {
 			await rejects(

@@ -149,7 +149,7 @@ What `verifyAccessToken` returns: `subject` (the `sub`), `client_id`, `scope` (a
 | `onIdentityDeleted`  | `{ flow: "delete", identity }`           | A delete removed an identity. |
 | `onSessionCreated`   | `{ flow, session, identity }`            | A sign-in or a sign-up minted a session. |
 | `onSessionRefreshed` | `{ flow: "refresh", session, identity }` | A refresh minted new tokens on a session. |
-| `onSessionDeleted`   | `{ flow, session, identity }`            | A sign-out, a delete, a rotate or a recover deleted a session. |
+| `onSessionDeleted`   | `{ flow, session, identity }`            | A sign-out, a delete, a rotate, a recover or a reused refresh token deleted a session. |
 | `onError`            | `{ hook, cause }`                        | Another hook rejected. |
 
 The library calls a hook after the write and awaits it. A hook that rejects never fails the flow. Session events carry no token.
@@ -227,7 +227,7 @@ Each type below also exists as a valibot schema of the same name, for runtime pa
 | `AuthDanceIdentity` | `{ id, data?, components }`. |
 | `AuthDanceIdentityComponent` | An identification, a challenge or a channel record, with its private `data`. The `…Public` forms drop `data`. |
 | `AuthDancePrompt` | `AuthDancePromptInput` or `AuthDancePromptChoice`. |
-| `AuthDanceSession` | `{ id, identityId, client_id, scopes, expireAt, address?, userAgent? }`. |
+| `AuthDanceSession` | `{ id, identityId, client_id, scopes, expireAt, address?, userAgent?, refreshCounter }`. |
 | `AuthDanceResponse` | `AuthDanceResponseState`, `AuthDanceResponseTokens` or `AuthDanceResponseResult`. |
 | `AuthDanceTokenResponse` | The RFC 6749 §5.1 token response. |
 | `AuthDanceResponseSessions`, `AuthDanceResponseComponents` | The bodies of `/list-sessions` and `/list-components`. |

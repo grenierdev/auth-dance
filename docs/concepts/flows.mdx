@@ -90,7 +90,7 @@ The server reports each change to the `hooks` option. The library calls a hook a
 | enroll, unenroll, subscribe, unsubscribe | `onIdentityUpdated`                           |
 | rotate, recover  | `onIdentityUpdated`, then `onSessionDeleted` for each deleted session |
 | delete           | `onSessionDeleted` for each session, then `onIdentityDeleted`         |
-| refresh          | `onSessionRefreshed`                                                  |
+| refresh          | `onSessionRefreshed`, or `onSessionDeleted` for a reused refresh token |
 | sign-out         | `onSessionDeleted` for each session                                   |
 
 ## Durations

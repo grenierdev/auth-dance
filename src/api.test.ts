@@ -14,6 +14,7 @@ import {
 	type AuthDanceHookErrorEvent,
 	type AuthDanceIdentityEvent,
 	type AuthDanceSessionEvent,
+	REFRESH_TOKEN_TYPE,
 } from "./api.ts";
 import type { AuthDanceChannel } from "./channel.ts";
 import { choice, sequence } from "./choreography.ts";
@@ -2189,17 +2190,43 @@ describe("Api", () => {
 	describe("refresh token", () => {
 		afterEach(() => vi.useRealTimers());
 
-		it("should keep a refresh token valid until its session ends, with no record to read", async () => {
+		it("should give a new refresh token at each refresh, and count the refreshes on the session", async () => {
 			await johnDoe();
 			const signedIn = await signInAsJohnDoe(api);
 			const first = await api.refreshToken(signedIn.tokens.refresh_token);
-			const again = await api.refreshToken(signedIn.tokens.refresh_token);
-			ok(first.tokens.refresh_token && again.tokens.refresh_token);
+			const second = await api.refreshToken(first.tokens.refresh_token);
+			deepEqual(decodeJwt(signedIn.tokens.refresh_token).refresh_counter, 0);
+			deepEqual(decodeJwt(second.tokens.refresh_token).refresh_counter, 2);
+			deepEqual(second.session.refreshCounter, 2);
+			deepEqual((await storage.getSession(signedIn.session.id))?.refreshCounter, 2);
 			deepEqual(await storage.listKv(`session/${signedIn.session.id}/`), []);
-			await api.signOut(signedIn.tokens.access_token);
-			for (const token of [signedIn.tokens.refresh_token, first.tokens.refresh_token]) {
-				await rejects(() => api.refreshToken(token), failsWith("SESSION_NOT_FOUND"));
-			}
+			await api.signOut(second.tokens.access_token);
+			await rejects(() => api.refreshToken(second.tokens.refresh_token), failsWith("SESSION_NOT_FOUND"));
+		});
+
+		it("should revoke the session when a refresh token comes back after its refresh", async () => {
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			const deleted: string[] = [];
+			const watched = new AuthDanceApi({
+				...apiOptions,
+				hooks: { onSessionDeleted: ({ flow, session }) => void deleted.push(`${flow}:${session.id}`) },
+			});
+			const owner = await watched.refreshToken(signedIn.tokens.refresh_token);
+			await rejects(() => watched.refreshToken(signedIn.tokens.refresh_token), failsWith("INVALID_REFRESH_TOKEN"));
+			deepEqual(deleted, [`refresh:${signedIn.session.id}`]);
+			deepEqual(await storage.getSession(signedIn.session.id), undefined);
+			await rejects(() => watched.refreshToken(owner.tokens.refresh_token), failsWith("SESSION_NOT_FOUND"));
+			await rejects(() => watched.verifyAccessToken(owner.tokens.access_token, { session: true }), failsWith("SESSION_NOT_FOUND"));
+		});
+
+		it("should refuse a refresh token without a refresh_counter, and keep its session", async () => {
+			await johnDoe();
+			const signedIn = await signInAsJohnDoe(api);
+			const { refresh_counter: _, ...claims } = decodeJwt(signedIn.tokens.refresh_token);
+			const stripped = await new AuthDanceKeys(TEST_SIGNING_KEYS).sign(claims, { typ: REFRESH_TOKEN_TYPE });
+			await rejects(() => api.refreshToken(stripped), failsWith("INVALID_REFRESH_TOKEN"));
+			ok(await api.refreshToken(signedIn.tokens.refresh_token));
 		});
 
 		it("should expire the refresh token with its session", async () => {

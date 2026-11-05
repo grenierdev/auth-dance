@@ -126,6 +126,7 @@ export class AuthDanceStorage {
 			expireAt: options.expireAt.toISOString(),
 			address: options.address,
 			userAgent: options.userAgent,
+			refreshCounter: 0,
 		};
 		const ttl = Math.floor((options.expireAt.getTime() - Date.now()) / 1000);
 		await Promise.all([
@@ -133,6 +134,19 @@ export class AuthDanceStorage {
 			this.setKv(`sessions/${session.identityId}/${session.id}`, JSON.stringify(session), ttl),
 		]);
 		return session;
+	}
+
+	/**
+	 * Write a session that exists to both session key spaces. The time to live of both records stays the time to
+	 * `session.expireAt`, so a write never extends the session.
+	 */
+	async setSession(session: AuthDanceSession): Promise<void> {
+		// At least one second: an adapter can read 0 as no time to live.
+		const ttl = Math.max(1, Math.floor((new Date(session.expireAt).getTime() - Date.now()) / 1000));
+		await Promise.all([
+			this.setKv(`session/${session.id}`, JSON.stringify(session), ttl),
+			this.setKv(`sessions/${session.identityId}/${session.id}`, JSON.stringify(session), ttl),
+		]);
 	}
 
 	/**

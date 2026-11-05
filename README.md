@@ -83,8 +83,8 @@ A dance and every OAuth 2.0 grant mint the same two tokens:
 - The access token is an RFC 9068 JWT with `typ: at+jwt`. It carries the identity id as `sub`, the session as `sid`, the client as
   `client_id`, the scopes as `scope`, the moment of the sign-in as `auth_time`, and the claims of its scopes. A dance mints it for the
   issuer: `client_id` and `aud` are the issuer, and `scope` holds every scope the server knows.
-- The refresh token is a JWT with `typ: rt+jwt`. It stays valid until its session ends, `durations.refresh` after the sign-in. A
-  refresh gives a new pair, and the old refresh token still works.
+- The refresh token is a JWT with `typ: rt+jwt`. It lives until its session ends, `durations.refresh` after the sign-in. A refresh
+  gives a new pair and stops the old refresh token. An old refresh token that comes back revokes the session, RFC 9700 §4.14.2.
 
 The response follows RFC 6749 §5.1: `access_token`, `token_type`, `expires_in`, `refresh_token` and `scope`.
 

@@ -172,7 +172,7 @@ export type AuthDanceSessionEventFlow = "sign-in" | "sign-up" | "refresh" | "sig
 export interface AuthDanceSessionEvent<TFlow extends AuthDanceSessionEventFlow = AuthDanceSessionEventFlow> {
 	/** Which flow created, renewed or deleted the session. */
 	flow: TFlow;
-	/** The session the flow acts on. A refresh reports the record the sign-in created. */
+	/** The session the flow acts on. A refresh reports the record with its new `refreshCounter`. */
 	session: AuthDanceSession;
 	/** The identity the session signs in. */
 	identity: AuthDanceIdentity;
@@ -207,10 +207,11 @@ export interface AuthDanceApiHooks {
 	onSessionRefreshed?(event: AuthDanceSessionEvent<"refresh">): void | Promise<void>;
 	/**
 	 * The library deleted a session. A sign-out, a delete, a completed rotate and a completed recover fire this hook
-	 * one time for each session they take. A delete, a rotate and a recover take the grants of the oauth2 module too. A
+	 * one time for each session they take. A refresh with a refresh token used before fires it for the session of the
+	 * token. A delete, a rotate and a recover take the grants of the oauth2 module too. A
 	 * rotate and a recover fire it after `onIdentityUpdated`.
 	 */
-	onSessionDeleted?(event: AuthDanceSessionEvent<"sign-out" | "delete" | "rotate" | "recover">): void | Promise<void>;
+	onSessionDeleted?(event: AuthDanceSessionEvent<"sign-out" | "delete" | "rotate" | "recover" | "refresh">): void | Promise<void>;
 	/** Another hook rejected. The library drops a rejection from this hook. */
 	onError?(event: AuthDanceHookErrorEvent): void | Promise<void>;
 }
@@ -824,7 +825,10 @@ export class AuthDanceApi {
 		if (options.session !== undefined && options.refresh !== false) {
 			const exp = Math.floor(new Date(options.session.expireAt).getTime() / 1000);
 			const scope = (options.granted ?? options.scopes).join(" ");
-			tokens.refresh_token = await this.#keys.sign({ ...common, scope, aud: this.#issuer, jti: ksuid(), exp }, { typ: REFRESH_TOKEN_TYPE });
+			tokens.refresh_token = await this.#keys.sign(
+				{ ...common, scope, aud: this.#issuer, jti: ksuid(), exp, refresh_counter: options.session.refreshCounter },
+				{ typ: REFRESH_TOKEN_TYPE },
+			);
 		}
 		return { tokens, claims };
 	}
@@ -940,16 +944,20 @@ export class AuthDanceApi {
 	 * authenticated the client, and passes `options.client_id`.
 	 *
 	 * Checking the refresh token reads no storage. The exchange then reads the session the token names, so a sign-out,
-	 * a delete, a reset or a revocation stops it, and the identity, to fill the claims. A refresh token stays valid
-	 * until its session ends: the exchange gives a new one, and the old one still works. The new tokens keep the
-	 * `auth_time` of the sign-in, so a refresh never re-opens the elevated window. A completed exchange fires
+	 * a delete, a reset or a revocation stops it, and the identity, to fill the claims. Each exchange gives a new
+	 * refresh token and stops the old one, RFC 9700 §4.14.2: the session counts its refreshes, and only the refresh
+	 * token with the current count passes. An old refresh token that comes back revokes the session and fires
+	 * `onSessionDeleted`, because two parties then hold its tokens. Two exchanges of the same refresh token at the same
+	 * time can both pass: the count is not an atomic write. The new tokens keep the `auth_time` of the sign-in, so a
+	 * refresh never re-opens the elevated window. A completed exchange writes the session and fires
 	 * `onSessionRefreshed`.
 	 *
 	 * @param options `client_id` is the client the token must belong to, the issuer by default. `scope` narrows the new
 	 * access token to some of the scopes of the refresh token. `audience` is the `aud` of the new access token, the
 	 * issuer by default.
 	 * @returns A new access token and refresh token, plus the session and the claims of the scopes.
-	 * @throws InvalidRefreshTokenError when the token is tampered with, expired, missing a claim, or of another client.
+	 * @throws InvalidRefreshTokenError when the token is tampered with, expired, missing a claim (`refresh_counter`
+	 * included), of another client, or used before. A token used before also revokes its session.
 	 * @throws InsufficientScopeError when `options.scope` is empty or holds a scope the refresh token does not hold.
 	 * @throws RateLimitedError when the `refresh` bucket of the session is empty.
 	 * @throws SessionNotFoundError when the session the token names has expired, was signed out, or was revoked.
@@ -962,7 +970,11 @@ export class AuthDanceApi {
 	): Promise<AuthDanceResponseTokens> {
 		return this.#guard("refreshToken", async () => {
 			const token = await this.#verifyToken(refresh_token, REFRESH_TOKEN_TYPE, this.#issuer);
-			if (!token?.session_id || token.client_id !== (options.client_id ?? this.clientId)) {
+			if (
+				!token?.session_id ||
+				typeof token.claims.refresh_counter !== "number" ||
+				token.client_id !== (options.client_id ?? this.clientId)
+			) {
 				throw new InvalidRefreshTokenError();
 			}
 			const scopes = options.scope ?? token.scope;
@@ -970,10 +982,19 @@ export class AuthDanceApi {
 				throw new InsufficientScopeError("the scope must be some of the scopes of the refresh token");
 			}
 			await this.#consumeRateLimit("refresh", `session:${token.session_id}`);
-			const { session, identity } = await this.#getSessionAndIdentity(token.session_id);
-			if (session.identityId !== token.subject || session.client_id !== token.client_id) {
+			const { session: stored, identity } = await this.#getSessionAndIdentity(token.session_id);
+			if (stored.identityId !== token.subject || stored.client_id !== token.client_id) {
 				throw new SessionNotFoundError(token.session_id);
 			}
+			// A refresh token of the session that is not the last one was used before: two parties hold the tokens of the
+			// session, and the library cannot tell which one is the owner. RFC 9700 §4.14.2.
+			const counter = stored.refreshCounter;
+			if (token.claims.refresh_counter !== counter) {
+				await this.#options.storage.deleteSession(stored.id);
+				await this.#emit("onSessionDeleted", { flow: "refresh", session: stored, identity });
+				throw new InvalidRefreshTokenError("the refresh token was used before, so its session was revoked");
+			}
+			const session: AuthDanceSession = { ...stored, refreshCounter: counter + 1 };
 			const { tokens, claims } = await this.mintTokens({
 				client_id: token.client_id,
 				scopes,
@@ -984,6 +1005,8 @@ export class AuthDanceApi {
 				authTime: token.auth_time,
 				audience: options.audience,
 			});
+			// The write comes after the mint: a failed mint leaves the refresh token of the client valid.
+			await this.#options.storage.setSession(session);
 			await this.#emit("onSessionRefreshed", { flow: "refresh", session, identity });
 			return { tokens: tokens as AuthDanceResponseTokens["tokens"], session, identity: { id: identity.id, data: claims } };
 		});
