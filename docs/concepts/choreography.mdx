@@ -68,7 +68,7 @@ Each component declares a `kind`. The kind says what the step adds to an identit
 - A **challenge** proves a claim against an identity that another step resolved: a password, a one-time code, a TOTP code.
 - A **channel** is where the library delivers a message. A component never declares `channel`, but a component can add a channel record to the identity. The email component adds one.
 
-A step that proves nothing can come before the step that resolves the identity, a proof of work for example: `sequence("pow", "email", "password")`. That step runs with no identity. A step that proves control needs the identity it proves, so it must come at or after the first identification of the path.
+A step that proves nothing can come before the step that resolves the identity, a proof of work or a Cloudflare Turnstile challenge for example: `sequence("pow", "email", "password")`. That step runs with no identity. A step that proves control needs the identity it proves, so it must come at or after the first identification of the path.
 
 ## Proof of control
 

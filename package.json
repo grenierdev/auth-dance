@@ -24,6 +24,10 @@
 			"types": "./dist/src/client.d.ts",
 			"import": "./dist/src/client.js"
 		},
+		"./components/cloudflare-turnstile": {
+			"types": "./dist/src/components/cloudflare-turnstile.d.ts",
+			"import": "./dist/src/components/cloudflare-turnstile.js"
+		},
 		"./components/email": {
 			"types": "./dist/src/components/email.d.ts",
 			"import": "./dist/src/components/email.js"

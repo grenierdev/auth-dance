@@ -1,6 +1,6 @@
 ---
 title: auth-dance/components/*
-description: The shipped components for email, one-time codes, passwords, TOTP, passkeys, policies, proofs of work, OAuth 2.0 and OpenID Connect, with every option.
+description: The shipped components for email, one-time codes, passwords, TOTP, passkeys, policies, proofs of work, Cloudflare Turnstile, OAuth 2.0 and OpenID Connect, with every option.
 order: 6
 ---
 
@@ -15,6 +15,7 @@ Each component lives at its own import path. Register an instance under a name i
 | `auth-dance/components/webauthn`  | `WebAuthnAuthDanceComponent`   | identification   | Yes    | Yes        | `webauthn-create`, `webauthn` |
 | `auth-dance/components/policy`    | `PolicyAuthDanceComponent`     | challenge        | No     | No         | `policy` |
 | `auth-dance/components/pow`       | `PowAuthDanceComponent`        | challenge        | No     | No         | `pow` |
+| `auth-dance/components/cloudflare-turnstile` | `CloudflareTurnstileAuthDanceComponent` | challenge | No | No | `turnstile` |
 | `auth-dance/components/oauth2`    | `OAuth2AuthDanceComponent` (abstract) | identification | Yes | No       | `oauth2` |
 | `auth-dance/components/oidc`      | `OidcAuthDanceComponent`       | identification   | Yes    | No         | `oauth2` |
 
@@ -170,6 +171,33 @@ A proof of work. The client finds a nonce for which the digest of `challenge + n
 | `ttl`        | `300`       | The time that a challenge stays valid, in seconds. |
 
 The step proves nothing, so it can come before the first identification, for example `sequence("pow", "email", "password")`. The component keeps the challenge under `pow/<stateId>/<name>` and deletes it when it checks a nonce, also a wrong one.
+
+## `cloudflare-turnstile`
+
+```ts
+import { CloudflareTurnstileAuthDanceComponent } from "auth-dance/components/cloudflare-turnstile";
+
+new CloudflareTurnstileAuthDanceComponent({
+	siteKey: env.TURNSTILE_SITE_KEY,
+	secretKey: env.TURNSTILE_SECRET_KEY,
+	action: "sign-in",
+	hostnames: ["app.example.com"],
+});
+```
+
+A Cloudflare Turnstile challenge. The prompt has the type `turnstile`, and its `options` hold `siteKey` and, when you set one, `action`. The client renders the Turnstile widget with these options, and submits the token of the widget as a string. The server sends the token to the siteverify endpoint of Cloudflare.
+
+| Option      | Type       | Default      | Description |
+| ----------- | ---------- | ------------ | ----------- |
+| `siteKey`   | `string`   | Required     | The site key of the widget. The prompt gives it to the client. |
+| `secretKey` | `string`   | Required     | The secret key of the widget. It stays on the server. |
+| `action`    | `string`   | No check     | The action that the widget sets. The step refuses a token for another action. Up to 32 letters, digits, `_` or `-`. |
+| `hostnames` | `string[]` | Any hostname | The hostnames that can serve the widget. The step refuses a token from another hostname. |
+| `timeout`   | `number`   | `10000`      | Milliseconds the server waits for the siteverify endpoint. |
+
+The step proves nothing, so it can come before the first identification, for example `sequence("turnstile", "email", "password")`. The component keeps no record in the key-value store: Cloudflare accepts a token one time only, for 300 seconds. After a refused token, the client resets the widget and submits a new token.
+
+When the siteverify endpoint does not answer, or answers with an HTTP error, the step raises an `Error` and not `InvalidPromptValueError`. The component context holds no address, so the component does not send `remoteip` to Cloudflare. The constructor throws `TypeError` for an empty key, a bad `action`, an empty `hostnames`, or a `timeout` that is not positive.
 
 ## `oauth2`
 
