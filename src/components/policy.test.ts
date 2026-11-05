@@ -3,7 +3,7 @@ import { describe, it } from "vitest";
 import { AuthDanceApi } from "../api.ts";
 import { type AuthDanceChoreography, sequence } from "../choreography.ts";
 import type { AuthDanceComponent, AuthDanceComponentContext } from "../component.ts";
-import { IdentityNotResolvedError, InvalidPromptValueError } from "../error.ts";
+import { InvalidPromptValueError } from "../error.ts";
 import { TEST_ISSUER, TEST_SIGNING_KEYS } from "../fixtures.test.ts";
 import type { AuthDanceIdentity, AuthDanceIdentityComponent } from "../identity.ts";
 import { MemoryIdentityProvider, MemoryKvProvider, MemoryRateLimiterProvider } from "../providers/memory.ts";
@@ -306,9 +306,24 @@ describe("PolicyAuthDanceComponent", () => {
 			deepEqual(prompted, ["username", "policy", "password"]);
 		});
 
-		it("should not resolve an identity as the first step of a sign-in", async () => {
-			const auth = api(storage(), "1", sequence("policy", "username", "password"));
-			await rejects(dance(auth, await auth.signIn(), { policy: { tos: "1" } }), IdentityNotResolvedError);
+		it("should check the step before the identification of a sign-in, and save nothing", async () => {
+			const store = storage();
+			const choreography = sequence("policy", "username", "password");
+			const created = await dance(api(store, "1", choreography), await api(store, "1", choreography).signUp(), {
+				policy: { tos: "1" },
+				username: "john",
+				password: "correct horse",
+			});
+			ok("tokens" in created);
+			const auth = api(store, "2", choreography);
+			await rejects(dance(auth, await auth.signIn(), { policy: { tos: "1" } }), InvalidPromptValueError);
+			const prompted: string[] = [];
+			ok(
+				"tokens" in
+					(await dance(auth, await auth.signIn(), { policy: { tos: "2" }, username: "john", password: "correct horse" }, prompted)),
+			);
+			deepEqual(prompted, ["policy", "username", "password"]);
+			deepEqual(await policyData(store, created.identity.id), { tos: "1" });
 		});
 	});
 });

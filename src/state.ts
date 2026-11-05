@@ -167,7 +167,7 @@ export interface AuthDanceStateRecover {
 	 * The library answers `COMPONENT_NOT_RECOVERABLE` when that component has no recovery choreography.
 	 */
 	component: string;
-	/** The identity the first step resolved. A validation call before that step fails with `RECOVERY_NOT_IDENTIFIED`. */
+	/** The identity the first identification resolved. A validation call before that step fails with `RECOVERY_NOT_IDENTIFIED`. */
 	identityId?: string;
 	/** The names of the recovery steps the owner completed and proved, oldest first. */
 	path: string[];
@@ -196,7 +196,7 @@ export const AuthDanceStateRecover: v.GenericSchema<AuthDanceStateRecover> = v.p
 	}),
 	v.title("AuthDanceStateRecover"),
 	v.description(
-		"An authentication state object that represents the recovery of one component of an identity, including the state id, kind, the name of the component being recovered, the identity the first step resolved, the recovery steps completed so far, the identification whose proof is outstanding, whether the recovery choreography is complete, and the replacement collected so far.",
+		"An authentication state object that represents the recovery of one component of an identity, including the state id, kind, the name of the component being recovered, the identity the first identification resolved, the recovery steps completed so far, the identification whose proof is outstanding, whether the recovery choreography is complete, and the replacement collected so far.",
 	),
 );
 

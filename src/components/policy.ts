@@ -45,10 +45,11 @@ export interface PolicyAuthDanceComponentOptions {
  * document later.
  *
  * Put the step after a step that proves control, for example `sequence("email", "otp", "policy")`:
- * - The step resolves no identity, so it cannot be the first step of a sign-in.
  * - The library goes past the step only after a step that proves control.
  * - A sign-in saves the acceptance before the dance completes. Before a step that proves control, a person who only
  *   knows the address could accept the documents for the identity.
+ * - Before the first identification, a sign-in checks the answer but saves nothing, because no identity is known
+ *   yet. The step then shows on every sign-in.
  *
  * The step proves nothing, so `proves` is `false`.
  *

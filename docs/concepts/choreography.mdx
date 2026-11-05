@@ -68,11 +68,11 @@ Each component declares a `kind`. The kind says what the step adds to an identit
 - A **challenge** proves a claim against an identity that another step resolved: a password, a one-time code, a TOTP code.
 - A **channel** is where the library delivers a message. A component never declares `channel`, but a component can add a channel record to the identity. The email component adds one.
 
-A sign-in starts with a step that resolves the identity. A first step that resolves nobody raises `IdentityNotResolvedError`.
+A step that proves nothing can come before the step that resolves the identity, a proof of work for example: `sequence("pow", "email", "password")`. That step runs with no identity. A step that proves control needs the identity it proves, so it must come at or after the first identification of the path.
 
 ## Proof of control
 
-> **Note:** Every complete path of the choreography needs one step that proves control. The constructor of the server raises `InvalidChoreographyError` for a path without one.
+> **Note:** Every complete path of the choreography needs one step that proves control, at or after its first identification. The constructor of the server raises `InvalidChoreographyError` for a path without one, and for a path that proves control before its first identification.
 
 A step proves control when an accepted value shows that the owner holds the factor, and not only that the owner knows a name. By default, a challenge proves and an identification does not. A component overrides the default with `proves`.
 

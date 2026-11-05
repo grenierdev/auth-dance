@@ -73,13 +73,18 @@ export function paths(choreography: AuthDanceChoreography): string[][] {
 	return out;
 }
 
-/** The rule of `AuthDanceApi`: a sign-in without the component, on a path that starts with an identification and proves control. */
+/**
+ * The rule of `AuthDanceApi`: a sign-in without the component, on a path that holds an identification, proves
+ * nothing before it, and proves control.
+ */
 function recovery(all: string[][], name: string, kinds: Record<string, StepKind>): string[][] {
 	const out: string[][] = [];
+	const proves = (s: string) => kinds[s]?.proves || (kinds[s]?.identification && kinds[s]?.verifiable);
 	for (const p of all) {
 		if (!p.includes(name)) continue;
 		const rest = p.filter((s) => s !== name);
-		const ok = rest.length > 0 && kinds[rest[0]]?.identification && rest.some((s) => kinds[s]?.proves || (kinds[s]?.identification && kinds[s]?.verifiable));
+		const first = rest.findIndex((s) => kinds[s]?.identification);
+		const ok = first !== -1 && !rest.slice(0, first).some(proves) && rest.some(proves);
 		if (ok && !out.some((o) => o.join() === rest.join())) out.push(rest);
 	}
 	return out;

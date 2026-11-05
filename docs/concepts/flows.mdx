@@ -26,7 +26,7 @@ A flow that needs a session takes an access token that holds the `account` scope
 
 ## Sign-in
 
-The owner performs one complete path, one step at a time. Each step checks the value with the `verifyPrompt` of its component. The first step resolves the identity, and every later step must answer for the same identity, or the step raises `IdentityMismatchError`.
+The owner performs one complete path, one step at a time. Each step checks the value with the `verifyPrompt` of its component. The first identification resolves the identity, and every later step must answer for the same identity, or the step raises `IdentityMismatchError`. A step that proves nothing, a proof of work for example, can come before the first identification.
 
 At a choice, the owner answers any one branch. When the path completes, the library creates a session and mints tokens. A wrong value raises `InvalidPromptValueError`, and the dance stays on the same step.
 

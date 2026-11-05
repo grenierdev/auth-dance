@@ -10,7 +10,7 @@ To recover one component, the owner performs a sign-in without it.
 
 The library takes every complete path of the choreography that holds the component, and removes the component from each one. A path that remains is a recovery path when:
 
-1. It starts with an identification, because something must resolve the identity.
+1. It holds an identification, because something must resolve the identity. A step before the first identification proves nothing.
 2. It holds a step that proves control.
 
 Inside a recovery, an identification that proves nothing on its own but can verify itself counts as proof once its verification succeeds. An email address counts after the owner types the one-time code sent to it.
@@ -33,8 +33,8 @@ A component that no path can do without is not recoverable. `recover` raises `Co
 
 `recover(name)` needs no session and no fresh sign-in.
 
-1. The owner performs the recovery dance. The first step resolves the identity. Every later step must answer for the same identity.
-2. When the first step is an email address, the next prompt is its validation: a one-time code sent to that email address.
+1. The owner performs the recovery dance. The first identification resolves the identity. Every later step must answer for the same identity.
+2. When that identification is an email address, the next prompt is its validation: a one-time code sent to that email address.
 3. When the recovery dance completes, the flow collects the replacement of the component, with the prompt of that component.
 4. When the component is verifiable, the flow validates the replacement.
 5. The flow ends with `{ success: true }`.
@@ -60,7 +60,7 @@ The constructor raises `InvalidChoreographyError` when:
 
 - A key is not a step of the choreography.
 - An entry names the key itself, or a component that `components` does not declare.
-- A path of an entry does not start with an identification, or holds no step that proves control.
+- A path of an entry holds no identification, proves control before its first identification, or holds no step that proves control.
 
 ## Recovery and custom components
 

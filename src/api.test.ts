@@ -72,8 +72,8 @@ describe("Api", () => {
 	}
 
 	// The two steps of sequence("email", "password").
-	async function signInAsJohnDoe(api: AuthDanceApi): Promise<AuthDanceResponseTokens> {
-		const result1 = await api.signIn();
+	async function signInAsJohnDoe(api: AuthDanceApi, start?: AuthDanceResponseState): Promise<AuthDanceResponseTokens> {
+		const result1 = start ?? (await api.signIn());
 		const result2 = await api.submitPrompt({
 			name: "email",
 			value: "john.doe@example.com",
@@ -1766,10 +1766,12 @@ describe("Api", () => {
 			const notice = skippableComponent(() => true);
 			const api = new AuthDanceApi({
 				...apiOptions,
-				choreography: sequence("password", "notice"),
-				components: { ...apiOptions.components, notice: notice.component },
+				choreography: sequence("handle", "password", "notice"),
+				components: { ...apiOptions.components, handle: stubComponent("identification", () => false), notice: notice.component },
 			});
-			const result1 = await api.signUp();
+			const result0 = await api.signUp();
+			const result1 = await api.submitPrompt({ name: "handle", value: "john", state: result0.state });
+			ok("state" in result1);
 			const result2 = await api.submitPrompt({ name: "password", value: "foo", state: result1.state });
 			ok("state" in result2);
 			ok(result2.prompt.kind === "input" && result2.prompt.name === "notice");
@@ -1841,6 +1843,71 @@ describe("Api", () => {
 						choreography: sequence("badge"),
 						components: { ...apiOptions.components, badge: stubComponent("identification", () => false) },
 					}),
+				(error) => error instanceof AuthDanceError && error.code === "INVALID_CHOREOGRAPHY",
+			);
+		});
+
+		it("should sign in through a step that proves nothing before the identification", async () => {
+			await johnDoe();
+			const api = new AuthDanceApi({
+				...apiOptions,
+				choreography: sequence("gate", "email", "password"),
+				components: { ...apiOptions.components, gate: stubComponent("challenge", () => true, false) },
+			});
+			const result1 = await api.signIn();
+			ok(result1.prompt.kind === "input" && result1.prompt.name === "gate");
+			const result2 = await api.submitPrompt({ name: "gate", value: "anything", state: result1.state });
+			ok("state" in result2);
+			ok(result2.prompt.kind === "input" && result2.prompt.name === "email");
+			ok("tokens" in (await signInAsJohnDoe(api, result2)));
+		});
+
+		it("should accept more than one step that proves nothing before the identification", () => {
+			const gate = stubComponent("challenge", () => true, false);
+			new AuthDanceApi({
+				...apiOptions,
+				choreography: sequence("gate", "gate2", "email", "gate3", "password"),
+				components: { ...apiOptions.components, gate, gate2: gate, gate3: gate },
+			});
+		});
+
+		it("should refuse a step that proves control before the identification", () => {
+			const components = {
+				...apiOptions.components,
+				gate: stubComponent("challenge", () => true, false),
+				pin: stubComponent("challenge", () => true),
+			};
+			for (const choreography of [
+				sequence("password", "email"),
+				sequence("gate", "pin", "email", "password"),
+				choice(sequence("email", "password"), sequence("pin", "email")),
+			]) {
+				throws(
+					() => new AuthDanceApi({ ...apiOptions, choreography, components }),
+					(error) => error instanceof AuthDanceError && error.code === "INVALID_CHOREOGRAPHY",
+				);
+			}
+		});
+
+		it("should refuse a proof before an identity when the choreography changes after construction", async () => {
+			await johnDoe();
+			apiOptions.components.pin = stubComponent("challenge", () => true);
+			const api = new AuthDanceApi(apiOptions);
+			apiOptions.choreography = sequence("pin", "email");
+			const result1 = await api.signIn();
+			await rejects(
+				() => api.submitPrompt({ name: "pin", value: "0000", state: result1.state }),
+				(error) => error instanceof AuthDanceError && error.code === "IDENTITY_NOT_RESOLVED",
+			);
+		});
+
+		it("should refuse a path that resolves no identity when the choreography changes after construction", async () => {
+			apiOptions.components.gate = stubComponent("challenge", () => true, false);
+			const api = new AuthDanceApi(apiOptions);
+			apiOptions.choreography = sequence("gate");
+			const result1 = await api.signIn();
+			await rejects(
+				() => api.submitPrompt({ name: "gate", value: "anything", state: result1.state }),
 				(error) => error instanceof AuthDanceError && error.code === "INVALID_CHOREOGRAPHY",
 			);
 		});
@@ -2053,6 +2120,39 @@ describe("Api", () => {
 			refused({ password: sequence("badge") });
 			// Its key is not a step of the choreography.
 			refused({ otp2: false });
+		});
+
+		it("should recover through a step that proves nothing before the identification", async () => {
+			await seedThreeFactor();
+			const api = threeFactorApi({
+				components: { ...apiOptions.components, totp, gate: stubComponent("challenge", () => true, false) },
+				recovery: { password: sequence("gate", "email", "totp") },
+			});
+			const result1 = await api.recover({ name: "password" });
+			ok(result1.prompt.kind === "input" && result1.prompt.name === "gate");
+			await rejects(
+				() => api.sendPrompt({ name: "gate", locale: "en", state: result1.state }),
+				(error) => error instanceof AuthDanceError && error.code === "RECOVERY_NOT_IDENTIFIED",
+			);
+			const result2 = await api.submitPrompt({ name: "gate", value: "anything", state: result1.state });
+			ok("state" in result2);
+			const result3 = await proveInbox(api, result2);
+			const result4 = await api.submitPrompt({ name: "totp", value: await totpCode({ key, period: 30 }), state: result3.state });
+			ok("state" in result4);
+			ok(result4.prompt.kind === "input" && result4.prompt.name === "password");
+			const result5 = await api.submitPrompt({ name: "password", value: "bar", state: result4.state });
+			ok("success" in result5 && result5.success);
+		});
+
+		it("should refuse a recovery step that proves control before the identification", () => {
+			throws(
+				() =>
+					threeFactorApi({
+						components: { ...apiOptions.components, totp, gate: stubComponent("challenge", () => true, false) },
+						recovery: { password: sequence("gate", "totp", "email") },
+					}),
+				(error) => error instanceof AuthDanceError && error.code === "INVALID_CHOREOGRAPHY",
+			);
 		});
 
 		it("should refuse a TOTP code of another identity after the address of the first", async () => {

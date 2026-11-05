@@ -1,6 +1,6 @@
 ---
 title: auth-dance/components/*
-description: The shipped components for email, one-time codes, passwords, TOTP, passkeys, policies, OAuth 2.0 and OpenID Connect, with every option.
+description: The shipped components for email, one-time codes, passwords, TOTP, passkeys, policies, proofs of work, OAuth 2.0 and OpenID Connect, with every option.
 order: 6
 ---
 
@@ -14,6 +14,7 @@ Each component lives at its own import path. Register an instance under a name i
 | `auth-dance/components/totp`      | `TotpAuthDanceComponent`       | challenge        | Yes    | Yes        | `totp-key`, `totp` |
 | `auth-dance/components/webauthn`  | `WebAuthnAuthDanceComponent`   | identification   | Yes    | Yes        | `webauthn-create`, `webauthn` |
 | `auth-dance/components/policy`    | `PolicyAuthDanceComponent`     | challenge        | No     | No         | `policy` |
+| `auth-dance/components/pow`       | `PowAuthDanceComponent`        | challenge        | No     | No         | `pow` |
 | `auth-dance/components/oauth2`    | `OAuth2AuthDanceComponent` (abstract) | identification | Yes | No       | `oauth2` |
 | `auth-dance/components/oidc`      | `OidcAuthDanceComponent`       | identification   | Yes    | No         | `oauth2` |
 
@@ -150,7 +151,25 @@ A step in which the owner accepts documents. The prompt has the type `policy`. T
 | `required`          | Whether the step refuses an answer that does not accept it. |
 | `name`, `content`   | The title and the text or link, per locale. The library never reads them. |
 
-Put the step after a step that proves control, for example `sequence("email", "otp", "policy")`. The constructor throws `TypeError` for an empty list, an empty identifier or version, or two documents with one identifier.
+Put the step after a step that proves control, for example `sequence("email", "otp", "policy")`. Before the first identification, a sign-in checks the answer but saves nothing. The constructor throws `TypeError` for an empty list, an empty identifier or version, or two documents with one identifier.
+
+## `pow`
+
+```ts
+import { PowAuthDanceComponent, work } from "auth-dance/components/pow";
+
+new PowAuthDanceComponent({ difficulty: 18 });
+```
+
+A proof of work. The client finds a nonce for which the digest of `challenge + nonce` has `difficulty` leading zero bits, and submits the nonce as a number. The prompt has the type `pow`, and its `options` hold `challenge`, `difficulty` and `algorithm`. The client calls `work(challenge, difficulty, { algorithm, threads })`. With `threads`, the search runs in that number of Web Workers.
+
+| Option       | Default     | Description |
+| ------------ | ----------- | ----------- |
+| `difficulty` | `16`        | The number of leading zero bits. Each added bit doubles the mean work of the client. |
+| `algorithm`  | `"SHA-256"` | The digest: `SHA-1`, `SHA-256`, `SHA-384` or `SHA-512`. |
+| `ttl`        | `300`       | The time that a challenge stays valid, in seconds. |
+
+The step proves nothing, so it can come before the first identification, for example `sequence("pow", "email", "password")`. The component keeps the challenge under `pow/<stateId>/<name>` and deletes it when it checks a nonce, also a wrong one.
 
 ## `oauth2`
 

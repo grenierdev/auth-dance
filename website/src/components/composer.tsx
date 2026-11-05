@@ -36,7 +36,7 @@ export function Composer() {
 				<span className="font-mono text-xs">server.ts</span>
 			</WindowBar>
 			<div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3 sm:px-5" role="group" aria-label="Steps of the choreography">
-				<StepToggle name="email" pressed disabled hint="the identification, first on every path" />
+				<StepToggle name="email" pressed disabled hint="the identification, the step that names the owner" />
 				{COMPOSABLE.map((s) => (
 					<StepToggle key={s} name={s} pressed={steps.includes(s)} onClick={() => toggle(s)} hint={HINT[s]} />
 				))}

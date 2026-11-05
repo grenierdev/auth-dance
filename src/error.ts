@@ -136,15 +136,16 @@ export class ComponentNotSendableError extends AuthDanceError {
 /**
  * `recover` named a component the flow cannot reset. The deployment marked the component `false` in
  * `AuthDanceApiOptions.recovery`, or no complete path of the choreography stays a recovery path without it. A
- * recovery path starts with an identification and holds a step that proves control.
+ * recovery path holds an identification, no step that proves control before it, and a step that proves control.
  */
 export class ComponentNotRecoverableError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"COMPONENT_NOT_RECOVERABLE"}`. */
 	readonly code: "COMPONENT_NOT_RECOVERABLE" = "COMPONENT_NOT_RECOVERABLE";
 }
 /**
- * The choreography, or a recovery choreography, declares a path the library refuses to run. The constructor raises
- * it. A sign-in or a sign-up also raises it before it mints tokens on a path with no step that proves control.
+ * The choreography, or a recovery choreography, declares a path the library refuses to run: a path with no step that
+ * proves control, or with a step that proves control before the first identification. The constructor raises it. A
+ * sign-in or a sign-up also raises it before it mints tokens on a path with no step that proves control.
  */
 export class InvalidChoreographyError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"INVALID_CHOREOGRAPHY"}`. */
@@ -237,8 +238,9 @@ export class InvalidValidationValueError extends AuthDanceError {
 	readonly code: "INVALID_VALIDATION_VALUE" = "INVALID_VALIDATION_VALUE";
 }
 /**
- * A step needs an identity, but no step resolved one and the state holds none. A first step that answers `true`
- * instead of an identity id raises it, in a sign-in and in a recovery.
+ * A step needs an identity, but no step resolved one and the state holds none. A step that proves control and answers
+ * `true` before any step resolved an identity raises it, in a sign-in and in a recovery. A path that completes with
+ * no identity raises it too. Both cases occur only when the choreography changed after the constructor checked it.
  */
 export class IdentityNotResolvedError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"IDENTITY_NOT_RESOLVED"}`. */
@@ -249,7 +251,7 @@ export class IdentityMismatchError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"IDENTITY_MISMATCH"}`. */
 	readonly code: "IDENTITY_MISMATCH" = "IDENTITY_MISMATCH";
 }
-/** A recovery step needs the identity, but the owner has not answered the first step of the recovery yet. */
+/** A recovery step needs the identity, but no step of the recovery resolved the identity yet. */
 export class RecoveryNotIdentifiedError extends AuthDanceError {
 	/** The app layer answers HTTP 500 with `{"error":"RECOVERY_NOT_IDENTIFIED"}`. */
 	readonly code: "RECOVERY_NOT_IDENTIFIED" = "RECOVERY_NOT_IDENTIFIED";

@@ -25,7 +25,8 @@ export interface AuthDanceComponentContext {
 	/**
 	 * The identity as it stands, when the library holds one.
 	 *
-	 * The library omits it on the first step of a sign-in and of a recovery. It also omits it from every prompt it
+	 * The library omits it on each step of a sign-in and of a recovery before a step resolves an identity. It also
+	 * omits it from every prompt it
 	 * builds from the choreography or from a recovery choreography, so `getPrompt` in a sign-in, a sign-up or a step
 	 * of a recovery dance never reads one. In a `recover` flow, a prompt with an identity collects the replacement.
 	 */
@@ -59,6 +60,10 @@ export interface AuthDanceComponent {
 	 *
 	 * Every complete path of the choreography needs one step that proves. A third-party identification that checks a
 	 * secret, a signature for example, sets this to `true`.
+	 *
+	 * A step that proves must come at or after the first identification of each path, because a proof needs the
+	 * identity it proves. A step that sets this to `false` can come before the first identification, a proof of work
+	 * for example.
 	 */
 	proves?: boolean;
 	/**
@@ -124,12 +129,14 @@ export interface AuthDanceComponent {
 	/**
 	 * Checks a submitted value against the identity the dance has resolved so far.
 	 *
-	 * When a component answers `true` and the dance has resolved nobody, the library raises
+	 * When a step that does not prove answers `true` and the dance has resolved nobody, the library accepts the value
+	 * and goes to the next step with no identity. When a step that proves does the same, the library raises
 	 * `IdentityNotResolvedError`. When the id contradicts an id an earlier step resolved, it raises
 	 * `IdentityMismatchError`. Any other answer raises `InvalidPromptValueError`, and so does an id that names no
 	 * stored identity.
 	 *
-	 * A recovery needs an identity id from the first submit. Any other answer raises `IdentityNotResolvedError`.
+	 * In a recovery, an identification that proves control through its verification also counts as a step that
+	 * proves.
 	 *
 	 * On a verification component the library accepts `true` alone. Any other answer raises
 	 * `InvalidValidationValueError`.

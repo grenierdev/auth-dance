@@ -188,9 +188,11 @@ type PendingChallenge = PowPromptOptions;
  * nonce one time only: it deletes the key when it checks a nonce, also when the nonce is wrong. After a wrong nonce,
  * the client gets a new challenge from the next prompt.
  *
- * The step proves nothing about the owner, so `proves` is `false`, and the step resolves no identity. In a sign-in,
- * put the step after an identification, for example `sequence("email", "pow", "password")`. A sign-up can put it
- * first.
+ * The step proves nothing about the owner, so `proves` is `false`, and the step resolves no identity. It can come
+ * before the first identification of a path, for example `sequence("pow", "email", "password")`. There, the client
+ * does the work before the server looks up any identity. Before an identity resolves, the `verify` rate limit has no
+ * identity to count against, so only the limits by address apply. A step that proves control must still come at or
+ * after the first identification.
  *
  * The record is a challenge with no data. It keeps no secret.
  *
