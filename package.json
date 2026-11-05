@@ -76,6 +76,10 @@
 			"types": "./dist/src/components/policy.d.ts",
 			"import": "./dist/src/components/policy.js"
 		},
+		"./components/pow": {
+			"types": "./dist/src/components/pow.d.ts",
+			"import": "./dist/src/components/pow.js"
+		},
 		"./components/totp": {
 			"types": "./dist/src/components/totp.d.ts",
 			"import": "./dist/src/components/totp.js"
