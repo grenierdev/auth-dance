@@ -96,6 +96,8 @@ const docs = defineCollection({
 			slug,
 			url: slug ? `/docs/${slug}` : "/docs",
 			headings: headings(document.content),
+			/** The page body as written, for `/llms-full.txt`. */
+			markdown: document.content.trim(),
 			mdx,
 		};
 	},

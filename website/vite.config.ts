@@ -18,7 +18,8 @@ export default defineConfig({
 	plugins: [
 		contentCollections(),
 		// Every page is prerendered to static HTML; `wrangler.jsonc` serves `dist/client`.
-		tanstackStart({ prerender: { enabled: true, crawlLinks: true, failOnError: true } }),
+		// The llms.txt files are listed too, as no page links to them with a router `Link`.
+		tanstackStart({ prerender: { enabled: true, crawlLinks: true, failOnError: true }, pages: [{ path: "/" }, { path: "/llms.txt" }, { path: "/llms-full.txt" }] }),
 		viteReact(),
 		tailwindcss(),
 	],

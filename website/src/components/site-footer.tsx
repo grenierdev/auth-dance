@@ -26,6 +26,7 @@ const COLUMNS = [
 			{ label: "GitHub", href: "https://github.com/grenierdev/auth-dance" },
 			{ label: "npm", href: "https://www.npmjs.com/package/auth-dance" },
 			{ label: "Live demo", href: "https://demo.auth.dance" },
+			{ label: "llms.txt", href: "/llms.txt" },
 		],
 	},
 ] as const;
