@@ -60,7 +60,7 @@ export interface AuthDanceOauth2Client {
 	introspect?: boolean;
 	/** Set on the server only. Whether an administrator or the registration endpoint created the client. */
 	registered_by?: "admin" | "dynamic";
-	/** Set on the server only. The `aud` of the access tokens of the client, a resource server. @defaultValue The client id */
+	/** Set on the server only. The `aud` of the access tokens of the client, a resource server. @defaultValue The issuer */
 	audience?: string;
 }
 

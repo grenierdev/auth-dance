@@ -1,0 +1,239 @@
+---
+title: Client ID metadata documents
+description: Let a client use an https URL as its client_id, with no registration. The MCP way for a harness to name itself.
+order: 2.5
+---
+
+With a client ID metadata document, a client uses an `https:` URL as its `client_id`. The server fetches the JSON document at that URL and uses it as the metadata of the client. The client registers nothing first.
+
+MCP 2025-11-25 recommends this method for an MCP client. Dynamic registration (RFC 7591) stays as the fallback. With registration alone, each installation of a harness registers a new `cli_` client, and nothing deletes them. With a metadata document, every installation of a harness shares one `client_id`, and the server stores only a cache entry that expires.
+
+The library follows `draft-ietf-oauth-client-id-metadata-document-03`. MCP 2025-11-25 cites version `-00`. Version `-03` is stricter, and a server that follows `-03` also meets `-00`. The draft is not an RFC yet, so its rules can change.
+
+## 1. Turn it on
+
+The option is off by default. Turn it on in the `oauth2` options:
+
+```ts
+const idp = createAuthDanceOauth2({
+	oauth2: {
+		api: auth.api,
+		clients,
+		issuer: "https://auth.example.com",
+		ui: { login: "https://auth.example.com/login", consent: "https://auth.example.com/consent" },
+		// The fallback for a client that does not send a URL.
+		registration: { scope: ["mail"] },
+		client_id_metadata_document: {
+			// The most a client of a document may ask for, as `registration.scope`.
+			scope: ["mail"],
+		},
+	},
+	app: { basePath: "/oauth2" },
+});
+```
+
+The metadata then announces `client_id_metadata_document_supported: true`. Registration and the clients of your store work as before.
+
+A client then sends a URL such as `https://app.example.com/oauth/client.json` as its `client_id`, and serves this document at that URL:
+
+```json
+{
+  "client_id": "https://app.example.com/oauth/client.json",
+  "client_name": "Example MCP Client",
+  "client_uri": "https://app.example.com",
+  "redirect_uris": ["http://127.0.0.1:3000/callback"],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none"
+}
+```
+
+## 2. How the server finds the client
+
+For each `client_id`, the server reads the client store first. A client in the store keeps working as before, also when its id is a URL. The draft calls this pre-registration (§9.2). When the store holds no client, and the id starts with `https://`, the server reads the document.
+
+The server refuses a URL with `invalid_client`, and does not fetch it, when the URL:
+
+- Does not use `https:`, or holds a user name, a password or a fragment.
+- Has the path `/`, or has no path.
+- Is not in the form the URL parser writes. A `.` or `..` segment, a default port such as `:443`, an uppercase host and an escape the parser changes all fail. The draft forbids the server to normalize a client id. The server fetches the parsed URL, so a URL in another form can never match the `client_id` of its document.
+- Is on the origin of the issuer (draft §10.1). This also stops a document URL that points back at the server.
+- Has a special-use address or a local name as its host. See [What the library checks before it fetches](#what-the-library-checks-before-it-fetches).
+- Holds more than 2048 characters.
+- Fails your `allow` function.
+
+## 3. What the server checks in the document
+
+The server sends a `GET` with `Accept: application/json`. It follows no redirect, and reads 5120 bytes at most. The answer must be a 200 with a JSON media type: `application/json` or `application/<name>+json`.
+
+Then the document goes through the same checks as a registration request (RFC 7591), with the rules of the draft on top:
+
+- `client_id` equals the URL, character for character.
+- `client_secret` and `client_secret_expires_at` are absent.
+- No method that uses a shared secret appears. `client_secret_basic`, `client_secret_post` and `client_secret_jwt` all fail.
+- The server reads `token_endpoint_auth_methods_supported` first, then `token_endpoint_auth_method`. With neither, the method is `none`. The server supports `none` only, so a document must allow `none`. The client is always public.
+- `jwks` and `jwks_uri` are not both present. The server reads neither, because it does not support `private_key_jwt`.
+- `grant_types` narrows to `authorization_code`, `refresh_token`, and the device code grant type when the device grant is open. `client_credentials` drops out, because it needs a confidential client. An empty result fails.
+- `scope` narrows to `client_id_metadata_document.scope`, with no error, as for registration.
+- `redirect_uris` is required with `authorization_code`. Each URI follows the rules of registration: `https:`, `http:` on a loopback host, or a private-use scheme.
+- `software_statement` is ignored.
+
+The `redirect_uri` of an authorization request must match one URI of the document exactly. One exception applies: the port of a loopback URI can change (RFC 8252 §7.3). The draft keeps this exception (§4.2).
+
+## 4. What the consent page shows
+
+The client asserts its `client_name`, `logo_uri` and `client_uri` itself. Anyone can publish a document that copies the name and the logo of a known app. The server checked one thing only: that the document at the URL names that URL.
+
+For a client of a document, `getLoginRequest` and `getConsentRequest` add `client_id_metadata_document`:
+
+```ts
+{
+	hostname: "app.example.com",
+	redirect_uri: "http://127.0.0.1:3000/callback",
+	warnings: ["loopback_redirect_uri"],
+}
+```
+
+On the consent page:
+
+1. Show `hostname` next to `client_name`. The draft asks for it (§10.6). It is the only identity of the client that the server checked.
+2. Show the host of `redirect_uri`. MCP 2025-11-25 requires it. The code goes there.
+3. Show a warning for each value of `warnings`:
+
+| Warning | What it means | What to tell the owner |
+| ------- | ------------- | ---------------------- |
+| `loopback_redirect_uri` | The code goes to a port on the device of the owner. Any program on the device can listen on that port, and send the URL of a known client as its `client_id`. MCP 2025-11-25 asks for a warning. | Continue only if you started this connection yourself. |
+| `private_use_redirect_uri` | The code goes to an app scheme such as `com.example.app:`. Any app that claims the scheme can get it. | The same. |
+| `redirect_uri_on_other_host` | The code goes to an `https:` host other than the host of the client id. The draft allows it (§10.2). | The host that gets the access. |
+| `client_uri_on_other_host` | The home page is on another host. This is common, and the draft forbids the server to refuse it (§4.4). | Treat the home page as a claim of the client. |
+
+4. Do not load `logo_uri` in the browser of the owner. The draft says that a server that shows the logo must fetch it, check it, and serve it from its own servers (§10.9). The library does not fetch logos. Show no logo for a client of a document, or serve it through your own image proxy.
+
+For a client of a document with a loopback or a private-use redirect URI, `skip` is always `false`, and the login never skips the consent page. A consent the owner remembered does not help another program that took the name of the client. With an `https:` redirect URI, a remembered consent skips the page as for any client.
+
+## 5. Tokens, grants and revocation
+
+A client of a document is a client like any other. Its `client_id` is the URL in each token, in introspection and in `GET /grants`. The `aud` of its access tokens is the issuer, as for every client with no `audience`. A document can never set `audience`, `skip_consent` or `introspect`.
+
+Revocation never needs the document. `DELETE /grants/{id}`, `revokeGrant`, `revokeClientGrants` and `deleteClient` read only the index of the grants. `/revoke` authenticates a client of a document by its `client_id` alone, with no fetch. A document that is gone, or a host that is down, never stops a revocation.
+
+`listGrants` and `GET /grants` try to read the document for the name of each client. When the document is out of reach, the grant comes without `client`. Show the host of its `client_id` instead.
+
+`idp.oauth2.deleteClient(url)` revokes the grants of the client and drops its document from the cache. The next request of the client fetches the document again. To refuse a client for good, refuse its URL in `allow`.
+
+When a document names another `client_id` than its URL, the server revokes every grant of the client at once (draft §6.1).
+
+## 6. Cache
+
+The server keeps each valid document in the KV store of the core, under `oauth2/client-metadata/`, with a time to live. It is a cache entry, not a registration. It never goes in the client store, and `listClients` never lists it.
+
+| Response | How long the server keeps the document |
+| -------- | -------------------------------------- |
+| `Cache-Control: max-age=N` or `s-maxage=N` | `N`, less `Age`, between `cache.min_ttl` and `cache.max_ttl` |
+| `no-store`, `no-cache`, or no lifetime | `cache.min_ttl` |
+| An error, or a document that fails a check | Not kept |
+
+`cache.min_ttl` is 300 seconds by default, and `cache.max_ttl` is 86400. The server ignores `Expires` (draft §6.2). A change to the document reaches the server when its copy expires: a new redirect URI after `min_ttl` at least, and a removed redirect URI after `max_ttl` at most.
+
+Past its lifetime, the copy stays one more `max_ttl`. The server uses it only when a new fetch fails for a transient reason (draft §6.1): a network error, a timeout, a 429, a 5xx, or an empty rate limit bucket. A terminal failure drops the copy at once.
+
+## 7. Errors
+
+The server never sends the browser to a redirect URI that it took from a document that failed. It also never puts a byte of the response in an error.
+
+| Failure | `/authorize` | `/token`, `/device_authorization` |
+| ------- | ------------ | --------------------------------- |
+| The URL fails a check, or `allow` refuses it | Error page, `invalid_client`, 400 | `invalid_client`, 401 |
+| Not a 200, a redirect, not JSON, too large, a bad document, a `client_id` that differs | Error page, `invalid_client`, 400 | `invalid_client`, 401 |
+| Network error, timeout, 429 or 5xx, and no copy in the cache | Error page, `temporarily_unavailable`, 503 | `temporarily_unavailable`, 503 |
+| A `client_metadata` bucket is empty, and no copy in the cache | 429 | 429 |
+| A `redirect_uri` that the document does not list | Error page, `invalid_request`, 400 | — |
+
+With `ui.error`, the error page is your page, as for any other error. When the document of a pending request stops passing between the login and the consent page, the page methods raise `invalid_request`.
+
+## 8. Rate limits
+
+Each fetch counts in two buckets. A document in the cache causes no fetch.
+
+| Bucket | Default | Counts |
+| ------ | ------- | ------ |
+| `limits.address.client_metadata` | 20 per 60 s | Each fetch a request of one address causes |
+| `limits.client.client_metadata` | 10 per 60 s | Each fetch of one URL, from any address |
+
+The address bucket counts first, so one address runs out before it can drain the bucket of a URL. A call in process with no `address` skips the address bucket.
+
+## Security model
+
+The server fetches a URL that an unknown client chooses. That is a request on behalf of an attacker, a server-side request forgery (SSRF). The draft forbids a fetch of a special-use address (§10.7).
+
+### What the library checks before it fetches
+
+The library reads the text of the URL only. It refuses:
+
+- An IPv4 address in a special-use block of RFC 6890: `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, the documentation and benchmark blocks, multicast and reserved.
+- An IPv6 address outside the global unicast block `2000::/3`, or in `2001::/23`, `2001:db8::/32` or `2002::/16`. This covers `::1`, `fe80::/10`, `fc00::/7` and the IPv4-mapped addresses.
+- A name with no dot, `localhost`, and a name under `localhost`, `local`, `internal`, `home.arpa`, `localdomain`, `invalid` or `onion`.
+- A redirect. The server follows none, so a public URL cannot send it to a private one.
+
+### What the library cannot check
+
+The library resolves no name. A public name can resolve to `127.0.0.1` or to `10.0.0.5`, and the default check lets it pass. Add a check at connect time, in the `fetch` option.
+
+- **Node.** Pass a `fetch` that checks each address when it connects. With `undici`:
+
+  ```ts
+  import { lookup } from "node:dns";
+  import { isSpecialUseHost } from "auth-dance/oauth2";
+  import { Agent, fetch as undiciFetch } from "undici";
+
+  // It checks each address at connect time, so a DNS answer that changes between two lookups cannot pass.
+  const agent = new Agent({
+  	connect: {
+  		lookup: (hostname, options, callback) =>
+  			lookup(hostname, { ...options, all: true }, (error, addresses) => {
+  				if (error) {
+  					return callback(error, []);
+  				}
+  				const allowed = addresses.filter(({ address, family }) => !isSpecialUseHost(family === 6 ? `[${address}]` : address));
+  				if (allowed.length === 0) {
+  					return callback(Object.assign(new Error(`${hostname} resolves to a special-use address`), { code: "ENOTFOUND" }), []);
+  				}
+  				return options.all ? callback(null, allowed) : callback(null, allowed[0].address, allowed[0].family);
+  			}),
+  	},
+  });
+
+  client_id_metadata_document: {
+  	fetch: (request) =>
+  		undiciFetch(request.url, {
+  			method: request.method,
+  			headers: request.headers,
+  			redirect: request.redirect,
+  			signal: request.signal,
+  			dispatcher: agent,
+  		}),
+  },
+  ```
+
+  A proxy that refuses private addresses, or a firewall rule on the host, does the same job.
+- **Deno.** Pass a `fetch` that resolves the name with `Deno.resolveDns` and checks each address with `isSpecialUseHost`, or send the fetch through a proxy that refuses private addresses. A check before the fetch leaves a short window in which a DNS answer can change. A proxy closes it.
+- **Cloudflare Workers.** A Worker cannot resolve a name, so the library checks the URL text only. The library cannot see where the platform sends the request. Do not count on the default check alone to protect a service that your Worker reaches through a binding, a tunnel or a private network.
+
+### Trust policy
+
+`allow(url)` runs after the built-in checks, and can only refuse more. Use it for:
+
+- An allowlist of hosts, for a server that takes only clients it knows.
+- A refusal of the identifiers of the resource servers you trust (draft §10.1). The server already refuses its own origin.
+
+An open server, one that accepts any `https:` client id, is what MCP expects. On an open server, the hostname on the consent page and the warnings are the defense against phishing.
+
+## Limits
+
+- **No `private_key_jwt`.** A client of a document is always public. A document that allows only key-based methods fails with `invalid_client`.
+- **No `resource` parameter.** The draft scopes a remembered consent to the pair of the client id and the resource (§10.12). The server does not support RFC 8707, so a remembered consent is scoped to the client id only.
+- **No logo fetch.** See [What the consent page shows](#4-what-the-consent-page-shows).
+- **No change detection.** When a document changes, the server takes the new values at the next fetch. It does not ask for consent again (draft §10.5 leaves this to the server).
+- **CORS preflight.** A browser app does not need a preflight for `/token`: a form body is a simple request. The preflight of `/token` and `/revoke` reads only the client store, so it does not allow the origin of a client of a document. The `/token` answer itself does.
+
+Next: [The device grant](/docs/guides/device-grant).

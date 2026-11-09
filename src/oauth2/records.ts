@@ -1,6 +1,7 @@
 import { encode } from "jose/base64url";
 import * as v from "valibot";
 import type { AuthDanceStorage } from "../storage.ts";
+import { AuthDanceOauth2Client } from "./client.ts";
 
 /** The SHA-256 of the UTF-8 bytes of a value, in base64url. The store keeps every code, token and secret as this hash. */
 export async function sha256(value: string): Promise<string> {
@@ -250,6 +251,21 @@ const RememberedConsentRecordSchema: v.GenericSchema<RememberedConsentRecord> = 
 });
 
 /**
+ * `oauth2/client-metadata/<sha256>`: a client id metadata document the server fetched, as a client record, under the
+ * hash of its URL. It is a cache entry, not a registration: its time to live deletes it.
+ */
+export interface ClientMetadataRecord {
+	client: AuthDanceOauth2Client;
+	/** When the document stops being fresh, in seconds since the epoch. Past it, the server fetches it again. */
+	expiresAt: number;
+}
+
+const ClientMetadataRecordSchema: v.GenericSchema<ClientMetadataRecord> = v.object({
+	client: AuthDanceOauth2Client,
+	expiresAt: v.number(),
+});
+
+/**
  * One key space under `oauth2/`, with the schema of its values. A key is the prefix and a fixed count of segments. A
  * segment is never empty and never holds a `/`, so no value can reach another key space.
  */
@@ -324,3 +340,8 @@ export const rememberedConsentRecords: KvRecord<RememberedConsentRecord> = new K
 	2,
 	RememberedConsentRecordSchema,
 );
+/**
+ * `oauth2/client-metadata/<sha256>`, for the cache lifetime of the document and one `max_ttl` more. Past its
+ * `expiresAt`, an entry serves only while a new fetch fails with a transient failure, draft §6.1.
+ */
+export const clientMetadataRecords: KvRecord<ClientMetadataRecord> = new KvRecord("oauth2/client-metadata", 1, ClientMetadataRecordSchema);

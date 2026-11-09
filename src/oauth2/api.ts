@@ -47,15 +47,29 @@ import {
 	InvalidUserCodeError,
 	ServerError,
 	SlowDownError,
+	TemporarilyUnavailableError,
 	UnauthorizedClientError,
 	UnsupportedGrantTypeError,
 	UnsupportedResponseTypeError,
 } from "./error.ts";
+import {
+	type AuthDanceOauth2ClientIdMetadataDocumentInfo,
+	type AuthDanceOauth2ClientIdMetadataDocumentOptions,
+	ClientIdMetadataDocumentDefaults,
+	cacheLifetime,
+	checkClientIdUrl,
+	describeClientIdentity,
+	fetchClientIdMetadataDocument,
+	isClientIdUrl,
+	isDeviceLocalRedirectUri,
+	parseClientIdMetadataDocument,
+} from "./metadata-document.ts";
 import { readParams } from "./params.ts";
 import { isCodeChallenge, verifyCodeVerifier } from "./pkce.ts";
 import {
 	type AuthorizationRequest,
 	type ConsentRecord,
+	clientMetadataRecords,
 	clientSessionRecords,
 	codeRecords,
 	consentRecords,
@@ -102,12 +116,23 @@ export interface AuthDanceOauth2AddressRateLimits {
 	 * code, so this bucket bounds how fast one address can guess. @defaultValue `{ limit: 30, window: 60 }`
 	 */
 	device?: AuthDanceRateLimit;
+	/**
+	 * Each fetch of a client id metadata document that a request of this address causes. A document in the cache
+	 * causes no fetch. `AuthDanceOauth2Api` consumes this bucket, keyed on the `address` of the request, and skips it
+	 * for a request with no `address`. @defaultValue `{ limit: 20, window: 60 }`
+	 */
+	client_metadata?: AuthDanceRateLimit;
 }
 
 /** The buckets `AuthDanceOauth2Api` consumes, keyed on the client that calls. */
 export interface AuthDanceOauth2ClientRateLimits {
 	/** Each introspection a client asks for, from any address. @defaultValue `{ limit: 600, window: 60 }` */
 	introspect?: AuthDanceRateLimit;
+	/**
+	 * Each fetch of the client id metadata document of one URL, from any address. It bounds how often the server sends
+	 * requests to one URL when the document fails and so stays out of the cache. @defaultValue `{ limit: 10, window: 60 }`
+	 */
+	client_metadata?: AuthDanceRateLimit;
 }
 
 /** What the library hands `onError` when a hook rejects, or when the `claims` mapper fails. */
@@ -182,7 +207,10 @@ export interface AuthDanceOauth2ApiOptions {
 	device?: AuthDanceOauth2DeviceOptions;
 	/** The rate limit buckets. Any bucket you omit keeps its default. */
 	limits?: {
-		/** The per-address buckets the oauth2 HTTP layer consumes. `AuthDanceOauth2Api` never reads them. */
+		/**
+		 * The per-address buckets the oauth2 HTTP layer consumes. `AuthDanceOauth2Api` reads only `client_metadata`, keyed
+		 * on the `address` the HTTP layer puts on each request.
+		 */
 		address?: AuthDanceOauth2AddressRateLimits;
 		/** The per-client buckets `AuthDanceOauth2Api` consumes. */
 		client?: AuthDanceOauth2ClientRateLimits;
@@ -192,6 +220,14 @@ export interface AuthDanceOauth2ApiOptions {
 	 * metadata does not announce it. @defaultValue `false`
 	 */
 	registration?: false | AuthDanceOauth2RegistrationOptions;
+	/**
+	 * Lets a client name itself with an `https:` URL as its `client_id`, the OAuth Client ID Metadata Document of
+	 * draft-ietf-oauth-client-id-metadata-document-03. The server fetches the JSON document at the URL and uses it as
+	 * the metadata of the client, with no registration. Such a client is always public. The metadata then announces
+	 * `client_id_metadata_document_supported: true`. Registration and the clients of the store keep working beside it.
+	 * Without this option, or with `false`, a URL `client_id` is an id like any other. @defaultValue `false`
+	 */
+	client_id_metadata_document?: false | AuthDanceOauth2ClientIdMetadataDocumentOptions;
 	/** How the introspection endpoint describes a token. */
 	introspection?: {
 		/**
@@ -239,6 +275,8 @@ export interface AuthDanceOauth2DeviceAuthorizationRequest {
 	authorization?: string;
 	/** The verification URI of the app, the `/device` route. `device.verification_uri` replaces it in the answer. */
 	verification_uri: string;
+	/** The address of the caller, for the `client_metadata` bucket. Without it the bucket does not count. */
+	address?: string;
 }
 
 /** One visit to the verification URI, as the HTTP layer reads it. */
@@ -280,6 +318,8 @@ export interface AuthDanceOauth2Metadata {
 	registration_endpoint?: string;
 	/** Present when `ui.device` opens the device authorization grant, RFC 8628 §4. */
 	device_authorization_endpoint?: string;
+	/** `true` when `options.client_id_metadata_document` opens client id URLs, draft §8. Absent otherwise. */
+	client_id_metadata_document_supported?: boolean;
 }
 
 /** How the registration endpoint takes a new client, RFC 7591. */
@@ -360,6 +400,11 @@ export interface AuthDanceOauth2LoginRequest {
 	request_url: string;
 	/** The user code, as XXXX-XXXX, when a device asks for access, RFC 8628. */
 	user_code?: string;
+	/**
+	 * Present when the client names itself with a URL, a client id metadata document. The client asserts its
+	 * `client_name`, `logo_uri` and `client_uri` itself: show `hostname` next to them.
+	 */
+	client_id_metadata_document?: AuthDanceOauth2ClientIdMetadataDocumentInfo;
 }
 
 /** What the consent page reads about one authorization request. */
@@ -374,11 +419,17 @@ export interface AuthDanceOauth2ConsentRequest {
 	subject: string;
 	/**
 	 * True when the owner already granted every requested scope to this client, and asked to remember it. Always false
-	 * for a device: the owner confirms each device, RFC 8628 §5.4.
+	 * for a device: the owner confirms each device, RFC 8628 §5.4. Always false for a client of a document whose
+	 * redirect URI is a loopback or a private-use scheme: another program can take the name of the client.
 	 */
 	skip: boolean;
 	/** The user code, as XXXX-XXXX, when a device asks for access. The page asks the owner to check it on the device. */
 	user_code?: string;
+	/**
+	 * Present when the client names itself with a URL, a client id metadata document. The client asserts its
+	 * `client_name`, `logo_uri` and `client_uri` itself: show `hostname` next to them, and the host of `redirect_uri`.
+	 */
+	client_id_metadata_document?: AuthDanceOauth2ClientIdMetadataDocumentInfo;
 }
 
 /** How a login or a consent page refuses a request: an RFC 6749 error code, and a text for the client. */
@@ -401,6 +452,8 @@ export interface AuthDanceOauth2AuthorizeRequest {
 	params: [string, string][];
 	/** The absolute URL of the authorization endpoint, without a query. */
 	endpoint: string;
+	/** The address of the caller, for the `client_metadata` bucket. Without it the bucket does not count. */
+	address?: string;
 }
 
 /** The answer of the authorization endpoint: a 303 redirect. */
@@ -415,6 +468,8 @@ export interface AuthDanceOauth2TokenRequest {
 	params: [string, string][];
 	/** The `Authorization` header. */
 	authorization?: string;
+	/** The address of the caller, for the `client_metadata` bucket. Without it the bucket does not count. */
+	address?: string;
 }
 
 // RFC 6749 §5.2: the characters of a scope token, RFC 6749 §3.3, with the space added.
@@ -427,7 +482,17 @@ const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 const ClientRateLimits: Required<AuthDanceOauth2ClientRateLimits> = {
 	introspect: { limit: 600, window: 60 },
+	client_metadata: { limit: 10, window: 60 },
 };
+
+const ADDRESS_CLIENT_METADATA: AuthDanceRateLimit = { limit: 20, window: 60 };
+
+// A client the library found: in the store, or from a client id metadata document.
+interface FoundClient {
+	client: AuthDanceOauth2Client;
+	/** True when the client came from a client id metadata document. */
+	document: boolean;
+}
 
 const Durations: Required<NonNullable<AuthDanceOauth2ApiOptions["durations"]>> = {
 	challenge: 600,
@@ -526,7 +591,8 @@ export class AuthDanceOauth2Api {
 	 * Builds the authorization server and checks its options.
 	 *
 	 * @throws {TypeError} When `options.issuer` differs from the issuer of `options.api`, when a URL of `options.ui` or
-	 * `device.verification_uri` is not an absolute `https:` URL, or when `device.interval` is not a positive integer.
+	 * `device.verification_uri` is not an absolute `https:` URL, when `device.interval` is not a positive integer, or
+	 * when a number of `client_id_metadata_document` is not positive, or `cache.min_ttl` is over `cache.max_ttl`.
 	 */
 	constructor(options: AuthDanceOauth2ApiOptions) {
 		if (options.issuer !== options.api.issuer) {
@@ -546,6 +612,16 @@ export class AuthDanceOauth2Api {
 		const interval = options.device?.interval;
 		if (interval !== undefined && !(Number.isInteger(interval) && interval > 0)) {
 			throw new TypeError("device.interval must be a positive integer");
+		}
+		const document = options.client_id_metadata_document;
+		if (document) {
+			const { timeout, max_size, min_ttl, max_ttl } = this.#documentSettings(document);
+			if (!(timeout > 0) || !Number.isInteger(max_size) || max_size <= 0) {
+				throw new TypeError("client_id_metadata_document.timeout and max_size must be positive");
+			}
+			if (!Number.isInteger(min_ttl) || !Number.isInteger(max_ttl) || min_ttl <= 0 || min_ttl > max_ttl) {
+				throw new TypeError("client_id_metadata_document.cache needs positive integers, with min_ttl at most max_ttl");
+			}
 		}
 		this.#options = options;
 	}
@@ -573,6 +649,11 @@ export class AuthDanceOauth2Api {
 	/** The options of the registration endpoint, or `undefined` when the endpoint is closed. */
 	get registration(): AuthDanceOauth2RegistrationOptions | undefined {
 		return this.#options.registration || undefined;
+	}
+
+	/** The options of client id metadata documents, or `undefined` when the server does not open client id URLs. */
+	get clientIdMetadataDocument(): AuthDanceOauth2ClientIdMetadataDocumentOptions | undefined {
+		return this.#options.client_id_metadata_document || undefined;
 	}
 
 	/** The options of the device authorization grant, or `undefined` when `ui.device` does not open it. */
@@ -615,7 +696,44 @@ export class AuthDanceOauth2Api {
 			revocation_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
 			...(this.#options.registration ? { registration_endpoint: `${base}/register` } : {}),
 			...(this.device ? { device_authorization_endpoint: `${base}/device_authorization` } : {}),
+			...(this.clientIdMetadataDocument ? { client_id_metadata_document_supported: true } : {}),
 		};
+	}
+
+	/**
+	 * Reads a client by id: from the store first, then, when `options.client_id_metadata_document` opens client id
+	 * URLs, from the client id metadata document at an `https://` id. The cache serves a document while it is fresh.
+	 *
+	 * @param options `address` is the address of the caller, for the `client_metadata` bucket.
+	 * @returns The client, or `undefined` when no client holds the id.
+	 * @throws InvalidClientError when the URL or its document does not pass, a terminal failure.
+	 * @throws TemporarilyUnavailableError when the fetch fails, and the cache holds no earlier copy of the document.
+	 * @throws RateLimitedError when a `client_metadata` bucket is empty, and the cache holds no earlier copy.
+	 */
+	async getClient(clientId: string, options: { address?: string } = {}): Promise<AuthDanceOauth2Client | undefined> {
+		return (await this.#findClient(clientId, options.address))?.client;
+	}
+
+	/**
+	 * Authenticates the client of a request, RFC 6749 §2.3, for the introspection and the revocation endpoint. A
+	 * client of a document is public, so it authenticates with its `client_id` alone. With `fetch: false`, such a client
+	 * authenticates with no fetch of its document: revocation then works while the document is out of reach.
+	 *
+	 * @param request `params` are the body parameters. `address` is the address of the caller.
+	 * @throws InvalidRequestError when the request uses two methods at once.
+	 * @throws InvalidClientError when the authentication fails.
+	 */
+	async authenticateClient(
+		request: { authorization?: string; params: Map<string, string>; address?: string },
+		options: { fetch?: boolean } = {},
+	): Promise<AuthDanceOauth2Client> {
+		const credentials = readClientCredentials(request.authorization, request.params);
+		return authenticateClient(this.clients, credentials, async (clientId) => {
+			if (options.fetch !== false || !this.clientIdMetadataDocument || !isClientIdUrl(clientId)) {
+				return this.getClient(clientId, { address: request.address });
+			}
+			return (await this.clients.getClient(clientId)) ?? this.#offlineDocumentClient(clientId);
+		});
 	}
 
 	/**
@@ -680,13 +798,14 @@ export class AuthDanceOauth2Api {
 	 */
 	async getLoginRequest(challenge: string): Promise<AuthDanceOauth2LoginRequest> {
 		const record = await this.#challenge(loginRecords, challenge);
-		const client = await this.#client(record.request.client_id);
+		const found = await this.#client(record.request.client_id);
 		return {
 			challenge,
-			client: toPublicClient(client),
+			client: toPublicClient(found.client),
 			requested_scope: record.request.scope,
 			request_url: record.request_url,
 			...(isDeviceRequest(record.request) ? { user_code: formatUserCode(record.request.user_code) } : {}),
+			...this.#identity(found, record.request),
 		};
 	}
 
@@ -737,16 +856,22 @@ export class AuthDanceOauth2Api {
 	 */
 	async getConsentRequest(challenge: string): Promise<AuthDanceOauth2ConsentRequest> {
 		const record = await this.#challenge(consentRecords, challenge);
-		const client = await this.#client(record.request.client_id);
-		const remembered = await rememberedConsentRecords.get(this.storage, [record.login.identityId, client.client_id]);
-		const device = isDeviceRequest(record.request);
+		const found = await this.#client(record.request.client_id);
+		const remembered = await rememberedConsentRecords.get(this.storage, [
+			record.login.identityId,
+			await this.#requireClientKey(found.client.client_id),
+		]);
 		return {
 			challenge,
-			client: toPublicClient(client),
+			client: toPublicClient(found.client),
 			requested_scope: record.request.scope,
 			subject: record.login.identityId,
-			skip: !device && remembered !== undefined && record.request.scope.every((scope) => remembered.scopes.includes(scope)),
+			skip:
+				this.#maySkipConsent(found, record.request) &&
+				remembered !== undefined &&
+				record.request.scope.every((scope) => remembered.scopes.includes(scope)),
 			...(isDeviceRequest(record.request) ? { user_code: formatUserCode(record.request.user_code) } : {}),
+			...this.#identity(found, record.request),
 		};
 	}
 
@@ -808,7 +933,7 @@ export class AuthDanceOauth2Api {
 		if (repeated.length > 0) {
 			throw new InvalidRequestError(`${repeated[0]} appears more than once`);
 		}
-		const client = await authenticateClient(this.clients, readClientCredentials(request.authorization, params));
+		const client = await this.authenticateClient({ authorization: request.authorization, params, address: request.address });
 		const grantType = params.get("grant_type");
 		if (grantType === undefined) {
 			throw new InvalidRequestError("grant_type is missing");
@@ -842,7 +967,7 @@ export class AuthDanceOauth2Api {
 		if (repeated.length > 0) {
 			throw new InvalidRequestError(`${repeated[0]} appears more than once`);
 		}
-		const client = await authenticateClient(this.clients, readClientCredentials(request.authorization, params));
+		const client = await this.authenticateClient({ authorization: request.authorization, params, address: request.address });
 		if (!client.grant_types.includes(DEVICE_CODE_GRANT_TYPE)) {
 			throw new UnauthorizedClientError("the client may not use the device code grant type");
 		}
@@ -1022,14 +1147,19 @@ export class AuthDanceOauth2Api {
 	 * Lists the grants of one identity, oldest first: the sessions of the consents it gave, so the clients that have
 	 * access to the account. The sessions of a dance are not grants.
 	 *
-	 * @returns Each grant with the public record of its client. An id with a `/` gives an empty list.
+	 * @returns Each grant with the public record of its client. An id with a `/` gives an empty list. A grant of a
+	 * client of a document comes without its client when the document is out of reach: its `client_id` is the URL.
 	 */
 	async listGrants(identityId: string): Promise<AuthDanceOauth2Grant[]> {
 		const grants = await this.#grantSessions(identityId);
 		const clients = new Map<string, Promise<AuthDanceOauth2Client | undefined>>();
 		for (const { client_id } of grants) {
 			if (!clients.has(client_id)) {
-				clients.set(client_id, this.clients.getClient(client_id));
+				// A document out of reach leaves the grant without its client, so the list still answers.
+				clients.set(
+					client_id,
+					this.getClient(client_id).catch(() => undefined),
+				);
 			}
 		}
 		return Promise.all(
@@ -1070,7 +1200,10 @@ export class AuthDanceOauth2Api {
 		const session = SEGMENT.test(grantId) ? await this.storage.getSession(grantId) : undefined;
 		if (session && session.identityId === identityId && session.client_id !== this.#options.api.clientId) {
 			await this.#revokeSession(session);
-			await rememberedConsentRecords.unset(this.storage, [identityId, session.client_id]);
+			const key = await this.#clientKey(session.client_id);
+			if (key !== undefined) {
+				await rememberedConsentRecords.unset(this.storage, [identityId, key]);
+			}
 		}
 	}
 
@@ -1106,7 +1239,8 @@ export class AuthDanceOauth2Api {
 	 * the next request asks for consent again.
 	 */
 	async revokeClientGrants(identityId: string, clientId: string): Promise<void> {
-		if (!SEGMENT.test(identityId) || !SEGMENT.test(clientId)) {
+		const key = await this.#clientKey(clientId);
+		if (!SEGMENT.test(identityId) || key === undefined) {
 			return;
 		}
 		for (const session of await this.#grantSessions(identityId)) {
@@ -1114,23 +1248,22 @@ export class AuthDanceOauth2Api {
 				await this.#revokeSession(session);
 			}
 		}
-		await rememberedConsentRecords.unset(this.storage, [identityId, clientId]);
+		await rememberedConsentRecords.unset(this.storage, [identityId, key]);
 	}
 
 	/**
 	 * Revokes every grant of a client, then deletes the client. `AuthDanceOauth2ClientStorage.deleteClient` deletes the
 	 * client only: the access tokens of its grants stay valid until `exp`, and its refresh tokens until their sessions
 	 * end. A token of client credentials stays valid until `exp`, and introspection calls it inactive at once.
+	 *
+	 * For a client of a document, the method revokes its grants and drops the document from the cache. It never reads
+	 * the document. The next request of the client fetches it again: a document cannot be deleted, only refused with
+	 * `client_id_metadata_document.allow`.
 	 */
 	async deleteClient(clientId: string): Promise<void> {
-		if (SEGMENT.test(clientId)) {
-			for (const sessionId of await clientSessionRecords.list(this.storage, [clientId])) {
-				await clientSessionRecords.unset(this.storage, [clientId, sessionId]);
-				const session = SEGMENT.test(sessionId) ? await this.storage.getSession(sessionId) : undefined;
-				if (session?.client_id === clientId) {
-					await this.#revokeSession(session);
-				}
-			}
+		await this.#revokeClientSessions(clientId);
+		if (isClientIdUrl(clientId)) {
+			await clientMetadataRecords.unset(this.storage, [await sha256(clientId)]);
 		}
 		await this.clients.deleteClient(clientId);
 	}
@@ -1175,6 +1308,181 @@ export class AuthDanceOauth2Api {
 			...fields,
 			...localized,
 			...(client_secret === undefined ? {} : { client_secret, client_secret_expires_at }),
+		};
+	}
+
+	#documentSettings(options: AuthDanceOauth2ClientIdMetadataDocumentOptions) {
+		return {
+			timeout: options.timeout ?? ClientIdMetadataDocumentDefaults.timeout,
+			max_size: options.max_size ?? ClientIdMetadataDocumentDefaults.max_size,
+			min_ttl: options.cache?.min_ttl ?? ClientIdMetadataDocumentDefaults.min_ttl,
+			max_ttl: options.cache?.max_ttl ?? ClientIdMetadataDocumentDefaults.max_ttl,
+		};
+	}
+
+	// The key segment of a client in the grant indexes. A key segment holds no `/`, so a client id URL goes in as the
+	// hash of the URL, behind `url:`. No other id holds a `/`, and `url:` never starts a ksuid. `undefined` for an id
+	// that can key nothing.
+	async #clientKey(clientId: string): Promise<string | undefined> {
+		if (typeof clientId !== "string" || clientId === "") {
+			return undefined;
+		}
+		if (!clientId.includes("/")) {
+			return clientId;
+		}
+		return isClientIdUrl(clientId) ? `url:${await sha256(clientId)}` : undefined;
+	}
+
+	async #requireClientKey(clientId: string): Promise<string> {
+		const key = await this.#clientKey(clientId);
+		if (key === undefined) {
+			throw new TypeError("the client id cannot key a grant");
+		}
+		return key;
+	}
+
+	// Revokes every grant of one client, from the index of its sessions. It never reads the client.
+	async #revokeClientSessions(clientId: string): Promise<void> {
+		const key = await this.#clientKey(clientId);
+		if (key === undefined) {
+			return;
+		}
+		for (const sessionId of await clientSessionRecords.list(this.storage, [key])) {
+			await clientSessionRecords.unset(this.storage, [key, sessionId]);
+			const session = SEGMENT.test(sessionId) ? await this.storage.getSession(sessionId) : undefined;
+			if (session?.client_id === clientId) {
+				await this.#revokeSession(session);
+			}
+		}
+	}
+
+	// A client from the store first, then from its document. Draft §9.2: a URL in the store is a pre-registered client.
+	async #findClient(clientId: string, address?: string): Promise<FoundClient | undefined> {
+		if (typeof clientId !== "string") {
+			return undefined;
+		}
+		const stored = await this.clients.getClient(clientId);
+		if (stored) {
+			return { client: stored, document: false };
+		}
+		const options = this.clientIdMetadataDocument;
+		if (!options || !isClientIdUrl(clientId)) {
+			return undefined;
+		}
+		return { client: await this.#documentClient(clientId, options, address), document: true };
+	}
+
+	// A client of a document, from the cache while it is fresh, or from a new fetch. Draft §6.1: a transient failure
+	// keeps the copy in the cache and serves it, and a terminal failure drops it.
+	async #documentClient(
+		clientId: string,
+		options: AuthDanceOauth2ClientIdMetadataDocumentOptions,
+		address: string | undefined,
+	): Promise<AuthDanceOauth2Client> {
+		const url = checkClientIdUrl(clientId, this.issuer);
+		if (options.allow && !(await options.allow(url))) {
+			throw new InvalidClientError("the server does not accept this client id URL");
+		}
+		const { timeout, max_size, min_ttl, max_ttl } = this.#documentSettings(options);
+		const hash = await sha256(clientId);
+		const cached = await clientMetadataRecords.get(this.storage, [hash]).catch(() => undefined);
+		if (cached && cached.expiresAt > now()) {
+			return cached.client;
+		}
+		try {
+			await this.#consumeFetch(hash, address);
+			const fetchedAt = now();
+			const { body, headers } = await fetchClientIdMetadataDocument(url, {
+				fetch: options.fetch ?? ((request) => fetch(request)),
+				timeout,
+				max_size,
+			});
+			// Draft §6.1: a document that names another client id SHOULD end the refresh tokens of the client at once.
+			if (typeof body === "object" && body !== null && (body as { client_id?: unknown }).client_id !== clientId) {
+				await clientMetadataRecords.unset(this.storage, [hash]);
+				await this.#revokeClientSessions(clientId);
+				throw new InvalidClientError("the client_id of the client metadata document differs from its URL");
+			}
+			const client = parseClientIdMetadataDocument(body, clientId, {
+				scope: this.#documentScope(options),
+				device: this.device !== undefined,
+				fetchedAt,
+			});
+			const lifetime = cacheLifetime(headers, min_ttl, max_ttl);
+			await clientMetadataRecords.set(this.storage, [hash], { client, expiresAt: fetchedAt + lifetime }, lifetime + max_ttl);
+			return client;
+		} catch (error) {
+			if (cached && (error instanceof TemporarilyUnavailableError || error instanceof RateLimitedError)) {
+				return cached.client;
+			}
+			if (error instanceof InvalidClientError) {
+				await clientMetadataRecords.unset(this.storage, [hash]);
+			}
+			throw error;
+		}
+	}
+
+	// The client a public client of a document is at the revocation endpoint, with no fetch: an id, and `none`.
+	#offlineDocumentClient(clientId: string): AuthDanceOauth2Client {
+		checkClientIdUrl(clientId, this.issuer);
+		return {
+			client_id: clientId,
+			client_secret_expires_at: 0,
+			client_id_issued_at: now(),
+			redirect_uris: [],
+			token_endpoint_auth_method: "none",
+			grant_types: [],
+			response_types: [],
+			scope: "",
+		};
+	}
+
+	// The address bucket first, so one address runs out before it can drain the bucket of a URL.
+	async #consumeFetch(hash: string, address: string | undefined): Promise<void> {
+		const buckets: [string, AuthDanceRateLimit][] = [
+			...(address === undefined
+				? []
+				: [
+						[`address:oauth2:client-metadata:${address}`, this.#options.limits?.address?.client_metadata ?? ADDRESS_CLIENT_METADATA] as [
+							string,
+							AuthDanceRateLimit,
+						],
+					]),
+			[`client-metadata:${hash}`, this.#options.limits?.client?.client_metadata ?? ClientRateLimits.client_metadata],
+		];
+		for (const [key, { limit, window }] of buckets) {
+			const { allowed, retryAfter } = await this.storage.consumeRateLimit(key, limit, window * 1000);
+			if (!allowed) {
+				throw new RateLimitedError(retryAfter);
+			}
+		}
+	}
+
+	// The ceiling of the scopes of a client of a document, as for registration.
+	#documentScope(options: AuthDanceOauth2ClientIdMetadataDocumentOptions): string[] {
+		const known = Object.keys(this.#options.api.scopes);
+		return (options.scope ?? known.filter((scope) => scope !== ACCOUNT_SCOPE)).filter((scope) => known.includes(scope));
+	}
+
+	// RFC 8628 §5.4: a user code can come from someone else, so the owner confirms each device. A client of a document
+	// with a loopback or a private-use redirect URI can be any program that took its name, MCP 2025-11-25, so the owner
+	// confirms each request too.
+	#maySkipConsent(found: FoundClient, request: AuthorizationRequest | DeviceRequest): boolean {
+		if (isDeviceRequest(request)) {
+			return false;
+		}
+		return !(found.document && isDeviceLocalRedirectUri(request.redirect_uri));
+	}
+
+	#identity(
+		found: FoundClient,
+		request: AuthorizationRequest | DeviceRequest,
+	): { client_id_metadata_document?: AuthDanceOauth2ClientIdMetadataDocumentInfo } {
+		if (!found.document) {
+			return {};
+		}
+		return {
+			client_id_metadata_document: describeClientIdentity(found.client, isDeviceRequest(request) ? undefined : request.redirect_uri),
 		};
 	}
 
@@ -1254,12 +1562,18 @@ export class AuthDanceOauth2Api {
 		await userCodeRecords.unset(this.storage, [device.user_code]);
 	}
 
-	async #client(clientId: string): Promise<AuthDanceOauth2Client> {
-		const client = await this.clients.getClient(clientId);
-		if (!client) {
+	// The client of a pending request. A document that no longer passes ends the request with `invalid_request`: the
+	// login and the consent page did not authenticate a client, so `invalid_client` would mislead them.
+	async #client(clientId: string): Promise<FoundClient> {
+		const found = await this.#findClient(clientId).catch((cause: unknown) => {
+			throw cause instanceof InvalidClientError
+				? new InvalidRequestError("the client metadata document no longer passes", { cause })
+				: cause;
+		});
+		if (!found) {
 			throw new InvalidRequestError("the client no longer exists");
 		}
-		return client;
+		return found;
 	}
 
 	async #challenge<T extends LoginRecord | ConsentRecord>(records: KvRecord<T>, challenge: string): Promise<T> {
@@ -1313,7 +1627,9 @@ export class AuthDanceOauth2Api {
 		if (clientId === undefined) {
 			throw new InvalidRequestError("client_id is missing");
 		}
-		const client = await this.clients.getClient(clientId);
+		// A document that fails raises `invalid_client` or `temporarily_unavailable` here, before the redirect URI passes, so
+		// the error never goes to the client, draft §6.1.
+		const client = (await this.#findClient(clientId, request.address))?.client;
 		if (!client) {
 			throw new InvalidRequestError("client_id names no client");
 		}
@@ -1386,7 +1702,7 @@ export class AuthDanceOauth2Api {
 		if (!record.device_code || !device || device.status !== "pending" || device.expiresAt <= now()) {
 			throw new InvalidRequestError("the device request is no longer pending");
 		}
-		const client = await this.#client(device.client_id);
+		const { client } = await this.#client(device.client_id);
 		const request: DeviceRequest = {
 			client_id: client.client_id,
 			scope: device.scope,
@@ -1406,11 +1722,15 @@ export class AuthDanceOauth2Api {
 			throw new InvalidRequestError("the login challenge has no answer");
 		}
 		const { request } = record;
-		const client = await this.#client(request.client_id);
-		const remembered = await rememberedConsentRecords.get(this.storage, [record.accepted.identityId, client.client_id]);
-		// RFC 8628 §5.4: a user code can come from someone else, so the owner confirms each device on the consent page.
+		const found = await this.#client(request.client_id);
+		const { client } = found;
+		const remembered = await rememberedConsentRecords.get(this.storage, [
+			record.accepted.identityId,
+			await this.#requireClientKey(client.client_id),
+		]);
 		if (
 			!isDeviceRequest(request) &&
+			this.#maySkipConsent(found, request) &&
 			(client.skip_consent || (remembered && request.scope.every((scope) => remembered.scopes.includes(scope))))
 		) {
 			return this.#issueCode(record, request, record.accepted, request.scope, false);
@@ -1451,15 +1771,11 @@ export class AuthDanceOauth2Api {
 			scopes: grantScope,
 			expireAt: new Date(Date.now() + this.#options.api.sessionDuration * 1000),
 		});
-		await clientSessionRecords.set(
-			this.storage,
-			[clientId, session.id],
-			{ identityId: login.identityId },
-			this.#options.api.sessionDuration,
-		);
+		const key = await this.#requireClientKey(clientId);
+		await clientSessionRecords.set(this.storage, [key, session.id], { identityId: login.identityId }, this.#options.api.sessionDuration);
 		if (rememberConsent) {
-			const remembered = await rememberedConsentRecords.get(this.storage, [login.identityId, clientId]);
-			await rememberedConsentRecords.set(this.storage, [login.identityId, clientId], {
+			const remembered = await rememberedConsentRecords.get(this.storage, [login.identityId, key]);
+			await rememberedConsentRecords.set(this.storage, [login.identityId, key], {
 				scopes: [...new Set([...(remembered?.scopes ?? []), ...grantScope])],
 				grantedAt: now(),
 			});
@@ -1740,7 +2056,10 @@ export class AuthDanceOauth2Api {
 	// Deletes the session of a grant with its index entry.
 	async #revokeSession(session: AuthDanceSession): Promise<void> {
 		await this.storage.deleteSession(session.id);
-		await clientSessionRecords.unset(this.storage, [session.client_id, session.id]);
+		const key = await this.#clientKey(session.client_id);
+		if (key !== undefined) {
+			await clientSessionRecords.unset(this.storage, [key, session.id]);
+		}
 		await this.#emit("onGrantRevoked", { session });
 	}
 

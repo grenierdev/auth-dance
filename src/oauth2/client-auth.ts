@@ -63,14 +63,16 @@ export function readClientCredentials(authorization: string | undefined, params:
  * Authenticates a client with its credentials. The method must be the one the client registered, and the secret must
  * match its hash.
  *
+ * @param lookup Reads the client by id. @defaultValue `clients.getClient`
  * @throws InvalidClientError for an unknown client, a method other than the registered one, or a wrong or expired
  * secret.
  */
 export async function authenticateClient(
 	clients: AuthDanceOauth2ClientStorage,
 	credentials: ClientCredentials,
+	lookup: (clientId: string) => Promise<AuthDanceOauth2Client | undefined> = (clientId) => clients.getClient(clientId),
 ): Promise<AuthDanceOauth2Client> {
-	const client = await clients.getClient(credentials.client_id);
+	const client = await lookup(credentials.client_id);
 	if (!client) {
 		throw new InvalidClientError("the client is unknown");
 	}

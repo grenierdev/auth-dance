@@ -6,7 +6,7 @@ order: 2
 
 `auth-dance/oauth2` makes the server an OAuth 2.0 authorization server. A third-party app sends the owner to it. The owner signs in with the same dance, on login and consent pages you host, and the app gets tokens.
 
-It supports the authorization code grant with PKCE S256, `refresh_token`, `client_credentials`, the device grant, introspection (RFC 7662), revocation (RFC 7009) and dynamic registration (RFC 7591).
+It supports the authorization code grant with PKCE S256, `refresh_token`, `client_credentials`, the device grant, introspection (RFC 7662), revocation (RFC 7009), dynamic registration (RFC 7591) and client ID metadata documents.
 
 ## 1. Build the authorization server
 
@@ -130,8 +130,10 @@ registration: {
 
 A registered client never gets `skip_consent`, `introspect` or `audience`, and it may not ask for `account` unless `registration.scope` lists it. A setup script calls `idp.oauth2.registerClient(metadata, { registered_by: "admin" })` to run the same checks and set those fields.
 
+Each registration stores a client for good. For an MCP harness, prefer [client ID metadata documents](/docs/guides/client-id-metadata-documents): the client uses a URL as its `client_id`, and the server stores only a cache entry that expires.
+
 ## Hooks
 
 `hooks` takes `onGrantCreated`, `onGrantRevoked`, `onClientRegistered` and `onError`. A hook that rejects never fails the request.
 
-Next: [The device grant](/docs/guides/device-grant).
+Next: [Client ID metadata documents](/docs/guides/client-id-metadata-documents).

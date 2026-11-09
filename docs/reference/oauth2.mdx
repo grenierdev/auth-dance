@@ -8,7 +8,7 @@ order: 5
 import { createAuthDanceOauth2 } from "auth-dance/oauth2";
 ```
 
-See [OAuth 2.0 authorization server](/docs/guides/oauth2-server) and [The device grant](/docs/guides/device-grant) for the procedures.
+See [OAuth 2.0 authorization server](/docs/guides/oauth2-server), [Client ID metadata documents](/docs/guides/client-id-metadata-documents) and [The device grant](/docs/guides/device-grant) for the procedures.
 
 ## createAuthDanceOauth2
 
@@ -44,7 +44,9 @@ It returns `{ oauth2, app, fetch, generateOpenAPISchema }`. `oauth2` is the `Aut
 | `device.interval`             | `number` | `5` | Seconds the device waits between two polls. |
 | `limits.address`              | `AuthDanceOauth2AddressRateLimits` | See below | The per-address buckets of the HTTP layer. |
 | `limits.client.introspect`    | `AuthDanceRateLimit` | `{ limit: 600, window: 60 }` | Introspections per client, from any address. |
+| `limits.client.client_metadata` | `AuthDanceRateLimit` | `{ limit: 10, window: 60 }` | Fetches of the metadata document of one URL, from any address. |
 | `registration`                | `false \| AuthDanceOauth2RegistrationOptions` | `false` | Opens `/register`. |
+| `client_id_metadata_document` | `false \| AuthDanceOauth2ClientIdMetadataDocumentOptions` | `false` | Lets a client use an `https:` URL as its `client_id`. The metadata then announces `client_id_metadata_document_supported`. |
 | `introspection.username`      | `(identity) => string \| undefined` | No `username` | Gives the `username` of an active token. |
 | `hooks`                       | `AuthDanceOauth2Hooks` | No listener | `onGrantCreated`, `onGrantRevoked`, `onClientRegistered`, `onError`. |
 
@@ -62,6 +64,9 @@ Each URL of `ui` is `https:`, or `http:` on `localhost`, `127.0.0.1` or `[::1]`.
 | `revoke`               | `{ limit: 60, window: 60 }`     |
 | `device_authorization` | `{ limit: 60, window: 60 }`     |
 | `device`               | `{ limit: 30, window: 60 }`     |
+| `client_metadata`      | `{ limit: 20, window: 60 }`     |
+
+`AuthDanceOauth2Api` consumes `client_metadata` itself, for each fetch of a client ID metadata document, keyed on the `address` of the request. The HTTP layer consumes every other bucket.
 
 ### AuthDanceOauth2RegistrationOptions
 
@@ -71,6 +76,18 @@ Each URL of `ui` is `https:`, or `http:` on `localhost`, `127.0.0.1` or `[::1]`.
 | `policy`          | `(metadata) => metadata` | None | Rewrites or refuses the metadata. Throw an `AuthDanceOauth2Error` to refuse. |
 | `scope`           | `string[]` | Every scope but `account` | The most a registered client may ask for. |
 | `secret_lifetime` | `number` | `0` | Seconds a client secret stays valid. `0` means never. |
+
+### AuthDanceOauth2ClientIdMetadataDocumentOptions
+
+| Option          | Type | Default | Description |
+| --------------- | ---- | ------- | ----------- |
+| `scope`         | `string[]` | Every scope but `account` | The most a client of a document may ask for. A document that asks for more narrows to it. |
+| `allow`         | `(url: URL) => boolean \| Promise<boolean>` | Every URL that passes the built-in checks | A trust policy. It runs after the built-in checks. A refusal answers `invalid_client`. |
+| `fetch`         | `(request: Request) => Promise<Response>` | `globalThis.fetch` | Sends the request for a document. Supply one that refuses a special-use address at connect time. |
+| `timeout`       | `number` | `5` | Seconds the fetch of one document may take, the body included. |
+| `max_size`      | `number` | `5120` | Bytes the server reads of one document at most. |
+| `cache.min_ttl` | `number` | `300` | Seconds the server keeps a document at least, and the lifetime of a document with no lifetime. |
+| `cache.max_ttl` | `number` | `86400` | Seconds the server keeps a document at most. |
 
 ## AuthDanceOauth2AppOptions
 
@@ -86,10 +103,10 @@ It takes the options of the core app, `basePath` and `address`, and:
 
 | Method | Description |
 | ------ | ----------- |
-| `getLoginRequest(challenge)` | Reads the request behind a login challenge: `client`, `requested_scope`, `request_url`, and `user_code` for a device. |
+| `getLoginRequest(challenge)` | Reads the request behind a login challenge: `client`, `requested_scope`, `request_url`, `user_code` for a device, and `client_id_metadata_document` for a client of a document. |
 | `acceptLoginRequest(challenge, { access_token })` | Accepts a login with the access token of the dance. It must hold `account`. Returns `{ redirect_to }`. |
 | `rejectLoginRequest(challenge, { error, error_description? })` | Refuses a login. The client gets the error. |
-| `getConsentRequest(challenge)` | Reads the request behind a consent challenge: `client`, `requested_scope`, `subject`, `skip`, and `user_code` for a device. |
+| `getConsentRequest(challenge)` | Reads the request behind a consent challenge: `client`, `requested_scope`, `subject`, `skip`, `user_code` for a device, and `client_id_metadata_document` for a client of a document. |
 | `acceptConsentRequest(challenge, { grant_scope, remember? })` | Accepts a consent for some or all requested scopes. `remember` keeps the consent. |
 | `rejectConsentRequest(challenge, { error, error_description? })` | Refuses a consent. |
 | `getDeviceRequest(challenge)` | Reads a device challenge, with the `user_code` of `verification_uri_complete`. |
@@ -101,9 +118,11 @@ The HTTP layer calls these methods. Call them in process to serve the protocol f
 
 | Method | Description |
 | ------ | ----------- |
-| `authorize({ params, endpoint })` | The authorization endpoint. Returns `{ location }` for a 303. |
-| `token({ params, authorization? })` | The token endpoint: `authorization_code` with PKCE, `refresh_token`, `client_credentials`, and the device code. |
-| `deviceAuthorization({ params, authorization?, verification_uri })` | The device authorization endpoint. |
+| `authorize({ params, endpoint, address? })` | The authorization endpoint. Returns `{ location }` for a 303. |
+| `token({ params, authorization?, address? })` | The token endpoint: `authorization_code` with PKCE, `refresh_token`, `client_credentials`, and the device code. |
+| `deviceAuthorization({ params, authorization?, verification_uri, address? })` | The device authorization endpoint. |
+| `getClient(clientId, { address? })` | Reads a client from the store, then from its client ID metadata document. |
+| `authenticateClient({ authorization?, params, address? }, { fetch? })` | Authenticates the client of a request. With `fetch: false`, a client of a document authenticates with no fetch. |
 | `startDeviceVerification({ params, endpoint, verification_uri })` | The verification URI. Returns `{ location }`. |
 | `introspect(caller, token, hint?)` | RFC 7662. A client sees its own tokens. A client with `introspect: true` sees every token. |
 | `revoke(caller, token, hint?)` | RFC 7009. Ends the whole session of the token. |
@@ -119,10 +138,12 @@ The HTTP layer calls these methods. Call them in process to serve the protocol f
 | `listGrants(identityId)` | The grants of one identity, for an administrator. |
 | `revokeGrant(sessionId)` | Revokes one grant. |
 | `revokeClientGrants(identityId, clientId)` | Revokes every grant one identity gave one client, and forgets the consent. |
-| `deleteClient(clientId)` | Revokes every grant of a client, then deletes it. |
+| `deleteClient(clientId)` | Revokes every grant of a client, then deletes it. For a client of a document, it drops the document from the cache. |
 | `registerClient(metadata, { registered_by? })` | Registers a client with the checks of RFC 7591. `registered_by: "admin"` may set `skip_consent`, `introspect` and `audience`. |
 
-Properties: `issuer`, `keys`, `clients`, `storage`, `registration`, `device`.
+Properties: `issuer`, `keys`, `clients`, `storage`, `registration`, `clientIdMetadataDocument`, `device`.
+
+The `address` of `authorize`, `token` and `deviceAuthorization` keys the `client_metadata` bucket. The HTTP layer sets it. A call in process without it skips that bucket.
 
 ## Clients
 
@@ -157,11 +178,23 @@ new AuthDanceOauth2ClientStorage({ clients: provider });
 | `client_name`, `client_uri`, `logo_uri`, `tos_uri`, `policy_uri`, `contacts`, `software_id`, `software_version`, `localized` | — | The RFC 7591 metadata the consent page can show. |
 | `skip_consent` | — | Server only. A first-party client never sees the consent page. |
 | `introspect` | — | Server only. A resource server that may introspect every token. |
-| `audience` | The client id | Server only. The `aud` of the access tokens of the client. |
+| `audience` | The issuer | Server only. The `aud` of the access tokens of the client. |
 
 The rules: `authorization_code` comes with `code`, `refresh_token` comes with `authorization_code` or the device code, `client_credentials` needs a confidential client, and `authorization_code` needs at least one redirect URI. A redirect URI is `https:`, `http:` on a loopback host, or a private-use scheme with a dot.
 
 Helpers: `validateRedirectUri`, `matchRedirectUri`, `isPublic`, `isLanguageTag`, `checkClientMetadata`, `parseClientMetadata`, `toPublicClient`, and the constant `DEVICE_CODE_GRANT_TYPE`.
+
+### Client ID metadata documents
+
+`AuthDanceOauth2ClientIdMetadataDocumentInfo` is what the login and the consent page read about a client of a document:
+
+| Field | Description |
+| ----- | ----------- |
+| `hostname` | The hostname of the client id. The only identity the server checked. |
+| `redirect_uri` | The redirect URI of the request. Absent for a device. |
+| `warnings` | `loopback_redirect_uri`, `private_use_redirect_uri`, `redirect_uri_on_other_host`, `client_uri_on_other_host`. |
+
+Helpers: `isClientIdUrl`, `checkClientIdUrl`, `isSpecialUseHost`, `fetchClientIdMetadataDocument`, `parseClientIdMetadataDocument`, `cacheLifetime`, `describeClientIdentity`, `isDeviceLocalRedirectUri`. See [Client ID metadata documents](/docs/guides/client-id-metadata-documents).
 
 ## Errors
 

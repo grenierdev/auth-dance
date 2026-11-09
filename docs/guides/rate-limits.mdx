@@ -84,7 +84,9 @@ A bucket you omit keeps its default.
 | `address.revoke`               | 60 per 60 s    | `/revoke`                                                  |
 | `address.device_authorization` | 60 per 60 s    | `/device_authorization`                                    |
 | `address.device`               | 30 per 60 s    | Visits to `/device`. It bounds how fast an address guesses user codes. |
+| `address.client_metadata`      | 20 per 60 s    | Each fetch of a client ID metadata document that a request of the address causes |
 | `client.introspect`            | 600 per 60 s   | Each introspection one client asks for, from any address   |
+| `client.client_metadata`       | 10 per 60 s    | Each fetch of the metadata document of one URL, from any address |
 
 The authorization server answers an empty bucket with 429 and `temporarily_unavailable`.
 

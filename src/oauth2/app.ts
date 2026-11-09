@@ -8,7 +8,6 @@ import { AuthDanceTokenResponse } from "../response.ts";
 import { AuthDanceSession } from "../session.ts";
 import type { AuthDanceOauth2AddressRateLimits, AuthDanceOauth2Api } from "./api.ts";
 import { type AuthDanceOauth2Client, isPublic } from "./client.ts";
-import { authenticateClient, readClientCredentials } from "./client-auth.ts";
 import {
 	AccessDeniedError,
 	AuthDanceOauth2Error,
@@ -58,6 +57,7 @@ const MetadataResponse = v.pipe(
 		revocation_endpoint_auth_methods_supported: v.array(v.string()),
 		registration_endpoint: v.optional(v.string()),
 		device_authorization_endpoint: v.optional(v.string()),
+		client_id_metadata_document_supported: v.optional(v.boolean()),
 	}),
 	v.title("AuthDanceOauth2Metadata"),
 	v.description("The authorization server metadata (RFC 8414 §2)"),
@@ -126,6 +126,20 @@ const DeviceAuthorizationResponse = v.pipe(
 
 const ClientResponse = v.looseObject({ client_id: v.string(), client_name: v.optional(v.string()), redirect_uris: v.array(v.string()) });
 
+const ClientIdentityResponse = v.pipe(
+	v.object({
+		hostname: v.string(),
+		redirect_uri: v.optional(v.string()),
+		warnings: v.array(
+			v.picklist(["redirect_uri_on_other_host", "loopback_redirect_uri", "private_use_redirect_uri", "client_uri_on_other_host"]),
+		),
+	}),
+	v.title("AuthDanceOauth2ClientIdMetadataDocumentInfo"),
+	v.description(
+		"Present when the client names itself with a URL. Only `hostname` is checked: the client asserts its name, logo and home page itself.",
+	),
+);
+
 const LoginRequestResponse = v.pipe(
 	v.object({
 		challenge: v.string(),
@@ -133,6 +147,7 @@ const LoginRequestResponse = v.pipe(
 		requested_scope: v.array(v.string()),
 		request_url: v.string(),
 		user_code: v.optional(v.string()),
+		client_id_metadata_document: v.optional(ClientIdentityResponse),
 	}),
 	v.title("AuthDanceOauth2LoginRequest"),
 	v.description("The authorization request behind a login challenge"),
@@ -146,6 +161,7 @@ const ConsentRequestResponse = v.pipe(
 		subject: v.string(),
 		skip: v.boolean(),
 		user_code: v.optional(v.string()),
+		client_id_metadata_document: v.optional(ClientIdentityResponse),
 	}),
 	v.title("AuthDanceOauth2ConsentRequest"),
 	v.description("The authorization request behind a consent challenge"),
@@ -214,8 +230,8 @@ function defaultAddress(c: Context): string | undefined {
 	return cloudflareAddress(c) ?? lastForwardedAddress(c);
 }
 
-/** The default per-address buckets of the oauth2 app. */
-const AddressRateLimits: Required<AuthDanceOauth2AddressRateLimits> = {
+/** The default per-address buckets of the oauth2 app. `AuthDanceOauth2Api` consumes `client_metadata` itself. */
+const AddressRateLimits: Required<Omit<AuthDanceOauth2AddressRateLimits, "client_metadata">> = {
 	request: { limit: 300, window: 60 },
 	token: { limit: 60, window: 60 },
 	client_auth: { limit: 100, window: 300 },
@@ -232,12 +248,14 @@ function escapeHtml(value: string): string {
 	return value.replace(/[&<>"']/g, (character) => HTML_ESCAPES[character]);
 }
 
-// The page for an error the server cannot send to the client. No frame can hold it, RFC 9700 §4.16.
+// The page for an error the server cannot send to the client. No frame can hold it, RFC 9700 §4.16. An
+// `invalid_client` of a client metadata document answers 400: a 401 needs a `WWW-Authenticate` challenge, RFC 9110
+// §15.5.2, and the browser has none to answer.
 function errorPage(c: Context, error: AuthDanceOauth2Error): Response {
 	const description = error.description ? `<p>${escapeHtml(error.description)}</p>` : "";
 	return c.html(
 		`<!doctype html><html lang="en"><meta charset="utf-8"><title>Authorization error</title><h1>Authorization error</h1><p><code>${escapeHtml(error.error)}</code></p>${description}</html>`,
-		error.status,
+		error.status === 401 ? 400 : error.status,
 		{
 			"cache-control": "no-store",
 			"content-security-policy": "default-src 'none'; frame-ancestors 'none'",
@@ -334,8 +352,11 @@ export function createAuthDanceOauth2App(options?: AuthDanceOauth2AppOptions): A
 		}
 	});
 
+	// The key of the per-address buckets, the one `consume` uses.
+	const addressOf = (c: Context<AuthDanceOauth2Env>): string => resolveAddress(c) ?? "unknown";
+
 	async function consume(c: Context<AuthDanceOauth2Env>, bucket: string, { limit, window }: AuthDanceRateLimit): Promise<void> {
-		const address = resolveAddress(c) ?? "unknown";
+		const address = addressOf(c);
 		const { allowed, retryAfter } = await c.env.oauth2.storage.consumeRateLimit(`address:${bucket}:${address}`, limit, window * 1000);
 		if (!allowed) {
 			throw new RateLimitedError(retryAfter);
@@ -398,7 +419,7 @@ export function createAuthDanceOauth2App(options?: AuthDanceOauth2AppOptions): A
 	const authorize = async (c: Context<AuthDanceOauth2Env>) => {
 		try {
 			const params = c.req.method === "POST" ? await formParams(c) : [...new URL(c.req.url).searchParams];
-			const result = await c.env.oauth2.authorize({ params, endpoint: `${endpointOf(c)}/authorize` });
+			const result = await c.env.oauth2.authorize({ params, endpoint: `${endpointOf(c)}/authorize`, address: addressOf(c) });
 			// RFC 9700 §4.12: a 303 makes the browser follow with a GET, so a POST body never goes to the next page.
 			return c.redirect(result.location, 303);
 		} catch (error) {
@@ -432,7 +453,8 @@ export function createAuthDanceOauth2App(options?: AuthDanceOauth2AppOptions): A
 			return;
 		}
 		c.header("vary", "Origin");
-		const client = await c.env.oauth2.clients.getClient(clientId);
+		// A client of a document that fails gets no CORS header here: the token endpoint answers the failure.
+		const client = await c.env.oauth2.getClient(clientId, { address: addressOf(c) }).catch(() => undefined);
 		if (client && isPublic(client) && client.redirect_uris.some((uri) => URL.parse(uri)?.origin === origin)) {
 			c.header("access-control-allow-origin", origin);
 		}
@@ -483,7 +505,9 @@ export function createAuthDanceOauth2App(options?: AuthDanceOauth2AppOptions): A
 		}
 	}
 
-	// Reads the form body and authenticates its client, RFC 6749 §2.3, for a route that takes no grant.
+	// Reads the form body and authenticates its client, RFC 6749 §2.3, for a route that takes no grant. A client of a
+	// document is public, and these routes need nothing of its document, so they never fetch it: revocation works while
+	// the document is out of reach.
 	async function authenticate(
 		c: Context<AuthDanceOauth2Env>,
 		entries: [string, string][],
@@ -493,7 +517,10 @@ export function createAuthDanceOauth2App(options?: AuthDanceOauth2AppOptions): A
 			throw new InvalidRequestError(`${repeated[0]} appears more than once`);
 		}
 		await countSecretCheck(c, entries);
-		const client = await authenticateClient(c.env.oauth2.clients, readClientCredentials(c.req.header("authorization"), params));
+		const client = await c.env.oauth2.authenticateClient(
+			{ authorization: c.req.header("authorization"), params, address: addressOf(c) },
+			{ fetch: false },
+		);
 		return { client, params };
 	}
 
@@ -518,7 +545,7 @@ export function createAuthDanceOauth2App(options?: AuthDanceOauth2AppOptions): A
 			const params = await formParams(c);
 			await allowPublicOrigin(c, params);
 			await countSecretCheck(c, params);
-			return c.json(await c.env.oauth2.token({ params, authorization: c.req.header("authorization") }));
+			return c.json(await c.env.oauth2.token({ params, authorization: c.req.header("authorization"), address: addressOf(c) }));
 		},
 	);
 
@@ -689,6 +716,7 @@ export function createAuthDanceOauth2App(options?: AuthDanceOauth2AppOptions): A
 					params,
 					authorization: c.req.header("authorization"),
 					verification_uri: `${endpointOf(c)}/device`,
+					address: addressOf(c),
 				}),
 			);
 		},

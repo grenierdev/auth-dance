@@ -14,6 +14,7 @@ export * from "./oauth2/api.ts";
 export * from "./oauth2/app.ts";
 export * from "./oauth2/client.ts";
 export * from "./oauth2/error.ts";
+export * from "./oauth2/metadata-document.ts";
 export * from "./oauth2/storage.ts";
 
 /** The options of `createAuthDanceOauth2`: `oauth2` for the protocol logic, `app` for the HTTP layer, `info` for the OpenAPI document. */
