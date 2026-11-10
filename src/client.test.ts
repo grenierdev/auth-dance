@@ -88,6 +88,15 @@ describe("Client", () => {
 		return code;
 	}
 
+	// The code that proves an address proves the challenge the address brings along too.
+	function assertAllConfirmed(components: AuthDanceIdentityComponent[] | undefined, names: string[]): void {
+		for (const name of names) {
+			const record = components?.find((c) => c.kind !== "channel" && c.component === name);
+			ok(record, `no ${name} record`);
+			ok(record.confirmed, `${name} is not confirmed`);
+		}
+	}
+
 	beforeEach(() => {
 		channelEmail = new MemoryAuthDanceChannel("email");
 		channelEmail2 = new MemoryAuthDanceChannel("email2");
@@ -165,7 +174,9 @@ describe("Client", () => {
 		deepEqual(choreography.trail, ["email", "email", "password"]);
 		ok(client.identity?.id);
 		const identity = await storage.getIdentity(client.identity.id);
-		ok(identity?.components.find((c) => c.kind === "identification" && c.component === "email"));
+		assertAllConfirmed(identity?.components, ["email", "otp", "password"]);
+		const listed = await client.listComponents();
+		ok(listed.filter((c) => c.kind !== "channel").every((c) => c.confirmed));
 	});
 
 	it("should report the failure the library named", async () => {
@@ -368,7 +379,7 @@ describe("Client", () => {
 		ok(choreography.done);
 
 		const enrolled = await storage.getIdentity(identity.id);
-		ok(enrolled?.components.find((c) => c.kind === "identification" && c.component === "email2"));
+		assertAllConfirmed(enrolled?.components, ["email2", "otp2"]);
 		await rejects(() => client.enroll("email2"), ComponentAlreadyEnrolledError);
 	});
 
@@ -418,6 +429,21 @@ describe("Client", () => {
 		assertNotEquals(after?.data?.hash, before?.data?.hash);
 	});
 
+	it("should confirm on the next write a challenge an earlier version left unconfirmed beside its confirmed address", async () => {
+		const identity = await seedJohnDoe();
+		const stale = identity.components.find((c) => c.kind === "challenge" && c.component === "otp");
+		ok(stale);
+		stale.confirmed = false;
+		await storage.setIdentity(identity);
+		await signIn();
+
+		using choreography = await client.rotate("password");
+		await choreography.submitPrompt("bar");
+		ok(choreography.done);
+
+		assertAllConfirmed((await storage.getIdentity(identity.id))?.components, ["email", "otp", "password"]);
+	});
+
 	it("should rotate a component through both of its rounds", async () => {
 		const identity = await seedJohnDoe();
 		await signIn();
@@ -443,6 +469,7 @@ describe("Client", () => {
 				(c) => c.kind === "identification" && c.component === "email" && c.identification === "john.doe2@example.com",
 			),
 		);
+		assertAllConfirmed(rotated?.components, ["email", "otp"]);
 	});
 
 	it("should subscribe a channel", async () => {

@@ -1135,6 +1135,7 @@ export class AuthDanceApi {
 				// The sessions go first. If the write of the identity then fails, the old credential still stands and
 				// nobody keeps a session they should not have.
 				const revoked = await this.#revokeSessions(options, identity);
+				this.#confirmLinked(identity.components);
 				await this.#options.storage.setIdentity(identity);
 				if (options.flow === "sign-up") {
 					await this.#emit("onIdentityCreated", { flow: options.flow, identity });
@@ -1425,6 +1426,19 @@ export class AuthDanceApi {
 		const ctx = this.#rotateContext(state, identity);
 		const verificationAuthDanceComponent = await authComponent.verificationComponent(ctx);
 		return { identity, ctx, authComponent, verificationAuthDanceComponent };
+	}
+
+	// A record linked to other components shares their proof: the code that proves an address proves the one-time
+	// code challenge the address brings along. The library confirms only the record a flow names, so the write of the
+	// identity confirms each linked record once every component it names holds a confirmed record. The sign-up walk
+	// reads the unconfirmed flag while the dance runs, so this waits for the write.
+	#confirmLinked(components: AuthDanceIdentityComponent[]): void {
+		const confirmed = new Set(components.filter((c) => c.kind !== "channel" && c.confirmed).map((c) => c.component));
+		for (const c of components) {
+			if (c.kind !== "channel" && !c.confirmed && c.linkedTo?.length && c.linkedTo.every((linked) => confirmed.has(linked))) {
+				c.confirmed = true;
+			}
+		}
 	}
 
 	// A rotation and a recovery replace a component by name. A channel the component emits again supersedes the
