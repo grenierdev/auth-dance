@@ -71,7 +71,7 @@ import type {
 } from "./identity.ts";
 import { AuthDanceKeys, type AuthDanceSigningKey } from "./keys.ts";
 import type { AuthDanceMessage } from "./message.ts";
-import type { AuthDancePrompt } from "./prompt.ts";
+import type { AuthDancePrompt, AuthDancePromptInput } from "./prompt.ts";
 import type {
 	AuthDanceResponse,
 	AuthDanceResponseResult,
@@ -578,6 +578,26 @@ export class AuthDanceApi {
 			throw new ComponentNotRecoverableError(name);
 		}
 		return recovery;
+	}
+
+	// A component can answer a submitted value with another prompt of the same step. The state does not change, so
+	// the next answer comes to the same step.
+	async #followPrompt(
+		authComponent: AuthDanceComponent,
+		name: string,
+		value: unknown,
+		ctx: AuthDanceComponentContext,
+		state: AuthDanceState,
+		expireAt: Date,
+	): Promise<AuthDanceResponseState | undefined> {
+		const prompt: unknown = await authComponent.followPrompt?.(value, ctx);
+		if (prompt === undefined || prompt === null) {
+			return undefined;
+		}
+		if (typeof prompt !== "object" || (prompt as AuthDancePromptInput).kind !== "input") {
+			throw new TypeError(`followPrompt of ${name} must return one input prompt, or nothing`);
+		}
+		return { state: await this.#encryptState(state, expireAt), prompt: { ...(prompt as AuthDancePromptInput), name }, expireAt };
 	}
 
 	// Whether an accepted value of the component proves control, and does not only name an identity.
@@ -2138,6 +2158,9 @@ export class AuthDanceApi {
 	 * the replacement of the component it resets. An unenroll, an unsubscribe and a delete take the boolean
 	 * `true` as their confirmation. A subscribe stores the recipient and moves to its one-time code.
 	 *
+	 * A component that declares `followPrompt` can answer a value with another prompt of the same step. The state
+	 * then names the same step, and the next answer goes to that step again.
+	 *
 	 * When the collected value still needs proof of control, the answer is a validation prompt. Answer that prompt
 	 * with this same method. On success the value becomes confirmed. A rotate and a recover answer twice, the first
 	 * time for the current value and the second for the replacement.
@@ -2221,6 +2244,18 @@ export class AuthDanceApi {
 			if (state.identityId && !known) {
 				throw new IdentityNotFoundError(state.identityId);
 			}
+			const followUp = await this.#followPrompt(
+				authComponent,
+				choreographyComponent.component,
+				options.value,
+				// No identity, as for the prompt of the step: the next prompt tells nothing about an identity.
+				this.#signInContext(state, choreographyComponent.component, undefined),
+				state,
+				expireAt,
+			);
+			if (followUp) {
+				return followUp;
+			}
 			const ctx = this.#signInContext(state, choreographyComponent.component, known);
 			const identity = await this.#acceptStep(authComponent, choreographyComponent.component, options.value, ctx, known, (name) =>
 				this.#proves(name),
@@ -2248,6 +2283,10 @@ export class AuthDanceApi {
 			const ctx = this.#signUpContext(state, choreographyComponent.component);
 			if (state.components.find((c) => c.kind !== "channel" && c.component === choreographyComponent.component)) {
 				throw new ComponentAlreadyCollectedError(choreographyComponent.component);
+			}
+			const followUp = await this.#followPrompt(authComponent, choreographyComponent.component, options.value, ctx, state, expireAt);
+			if (followUp) {
+				return followUp;
 			}
 			state.components.push(...(await authComponent.getIdentityComponent(choreographyComponent.component, options.value, false, ctx)));
 			const identityComponent = state.components.find(
@@ -2285,6 +2324,17 @@ export class AuthDanceApi {
 			if (!authComponent) {
 				throw new UnknownComponentError(state.component);
 			}
+			const followUp = await this.#followPrompt(
+				authComponent,
+				state.component,
+				options.value,
+				this.#enrollContext(state, identity),
+				state,
+				expireAt,
+			);
+			if (followUp) {
+				return followUp;
+			}
 			// #enrollContext snapshots state.components. Build the verification context below only after the
 			// collection, so the verification targets the new value.
 			state.components.push(
@@ -2316,6 +2366,17 @@ export class AuthDanceApi {
 			const authComponent = this.#options.components[state.component];
 			if (!authComponent) {
 				throw new UnknownComponentError(state.component);
+			}
+			const followUp = await this.#followPrompt(
+				authComponent,
+				state.component,
+				options.value,
+				this.#rotateContext(state, identity),
+				state,
+				expireAt,
+			);
+			if (followUp) {
+				return followUp;
 			}
 			// The collection sees the identity as it stands, so a component can refuse a value identical to the
 			// current one.
@@ -2352,6 +2413,18 @@ export class AuthDanceApi {
 				if (name !== options.name) {
 					throw new ComponentNotInChoreographyError(options.name);
 				}
+				const followUp = await this.#followPrompt(
+					authComponent,
+					name,
+					options.value,
+					// No identity, as for the prompt of the step.
+					this.#recoverContext(state, name, undefined),
+					state,
+					expireAt,
+				);
+				if (followUp) {
+					return followUp;
+				}
 				const known = state.identityId ? await this.#recoverIdentity(state) : undefined;
 				const identity = await this.#acceptStep(
 					authComponent,
@@ -2386,7 +2459,11 @@ export class AuthDanceApi {
 			if (state.components.length > 0) {
 				throw new ComponentAlreadyCollectedError(state.component);
 			}
-			const { authComponent } = this.#resolveRecoverReset(state, identity);
+			const { authComponent, ctx: resetContext } = this.#resolveRecoverReset(state, identity);
+			const followUp = await this.#followPrompt(authComponent, state.component, options.value, resetContext, state, expireAt);
+			if (followUp) {
+				return followUp;
+			}
 			state.components.push(
 				...(await authComponent.getIdentityComponent(
 					state.component,

@@ -77,6 +77,24 @@ export interface AuthDanceComponent {
 	/** Builds the prompt the client renders for this step. */
 	getPrompt(context: AuthDanceComponentContext): Promise<AuthDancePromptInput>;
 	/**
+	 * Answers a submitted value with another prompt of the same step, in place of a verdict. A step that needs two
+	 * rounds declares it: a step that asks for an address, then sends the owner to the provider of that address, for
+	 * example.
+	 *
+	 * The library calls this method first, each time the owner answers the prompt of the step. When it returns a
+	 * prompt, the library answers with that prompt and the same state, so the next answer comes to the same step and
+	 * to this method again. The library keeps nothing of `value`: keep what the next round needs in the key-value
+	 * store, under `context.stateId`. The library never calls this method for the answer to a validation.
+	 *
+	 * The library gives the prompt the name of the step. Each round is one hit against the `verify` bucket.
+	 *
+	 * @param value What the owner submitted.
+	 * @param context The context of the step. In a sign-in and in a step of a recovery dance it holds no identity, as
+	 * for `getPrompt`, so the next prompt tells nothing about an identity.
+	 * @returns The next prompt of the step, or nothing to let the library judge `value` as usual.
+	 */
+	followPrompt?(value: unknown, context: AuthDanceComponentContext): Promise<AuthDancePromptInput | undefined>;
+	/**
 	 * Tells whether the identity needs nothing more from this step. The library then goes past the step without a
 	 * prompt. The skipped step counts as done on the path, and the library calls neither `verifyPrompt` nor
 	 * `upgradeIdentityComponent` for it.

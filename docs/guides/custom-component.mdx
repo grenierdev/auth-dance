@@ -19,6 +19,7 @@ A step is a small interface. Implement `AuthDanceComponent`, register the class 
 | `verifyPrompt`             | Yes      | Checks a submitted value.                                                                        |
 | `verificationComponent`    | No       | Returns the component that proves control of the collected value. A `verifiable` component declares it. |
 | `sendPrompt`               | No       | Returns a message for the library to deliver over a channel.                                     |
+| `followPrompt`             | No       | Answers a submitted value with another prompt of the same step, for a step of two rounds.         |
 | `skipPrompt`               | No       | Tells whether the identity needs nothing more from the step. A `skippable` component declares it. |
 | `upgradeIdentityComponent` | No       | Rewrites a stored record after a sign-in step accepts a value.                                   |
 
@@ -27,6 +28,25 @@ Two rules apply.
 > **Note:** `verifyPrompt` accepts a value only with `true` or an identity id. Any other answer, `undefined` included, rejects it. An identity id that names no stored identity rejects it too.
 
 > **Note:** Every complete path of the choreography needs a step that proves control. An identification proves nothing by default. Set `proves: true` only when `verifyPrompt` checks a secret, as WebAuthn checks a signature.
+
+## A step of two rounds
+
+A step usually has one prompt and one answer. A component that declares `followPrompt` can ask again: the library calls it first with each submitted value, and when it returns a prompt, that prompt is the response. A step that asks for an address and then sends the owner to the identity provider of that address works this way.
+
+```ts
+async followPrompt(value: unknown, context: AuthDanceComponentContext): Promise<AuthDancePromptInput | undefined> {
+	if (typeof value !== "string") return undefined; // the second round: let verifyPrompt judge the value
+	const provider = await providerOf(value);
+	await context.storage.setKv(`sso/${context.stateId}/${context.name}`, provider.id, 300);
+	return { kind: "input", name: context.name, type: "oauth2", sendable: false, options: { authorizationUrl: provider.url } };
+}
+```
+
+- The state does not change between the rounds. The library keeps nothing of the first value, so keep what the second round needs in the key-value store, under `context.stateId`.
+- In a sign-in and in a recovery dance the context holds no identity, as for `getPrompt`. Do not let the second prompt tell if an account exists.
+- The library gives the prompt the name of the step. At a choice, the next answer selects the same step by that name.
+- Each round is one hit against the `verify` bucket. The answer to a validation never goes through `followPrompt`.
+- A client keeps the name of the step two times in its trail, one time for each round.
 
 ## Example: a PIN
 

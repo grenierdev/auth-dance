@@ -3156,4 +3156,126 @@ describe("Api", () => {
 			ok(signedIn.tokens.access_token);
 		});
 	});
+
+	describe("follow-up prompt", () => {
+		let followed: AuthDanceComponentContext[];
+
+		// A step of two rounds: an address, then the account at the provider of that address. The second value is an
+		// object, as the answer of a provider is.
+		const sso: AuthDanceComponent = {
+			kind: "identification",
+			verifiable: false,
+			proves: true,
+			getPrompt: async (context) => ({ kind: "input", name: context.name, type: "email", sendable: false }),
+			followPrompt: async (value, context) => {
+				followed.push(context);
+				if (typeof value !== "string") {
+					return undefined;
+				}
+				await context.storage.setKv(`sso/${context.stateId}/${context.name}`, value, 300);
+				return { kind: "input", name: "anything", type: "oauth2", sendable: false, options: { address: value } };
+			},
+			verifyPrompt: async (value, context) =>
+				(await context.storage.getIdentityByIdentification(context.name, (value as { account: string }).account))?.id ?? false,
+			getIdentityComponent: async (component, value, confirmed) => [
+				{ kind: "identification", component, identification: (value as { account: string }).account, confirmed },
+			],
+		};
+
+		function build(overrides: Partial<AuthDanceApiOptions> = {}): AuthDanceApi {
+			return new AuthDanceApi({
+				...apiOptions,
+				choreography: choice(sequence("email", "password"), "sso"),
+				components: { ...apiOptions.components, sso },
+				...overrides,
+			});
+		}
+
+		beforeEach(() => {
+			followed = [];
+		});
+
+		it("should answer a sign-in step at a choice with the next prompt of the same step", async () => {
+			const api = build();
+			const ada = await seedIdentity({}, () =>
+				sso.getIdentityComponent("sso", { account: "account-1" }, true, {} as AuthDanceComponentContext),
+			);
+			const result1 = await api.signIn();
+			ok(result1.prompt.kind === "choice");
+			const result2 = await api.submitPrompt({ name: "sso", value: "ada@acme.example", state: result1.state });
+			ok("state" in result2);
+			// The library gives the prompt the name of the step.
+			deepEqual(result2.prompt, { kind: "input", name: "sso", type: "oauth2", sendable: false, options: { address: "ada@acme.example" } });
+			const result3 = await api.submitPrompt({ name: "sso", value: { account: "account-1" }, state: result2.state });
+			ok("tokens" in result3);
+			deepEqual(result3.identity.id, ada.id);
+			// The state did not move: the other alternative of the choice is still open after the first round.
+			await johnDoe();
+			ok((await signInAsJohnDoe(api, result2)).tokens.access_token);
+		});
+
+		it("should give no identity to a follow-up of a sign-in", async () => {
+			const api = build({ choreography: sequence("email", "sso") });
+			await seedIdentity({}, async () => [
+				...(await email.getIdentityComponent("email", "john.doe@example.com", true)),
+				...(await sso.getIdentityComponent("sso", { account: "account-1" }, true, {} as AuthDanceComponentContext)),
+			]);
+			const result1 = await api.signIn();
+			const result2 = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state });
+			ok("state" in result2);
+			const result3 = await api.submitPrompt({ name: "sso", value: "john.doe@example.com", state: result2.state });
+			ok("state" in result3);
+			const result4 = await api.submitPrompt({ name: "sso", value: { account: "account-1" }, state: result3.state });
+			ok("tokens" in result4);
+			deepEqual(
+				followed.map((context) => ({ flow: context.flow, name: context.name, identity: context.identity })),
+				[
+					{ flow: "sign-in", name: "sso", identity: undefined },
+					{ flow: "sign-in", name: "sso", identity: undefined },
+				],
+			);
+		});
+
+		it("should answer a sign-up step at a choice with the next prompt of the same step", async () => {
+			const api = build();
+			const result1 = await api.signUp();
+			const result2 = await api.submitPrompt({ name: "sso", value: "ada@acme.example", state: result1.state });
+			ok("state" in result2 && result2.prompt.kind === "input" && result2.prompt.name === "sso" && result2.prompt.type === "oauth2");
+			const result3 = await api.submitPrompt({ name: "sso", value: { account: "account-1" }, state: result2.state });
+			ok("tokens" in result3);
+			const identity = await storage.getIdentity(result3.identity.id);
+			deepEqual(
+				identity?.components.map((c) => c.component),
+				["sso"],
+			);
+			deepEqual(channelEmail.messages.length, 0);
+		});
+
+		it("should refuse a follow-up that is not one input prompt", async () => {
+			const broken = { ...sso, followPrompt: async () => ({ kind: "choice", components: [] }) as never };
+			const api = build({ components: { ...apiOptions.components, sso: broken } });
+			const result1 = await api.signIn();
+			await rejects(
+				api.submitPrompt({ name: "sso", value: "ada@acme.example", state: result1.state }),
+				(error) => error instanceof AuthDanceError && error.code === "UNKNOWN",
+			);
+		});
+
+		it("should not call it for the answer to a validation", async () => {
+			let calls = 0;
+			const counting = Object.assign(new EmailAuthDanceComponent({ channel: "email", challenge: "otp" }), {
+				followPrompt: async () => {
+					calls++;
+					return undefined;
+				},
+			});
+			const api = build({ choreography: sequence("email", "password"), components: { ...apiOptions.components, email: counting } });
+			const result1 = await api.signUp();
+			const result2 = await api.submitPrompt({ name: "email", value: "john.doe@example.com", state: result1.state });
+			ok("state" in result2);
+			await api.sendPrompt({ name: "email", locale: "en", state: result2.state });
+			await api.submitPrompt({ name: "email", value: channelEmail.messages[0].content["text/x-code"], state: result2.state });
+			deepEqual(calls, 1);
+		});
+	});
 });
